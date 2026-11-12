@@ -1166,7 +1166,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         applyToAll: Bool = false,
         timezone: TimeZone? = nil,
         clearTimezone: Bool = false
-    ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?) {
+    ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?, deletionsChecked: DeletionCheckHorizon?) {
         try await ensureCalendarAccess()
 
         // #236 (PR #259 verify #5): refreshed, so the snapshot undo restores is not a stale copy
@@ -1177,7 +1177,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // #428: the series reaches no stand-in, and its first occurrence was edited on its own:
             // the same write through that occurrence's own id, which answers for the series.
             if applyToAll, let first = try firstEditedOccurrenceID(of: identifier) {
-                let saved: (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?)
+                let saved: (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?, deletionsChecked: DeletionCheckHorizon?)
                 do {
                     saved = try await updateEvent(
                         identifier: first.id, fields: fields, title: title, startDate: startDate, endDate: endDate, notes: notes,
@@ -1193,7 +1193,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     // only that sentence is replaced.
                     throw EventKitError.seriesWriteRefused(reason: DetachedOccurrenceSpan.throughSeriesIDStartedRule(reason, allEdited: first.allEdited))
                 }
-                return (saved.event, UpdatedIdentifier.seriesThroughOccurrence(saved: saved.event.eventIdentifier), saved.matchedOccurrence)
+                return (saved.event, UpdatedIdentifier.seriesThroughOccurrence(saved: saved.event.eventIdentifier), saved.matchedOccurrence,
+                        saved.deletionsChecked)
             }
             throw notFoundError(id: identifier)
         }
@@ -1656,6 +1657,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             baseline = proof?.baseline ?? .unproven
             provenSlot = proof?.slot
         }
+        // #506: what the check reached on a series the listing does not cover, for the response.
+        var deletionsChecked: DeletionCheckHorizon?
         if deletedOccurrenceCheckApplies(changesAccount: crossesAccounts, baseline: baseline) {
             let onlyTheAccount = !deletedOccurrenceCheckApplies(changesAccount: false, baseline: baseline)
             // PR #505 round 1: a whole-series write checks every slot; a stand-in never gives the
@@ -1666,7 +1669,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     // Round 6 (LOW 6): across accounts every slot, as move_events_batch checks.
                     reachedFrom: crossesAccounts ? nil : DeletedOccurrenceCheck.reachedFrom(isWholeSeries: reach.isWholeSeries, anchor: reach.anchor),
                     viaStandIn: viaStandInForCheck,
-                    changesAllDay: datePlan.isAllDay != event.isAllDay)
+                    changesAllDay: datePlan.isAllDay != event.isAllDay,
+                    // #506: up to now plus two years, for a change of the start, end or zone in the same
+                    // account only; another account, a new rule pattern or an all_day change (verify r1:
+                    // unmeasured on every route) needs the whole series.
+                    horizonFrom: crossesAccounts || changesPattern || datePlan.isAllDay != event.isAllDay ? nil : Date())
             } ?? .unknown(.notListed)
             let change = DeletedOccurrenceCheck.changeKind(
                 allDayChanges: datePlan.isAllDay != event.isAllDay,
@@ -1675,11 +1682,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 changesZone: changesZone, changesPattern: changesPattern, changesAccount: crossesAccounts)
             switch verdict {
             case .none: break
+            case .noneThrough(let until): deletionsChecked = DeletionCheckHorizon(until: until, zone: Self.occurrenceZone(of: event))
             case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict, fromLaterOccurrence: reach.isFromLaterOccurrence))
-            case .deleted(let blocked):
+            case .deleted(let blocked, let window):
                 // Round 7 (MEDIUM 1, LOW 5): no span-future route across accounts or through the first occurrence's own id.
                 let route = DeletedOccurrenceCheck.refusalRoute(blocked, crossesAccounts: crossesAccounts, throughFirstOwnID: DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours))
-                throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: route, change: change))
+                // #506 verify r2: where the route starts, in the event's zone, as occurrence_start is shown.
+                let zone = Self.occurrenceZone(of: event)
+                let named = window.map { (from: OccurrenceStart.string($0.start, zone: zone), before: OccurrenceStart.string($0.end, zone: zone)) }
+                throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: route, change: change, routeWindow: route == nil ? named : nil))
             case .unknown(let cause): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason(cause))
             }
         }
@@ -1804,7 +1815,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             masterRefreshed: masterRefreshed,
             master: masterRefreshed ? masterEvent.eventIdentifier : nil,
             occurrence: event.eventIdentifier)
-        return (event, seriesIdentifier, matchedOccurrence)
+        return (event, seriesIdentifier, matchedOccurrence, deletionsChecked)
     }
 
     /// The zone a date-only `occurrence_date` is read in for `delete_event` and
@@ -2465,8 +2476,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 return deletedOccurrenceVerdict(of: series, id: seriesID, reachedFrom: nil,
                                                 viaStandIn: ownID ? false : resolved.viaStandIn, changesAllDay: false)
             }()
-            if verdict != .none {
-                throw EventKitError.moveRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))
+            // #506 verify r1 (item 10): exhaustive, so a later horizon here is not read as no deletion.
+            switch verdict {
+            case .none: break
+            case .noneThrough, .deleted, .unknown: throw EventKitError.moveRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))
             }
         }
 

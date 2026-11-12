@@ -903,8 +903,8 @@ stateful，`--cli` 走不到（見上表），而跨帳號的搬移需要第二�
 #513 的拒絕（`RuleEndShift.refusal` 在沒有結束時刻時的月底檢查）只有純函式與原始碼釘選的測試，是從規則語意推得的：store 怎麼依新
 時區重新展開每月規則沒有量過。拒絕不寫入、也不進 undo，是 stateless 的，所以**不擋 tag**：用剛 build 的 binary 的 `--cli`（見上表；
 不用 AppleScript），只在名稱含 `#513` 的拋棄式日曆上做。系列要還沒開始（第一場在未來），#478 才不會先拒絕；用 `occurrence_count`
-結束、開始日在 28 日以前的系列，#503 掃描涵蓋得到，回應的才是 #513 的拒絕而不是 #503 的（沒有結束的系列、或開始日在 29 到 31 日的
-count 系列，#503 本來就以 not covered 拒絕）：
+結束、開始日在 28 日以前的系列，#503 掃描涵蓋得到，回應的才是 #513 的拒絕而不是 #503 的（開始日在 29 到 31 日的 count 系列，#503 本來就拒絕；#506 之後，沒有結束、開始日在 28 日以前的系列改開始或時區，
+#503 改成只檢查到兩年後，同帳號時 #513 是唯一的拒絕）：
 
 1. 建每月、`occurrence_count: 6`、不帶 `days_of_month` 的系列，第一場 2026-12-01 05:00、`timezone` Asia/Tokyo（洛杉磯是 11-30）；
 2. `update_event` 用系列 ID、span `all`，只帶 `timezone: "America/Los_Angeles"`：要被拒絕，訊息含 `#513`（不是 #503 的 not covered），
@@ -914,6 +914,63 @@ count 系列，#503 本來就以 not covered 拒絕）：
    是 store 怎麼展開，記在 #513，用來決定這項拒絕能不能收窄，以及 1 日到 28 日之間的換日要不要也擋。
 
 結果記在 #513。結束後刪掉拋棄式日曆，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#513` 的都是 0。
+
+## Release gate：開放式系列的兩年刪除檢查（#506）
+
+#506 讓 #503 的檢查在列不完整個系列時（沒有結束日、結束在開始後約五年以上、次數推算不出結束），對同帳號、不改規則樣式也不改
+`all_day` 的開始、結束或時區修改，只檢查到「現在加兩年」：
+寫入碰到的場次中沒有單獨刪除的場次，而且列出範圍從這次寫入碰到的第一個場次起、沒有缺口地涵蓋到期限，就放行，回應帶
+`deleted_occurrences_checked_until` 與 `deleted_occurrences_note`。判定（`DeletedOccurrenceHorizon`、`verdict` 的 `noneThrough`）
+有純函式測試，接線只有原始碼釘選。拒絕不寫入、放行的 update 也不進 undo（循環事件的 update-undo 一律拒絕），是 stateless 的：
+用剛 build 的 binary 的 `--cli`（見上表；不用 AppleScript、不用 session MCP），只在名稱含 `#506` 的拋棄式日曆上做，每個形狀用
+新的系列與自己的標題，寫入前後都用另一次 `--cli` 的 `list_events`（只列這個拋棄式日曆）讀回。結束後刪掉拋棄式日曆，隔一分鐘以上
+`list_calendars` 兩次，名稱含 `#506` 的都是 0。
+
+**2026-11-12 已量**（iCloud，PR #521 在措辭修改之前 build 的 binary，Developer ID 簽章；判斷邏輯與最後的版本相同，只有 note 與
+`horizonNotReached` 的文字不同）。都是 Asia/Taipei 每週 10:00、沒有結束日的系列，以 span `all` 改到 15:00：
+
+1. 從 2026-11-16 起、沒有刪除：`updated`，期限內前後都是 104 場，`deleted_occurrences_checked_until` 是 2031-11-15。
+2. 刪掉 2027-03-01（期限內）：拒絕（deleted 的文字、給 span `future` 的路），前後都是 103 場，什麼都沒寫。
+3. 刪掉 2032-01-05（列出範圍之後）：`updated`，那一場以 15:00 回來（接受的風險）；另一個系列刪掉 2030-06-03（期限之後、
+   列出範圍之內）：拒絕，什麼都沒寫。
+4. 從 2021-11-01 起：`updated`，檢查到 2029-11-14（多列了現在前後的範圍）；從 2016-11-07 起：span `all` 以
+   `horizonNotReached` 拒絕，從 2026-11-16 用 span `future`：`updated`，檢查到 2029-11-14。
+5. 從 2018-11-12 起的每日系列：這次呼叫 6.16 s；本週開始的每日系列 2.16 s（日曆裡只有這個系列，#520）。
+
+**2026-11-12 用最後的 binary 也量了**（PR #521 的 `321e0a8` build、Developer ID 簽章，`--cli`，拋棄式日曆 `#506 gate`）。
+每一步都另建一個同形狀、在期限內單獨刪掉一場的系列，同樣的呼叫都以 #503 的 deleted 文字拒絕、讀回不變：
+
+1. **只改 `end_time`**：從 2026-11-16 起每週 10:00–11:00 → 系列 id、span `all`、只帶 `end_time` 11:30：`updated`，到下兩年都是
+   104 場、每場 10:00–11:30，`deleted_occurrences_checked_until` 2031-11-15。對照（刪 2027-02-15）：拒絕，103 場不變。
+2. **還沒開始的系列改時區**：從 2026-12-07 起每週 10:00 Asia/Taipei → 系列 id、span `all`、只帶 `timezone: "America/New_York"`：
+   `updated`，101 場、`item_timezone` 都是 America/New_York，檢查到 2031-12-06。store 保留第一場的瞬間、規則改在紐約的牆上時間
+   展開：每場都是紐約 21:00（前一天），所以紐約進入夏令時間（2027-03-14）之後，臺北時間從 10:00 變成 09:00。這是時區修改本來的
+   語意，不是這次的改動。對照（刪 2027-03-01）：拒絕，100 場不變。
+3. **經場次自己的 id（#416/#428）**：從 2026-11-16 起每週 10:00 → `--cli` 的 span `this` 只改第一場的標題 → 系列 id、span `all`、
+   `start_time` 2026-11-16 15:00（`end_time` 16:00）：`updated`，回應有 `occurrence_id`（第一場的 `/RID=`）與
+   `deleted_occurrences_checked_until` 2031-11-15；104 場都在 15:00–16:00，第一場保留改過的標題。對照（刪 2027-02-15）：拒絕，
+   訊息是經系列 id 那一種（span `this` 帶 `occurrence_date`、從某天起沒有量過的路），103 場不變。
+6. **舊系列從較後的場次起**：從 2016-11-07 起每週 10:00 → 系列 id、span `all`、第一天 15:00：以 `horizonNotReached` 拒絕
+   （最後的措辭：「the check cannot list the series whole, and the listing does not reach two years from now without a gap…」），
+   讀回不變 → 同一個系列 span `future`、`occurrence_date` 2026-11-16、15:00：`updated`（新的系列 id、`id_changed: true`），
+   檢查到 2029-11-14；2026-11-09 之前留在 10:00。對照（刪 2027-02-15，span `future`）：拒絕，105 場不變。
+
+量完之後刪掉拋棄式日曆，`list_calendars` 在 09:49:55 與 09:51:03（+08:00）各查一次，名稱含 `#506` 的都是 0。
+
+**沒量過、不擋 tag**（依程式判斷：5 與已量的形狀走同一份列出範圍、同一個 `verdict`，放行後寫的是同一段 `datePlan.datesToWrite`；
+#506 只改了判定、沒動寫入。4 不帶期限，兩條路都是 main 的拒絕）。每一形狀都另建一個在期限內刪掉一場的系列，同樣的呼叫要拒絕、讀回不變；放行的預期是 `updated`、
+到 `deleted_occurrences_checked_until` 為止的場數不變、回應有那兩個欄位。結果不同就記在 #506：
+
+4. **`all_day: true`**（PR #521 verify r1 起，`all_day` 一律不帶期限）：從下週起每週 10:00、沒有結束日 →
+   (a) 沒有單獨改過的場次，系列 id、span `all`、`all_day: true`：#442 在 #503 之前拒絕（列不完整個系列時，`refusesAllDayChange`
+   的 `hasEditedOccurrence` 讀 `editedOccurrenceUnknown`）；(b) `--cli` 的 span `this` 只改第一場的標題，再用系列 id（或第一場自己的
+   id）、span `all`、`all_day: true`：這條路 #442 不適用（#428 (h) 量過它放行開放式系列），#503 因為沒有期限而以 not covered 拒絕
+   （`horizonFrom` 在 `all_day` 改變時是 nil，`DeletedOccurrenceHorizonWiringTests` 釘住）。兩種都回拒絕、什麼都沒寫；不需要另建刪除的
+   對照組。若 (b) 放行，就是 `all_day` 拿到了期限，要回報。
+5. **次數推算不出結束、或結束日在列出範圍之後**：(a) 每月、`days_of_month: [5, 20]`、`occurrence_count: 150`，第一場 2026-12-05；
+   (b) 每週一三、`occurrence_count: 600`，第一場 2026-12-07（週一）；(c) 每週、`end_date` 在七年後、而且在某一場之後至少一週，
+   第一場 2026-12-07。都是 10:00，改成第一天 09:00（往前移，#509 才不會先回它的文字）。第一場要落在規則的日子上，否則檢查以
+   規則無法展開拒絕，這一步就不算數。5 的次數計算是 #503 已量過的 `expectedSlots` 在列得完的次數系列上用的同一段。
 
 ## Release gate：循環事件整串修改的 undo（#263）
 

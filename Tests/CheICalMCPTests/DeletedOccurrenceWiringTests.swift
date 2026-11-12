@@ -49,7 +49,8 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(update.contains("case .unknown(let cause): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason(cause))"))
         // PR #505 round 7 (MEDIUM 1, LOW 5): the route block knows the account and the first occurrence's own id.
         XCTAssertTrue(update.contains("let route = DeletedOccurrenceCheck.refusalRoute(blocked, crossesAccounts: crossesAccounts, throughFirstOwnID: DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours))"))
-        XCTAssertTrue(update.contains("DeletedOccurrenceCheck.deletedReason(blocked: route, change: change)"))
+        // #506 verify r2: the route window is named only when the route is offered.
+        XCTAssertTrue(update.contains("DeletedOccurrenceCheck.deletedReason(blocked: route, change: change, routeWindow: route == nil ? named : nil)"))
         XCTAssertTrue(update.contains("case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict, fromLaterOccurrence: reach.isFromLaterOccurrence))"))
     }
 
@@ -63,7 +64,8 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertLessThan(check.lowerBound, firstWrite.lowerBound)
         XCTAssertTrue(move.contains("if isRecurring, !(span == .this && occurrenceDate != nil),"))
         XCTAssertTrue(move.contains("FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: master.calendar?.source?.sourceIdentifier,"))
-        XCTAssertTrue(move.contains("if verdict != .none {"))
+        // #506 verify r1 (item 10): an exhaustive switch replaced `if verdict != .none {`.
+        XCTAssertTrue(move.contains("switch verdict {"))
         XCTAssertTrue(move.contains("throw EventKitError.moveRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))"))
         // PR #505 round 5 (INFO 6): a malformed call answers with its argument error, before the
         // series is listed.
@@ -84,12 +86,15 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
     func testTheVerdictListsTheSeriesAsTheAllDayCheckDoes() throws {
         let file = SourcePins.code(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift"))
         let body = try XCTUnwrap(SourcePins.body(of: "func deletedOccurrenceVerdict(", in: file))
-        XCTAssertTrue(body.contains("seriesOccurrences(of: series, id: id)"))
-        XCTAssertTrue(body.contains("SeriesExceptionsPlanner.listingRanges(for: window)"))
-        XCTAssertTrue(body.contains("DetachedOccurrenceSpan.coversWholeSeries("))
+        // #506: the listing ranges come from the horizon helper, which returns #442's ranges when no horizon is given
+        // or they reach it (DeletedOccurrenceHorizonTests.testAYoungSeriesIsListedAsBefore).
+        XCTAssertTrue(body.contains("seriesOccurrences(of: series, id: id, ranges: ranges)"))
+        XCTAssertTrue(body.contains("DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now ?? Date(), rules: extents,"))
+        // #506 verify r1: coverage through `DeletedOccurrenceCheck.coversWholeSeries(ranges:)`, which wraps #442's.
+        XCTAssertTrue(body.contains("DeletedOccurrenceCheck.coversWholeSeries("))
         XCTAssertTrue(body.contains("UndoPostState.ruleSlot(of:"), "edited occurrences count by their rule slot")
         XCTAssertTrue(body.contains("DeletedOccurrenceCheck.firstSlotResult("), "the first slot is proven, never taken from a stand-in")
-        XCTAssertTrue(body.contains("firstSlotCause: firstSlotCause)"), "the cause reaches the verdict (round 5)")
+        XCTAssertTrue(body.contains("firstSlotCause: firstSlotCause, listed: ranges, horizon: horizon)"), "the cause reaches the verdict (round 5)")
         XCTAssertTrue(body.contains("let atStart = candidates.filter { UndoPostState.sameInstant($0.start, series.startDate) }"),
                       "every occurrence at the object's own start is counted (round 3: it must be one)")
         XCTAssertTrue(body.contains("earliestListedSlot: candidates.map(ruleSlot).min()"))
@@ -97,14 +102,15 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(body.contains("slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID }"))
         XCTAssertTrue(body.contains("guard !candidates.isEmpty else { return .unknown(.notListed) }"), "an empty listing is not 'none deleted'")
         // PR #505 round 4 (LOW 4, 7): an all-day series' end is read with its all-day flag.
-        XCTAssertTrue(body.contains("isAllDay: series.isAllDay, firstSlotCause: firstSlotCause)"))
+        XCTAssertTrue(body.contains("isAllDay: series.isAllDay, firstSlotCause: firstSlotCause, listed: ranges, horizon: horizon)"))
     }
 
     /// PR #505 round 6 (LOW 8): the start_time description's list names the conditions the check
     /// refuses on that round 4 and 5 added.
     func testTheStartTimeDescriptionNamesTheLaterConditions() throws {
         let server = try SourcePins.source("Server.swift")
-        for part in ["or the series is all-day and its rule ends less than a day after an occurrence's start), since it brought deleted occurrences back (#503).",
+        for part in [// #506 verify r1 (item 6): the list now ends with the expansion cap.
+                     "or the series is all-day and its rule ends less than a day after an occurrence's start, or its rule gives more than 20,000 occurrences before the end of the listing), since it brought deleted occurrences back (#503).",
                      "dates written over the whole series that equal the shown times of a first occurrence edited on its own",
                      "a recurrence with another pattern (frequency, interval, days or count) over more than one occurrence (not measured)."] {
             XCTAssertEqual(SourcePins.ranges(of: part, in: server).count, 1, part)

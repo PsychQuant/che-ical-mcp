@@ -8,6 +8,8 @@ import Foundation
 /// - update with `occurrenceDate` and span this: a detached occurrence `occurrence-<seconds>` of the
 ///   series (`seriesIdentifier`); with span future: a new series `split-<id>`;
 /// - update of an id starting with `allday-`: the stored event is all-day, 2027-04-10 (host zone);
+/// - update of an id starting with `horizon-`: #503's check went up to a horizon (#506), and the
+///   saved value says it checked until `horizonUntil` in `horizonZone`;
 /// - create titled `duplicate`: answered as a duplicate;
 /// - `occurrenceDateTimeZone`: answers `occurrenceZone` (#383) and records the identifier asked for;
 ///   the identifier `denied` throws `accessDenied`. An occurrence edit (date given, not span all)
@@ -32,6 +34,10 @@ actor FakeEventWriteSource: EventWriteSource {
     static var storedStart: Date {
         host.date(from: DateComponents(year: 2027, month: 4, day: 10)) ?? Date(timeIntervalSince1970: 1_807_000_000)
     }
+
+    /// #506: what a `horizon-` update reports as checked.
+    static let horizonZone = TimeZone(identifier: "America/New_York")
+    static let horizonUntil = Date(timeIntervalSince1970: 1_952_000_000)
 
     func updateEventValue(_ request: EventUpdateRequest) async throws -> EventWriteValue {
         // Verify round 4: an occurrence edit with a calendar of another account is refused before
@@ -63,6 +69,9 @@ actor FakeEventWriteSource: EventWriteSource {
                                     seriesIdentifier: seriesIdentifier)
         if let occurrence = request.occurrenceDate, !request.applyToAll {
             value.matchedOccurrence = MatchedOccurrence(start: occurrence, zone: occurrenceZone)
+        }
+        if request.identifier.hasPrefix("horizon-") {
+            value.deletionsChecked = DeletionCheckHorizon(until: Self.horizonUntil, zone: Self.horizonZone)
         }
         return value
     }
