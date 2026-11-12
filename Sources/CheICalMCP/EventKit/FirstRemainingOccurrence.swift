@@ -200,38 +200,47 @@ extension EventKitManager {
                                    ranges: [DateInterval]? = nil) -> ([EKEvent], [FirstRemainingOccurrence.Candidate])? {
         guard let calendar = stale.calendar, let window = seriesScanWindow(of: stale) else { return nil }
         let series = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: stale.calendarItemExternalIdentifier)
-        var listed: [EKEvent] = []
-        var byExternalID: [Bool] = []
-        // #520: what was taken already, by calendar item identifier and exact start. A set, so each
-        // occurrence's two properties are read once; a scan of `listed` for every occurrence read them
-        // again for every earlier one, which took seconds on a long daily series.
-        var seen = FirstSeen<ListedOccurrenceKey>()
-        // The window and a year on each side, as #285's exception capture lists them (verify round
-        // 3): an edited occurrence moved a few months out of the window blocks the stand-in too.
-        for range in ranges ?? SeriesExceptionsPlanner.listingRanges(for: window) {
-            let predicate = eventStore.predicateForEvents(withStart: range.start, end: range.end, calendars: [calendar])
-            eventStore.enumerateEvents(matching: predicate) { event, _ in
-                let ids = UndoPostState.OccurrenceIDs(eventIdentifier: event.eventIdentifier,
-                                                      externalIdentifier: event.calendarItemExternalIdentifier)
-                guard UndoPostState.isOccurrence(ids, of: series) else { return }
-                // An occurrence overlapping two ranges is listed by both.
-                guard seen.insert(ListedOccurrenceKey(calendarItemIdentifier: event.calendarItemIdentifier, start: event.startDate)) else { return }
-                listed.append(event)
-                byExternalID.append(event.eventIdentifier != id && !(event.eventIdentifier?.hasPrefix(id + "/") ?? false))
+        // #527: inside a stretch of checks (`SeriesListingMemo.sharing`, opened by `updateEvent`
+        // only) a listing over the same calendar, series and ranges is made once and read again;
+        // outside one, the body below runs on every call. The key holds everything the listing
+        // depends on but the store itself.
+        let key = SeriesListingKey(calendarIdentifier: calendar.calendarIdentifier, eventIdentifier: id,
+                                   externalIdentifier: series.externalIdentifier,
+                                   ranges: ranges ?? SeriesExceptionsPlanner.listingRanges(for: window))
+        return seriesListings.listing(for: key) {
+            var listed: [EKEvent] = []
+            var byExternalID: [Bool] = []
+            // #520: what was taken already, by calendar item identifier and exact start. A set, so each
+            // occurrence's two properties are read once; a scan of `listed` for every occurrence read them
+            // again for every earlier one, which took seconds on a long daily series.
+            var seen = FirstSeen<ListedOccurrenceKey>()
+            // The window and a year on each side, as #285's exception capture lists them (verify round
+            // 3): an edited occurrence moved a few months out of the window blocks the stand-in too.
+            for range in ranges ?? SeriesExceptionsPlanner.listingRanges(for: window) {
+                let predicate = eventStore.predicateForEvents(withStart: range.start, end: range.end, calendars: [calendar])
+                eventStore.enumerateEvents(matching: predicate) { event, _ in
+                    let ids = UndoPostState.OccurrenceIDs(eventIdentifier: event.eventIdentifier,
+                                                          externalIdentifier: event.calendarItemExternalIdentifier)
+                    guard UndoPostState.isOccurrence(ids, of: series) else { return }
+                    // An occurrence overlapping two ranges is listed by both.
+                    guard seen.insert(ListedOccurrenceKey(calendarItemIdentifier: event.calendarItemIdentifier, start: event.startDate)) else { return }
+                    listed.append(event)
+                    byExternalID.append(event.eventIdentifier != id && !(event.eventIdentifier?.hasPrefix(id + "/") ?? false))
+                }
             }
+            let candidates = zip(listed, byExternalID).map { event, external in
+                FirstRemainingOccurrence.Candidate(
+                    eventIdentifier: event.eventIdentifier, isDetached: event.isDetached,
+                    hasRecurrenceRules: event.hasRecurrenceRules, start: event.startDate,
+                    slot: UndoPostState.originalSlot(eventIdentifier: event.eventIdentifier,
+                                                     externalIdentifier: event.calendarItemExternalIdentifier,
+                                                     occurrenceDate: event.occurrenceDate),
+                    sameSeriesByExternalID: external,
+                    slotFromRID: FirstRemainingOccurrence.slotIsFromRID(eventIdentifier: event.eventIdentifier,
+                                                                        externalIdentifier: event.calendarItemExternalIdentifier))
+            }
+            return (listed, candidates)
         }
-        let candidates = zip(listed, byExternalID).map { event, external in
-            FirstRemainingOccurrence.Candidate(
-                eventIdentifier: event.eventIdentifier, isDetached: event.isDetached,
-                hasRecurrenceRules: event.hasRecurrenceRules, start: event.startDate,
-                slot: UndoPostState.originalSlot(eventIdentifier: event.eventIdentifier,
-                                                 externalIdentifier: event.calendarItemExternalIdentifier,
-                                                 occurrenceDate: event.occurrenceDate),
-                sameSeriesByExternalID: external,
-                slotFromRID: FirstRemainingOccurrence.slotIsFromRID(eventIdentifier: event.eventIdentifier,
-                                                                    externalIdentifier: event.calendarItemExternalIdentifier))
-        }
-        return (listed, candidates)
     }
 
     /// #335 item 1: from one listing of the series `stale` in the scan window, whether a stand-in

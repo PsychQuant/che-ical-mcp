@@ -50,6 +50,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// an older occurrence record of that series sees its slot held (`OccurrenceSlotGuard`). In
     /// memory, like the undo history: a restart loses both together.
     var seriesRecreations = SeriesRecreations()
+    /// #527: the series listings shared inside one stretch of checks (`SeriesListingMemo`):
+    /// `seriesOccurrences` reads through it, and only `updateEvent` opens a stretch, around the #503
+    /// baseline and verdict. Outside a stretch it keeps nothing.
+    let seriesListings = SeriesListingMemo<([EKEvent], [FirstRemainingOccurrence.Candidate])>()
 
     static let shared = EventKitManager()
 
@@ -1652,46 +1656,54 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // Round 6 (LOW 5): the proven slot is also what a planned start is compared with for the route text.
         var baseline = DeletedOccurrenceCheck.StoredBaseline.stored
         var provenSlot: Date? = event.startDate
-        if reach.isWholeSeries, datePlan.datesToWrite != nil {
-            let proof = try seriesForCheck().map { wholeSeriesBaseline(of: $0.0, id: $0.1, viaStandIn: viaStandInForCheck) }
-            baseline = proof?.baseline ?? .unproven
-            provenSlot = proof?.slot
-        }
         // #506: what the check reached on a series the listing does not cover, for the response.
         var deletionsChecked: DeletionCheckHorizon?
-        if deletedOccurrenceCheckApplies(changesAccount: crossesAccounts, baseline: baseline) {
-            let onlyTheAccount = !deletedOccurrenceCheckApplies(changesAccount: false, baseline: baseline)
-            // PR #505 round 1: a whole-series write checks every slot; a stand-in never gives the
-            // first slot (the own-id path reads the series' own object, not a stand-in).
-            let verdict: DeletedOccurrenceCheck.Verdict = try seriesForCheck().map {
-                deletedOccurrenceVerdict(
-                    of: $0.0, id: $0.1,
-                    // Round 6 (LOW 6): across accounts every slot, as move_events_batch checks.
-                    reachedFrom: crossesAccounts ? nil : DeletedOccurrenceCheck.reachedFrom(isWholeSeries: reach.isWholeSeries, anchor: reach.anchor),
-                    viaStandIn: viaStandInForCheck,
-                    changesAllDay: datePlan.isAllDay != event.isAllDay,
-                    // #506: up to now plus two years, for a change of the start, end or zone in the same
-                    // account only; another account, a new rule pattern or an all_day change (verify r1:
-                    // unmeasured on every route) needs the whole series.
-                    horizonFrom: crossesAccounts || changesPattern || datePlan.isAllDay != event.isAllDay ? nil : Date())
-            } ?? .unknown(.notListed)
-            let change = DeletedOccurrenceCheck.changeKind(
-                allDayChanges: datePlan.isAllDay != event.isAllDay,
-                startChanges: DeletedOccurrenceCheck.startChanges(planned: datePlan.datesToWrite?.start, provenSlot: provenSlot),
-                endChanges: datePlan.datesToWrite.map { !UndoPostState.sameInstant($0.end, event.endDate) } ?? false,
-                changesZone: changesZone, changesPattern: changesPattern, changesAccount: crossesAccounts)
-            switch verdict {
-            case .none: break
-            case .noneThrough(let until): deletionsChecked = DeletionCheckHorizon(until: until, zone: Self.occurrenceZone(of: event))
-            case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict, fromLaterOccurrence: reach.isFromLaterOccurrence))
-            case .deleted(let blocked, let window):
-                // Round 7 (MEDIUM 1, LOW 5): no span-future route across accounts or through the first occurrence's own id.
-                let route = DeletedOccurrenceCheck.refusalRoute(blocked, crossesAccounts: crossesAccounts, throughFirstOwnID: DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours))
-                // #506 verify r2: where the route starts, in the event's zone, as occurrence_start is shown.
-                let zone = Self.occurrenceZone(of: event)
-                let named = window.map { (from: OccurrenceStart.string($0.start, zone: zone), before: OccurrenceStart.string($0.end, zone: zone)) }
-                throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: route, change: change, routeWindow: route == nil ? named : nil))
-            case .unknown(let cause): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason(cause))
+        // #527: the baseline and the verdict list the same series one after the other. Inside this
+        // stretch a listing is made once per set of ranges, so where the verdict lists the ranges the
+        // baseline listed (no horizon, a series begun less than about three years ago, or one the
+        // base ranges cover) it reads the baseline's listing. It lists again only over other ranges
+        // (#506's window around now). The stretch cannot suspend and ends before `seriesUpdatePlan`,
+        // which lists after a refresh is requested, and before the first field is assigned.
+        try seriesListings.sharing {
+            if reach.isWholeSeries, datePlan.datesToWrite != nil {
+                let proof = try seriesForCheck().map { wholeSeriesBaseline(of: $0.0, id: $0.1, viaStandIn: viaStandInForCheck) }
+                baseline = proof?.baseline ?? .unproven
+                provenSlot = proof?.slot
+            }
+            if deletedOccurrenceCheckApplies(changesAccount: crossesAccounts, baseline: baseline) {
+                let onlyTheAccount = !deletedOccurrenceCheckApplies(changesAccount: false, baseline: baseline)
+                // PR #505 round 1: a whole-series write checks every slot; a stand-in never gives the
+                // first slot (the own-id path reads the series' own object, not a stand-in).
+                let verdict: DeletedOccurrenceCheck.Verdict = try seriesForCheck().map {
+                    deletedOccurrenceVerdict(
+                        of: $0.0, id: $0.1,
+                        // Round 6 (LOW 6): across accounts every slot, as move_events_batch checks.
+                        reachedFrom: crossesAccounts ? nil : DeletedOccurrenceCheck.reachedFrom(isWholeSeries: reach.isWholeSeries, anchor: reach.anchor),
+                        viaStandIn: viaStandInForCheck,
+                        changesAllDay: datePlan.isAllDay != event.isAllDay,
+                        // #506: up to now plus two years, for a change of the start, end or zone in the same
+                        // account only; another account, a new rule pattern or an all_day change (verify r1:
+                        // unmeasured on every route) needs the whole series.
+                        horizonFrom: crossesAccounts || changesPattern || datePlan.isAllDay != event.isAllDay ? nil : Date())
+                } ?? .unknown(.notListed)
+                let change = DeletedOccurrenceCheck.changeKind(
+                    allDayChanges: datePlan.isAllDay != event.isAllDay,
+                    startChanges: DeletedOccurrenceCheck.startChanges(planned: datePlan.datesToWrite?.start, provenSlot: provenSlot),
+                    endChanges: datePlan.datesToWrite.map { !UndoPostState.sameInstant($0.end, event.endDate) } ?? false,
+                    changesZone: changesZone, changesPattern: changesPattern, changesAccount: crossesAccounts)
+                switch verdict {
+                case .none: break
+                case .noneThrough(let until): deletionsChecked = DeletionCheckHorizon(until: until, zone: Self.occurrenceZone(of: event))
+                case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict, fromLaterOccurrence: reach.isFromLaterOccurrence))
+                case .deleted(let blocked, let window):
+                    // Round 7 (MEDIUM 1, LOW 5): no span-future route across accounts or through the first occurrence's own id.
+                    let route = DeletedOccurrenceCheck.refusalRoute(blocked, crossesAccounts: crossesAccounts, throughFirstOwnID: DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours))
+                    // #506 verify r2: where the route starts, in the event's zone, as occurrence_start is shown.
+                    let zone = Self.occurrenceZone(of: event)
+                    let named = window.map { (from: OccurrenceStart.string($0.start, zone: zone), before: OccurrenceStart.string($0.end, zone: zone)) }
+                    throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: route, change: change, routeWindow: route == nil ? named : nil))
+                case .unknown(let cause): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason(cause))
+                }
             }
         }
 
