@@ -246,7 +246,8 @@ enum DeletedOccurrenceCheck {
             return .unknown(.allDayEnd)
         }
         // #520: each list is sorted once and asked through `InstantSet`, with `sameInstant`'s tolerance;
-        // a scan of the other list for every slot took seconds on a long series.
+        // a scan of the other list for every slot took a third of a second for 4,000 listed occurrences
+        // and grew with the square.
         let expectedSet = InstantSet(expected, counter: comparisons)
         func isExpected(_ slot: Date) -> Bool { expectedSet.contains(slot) }
         // Round 3 (MEDIUM): the expander and the store must agree both ways. A listed slot the rule

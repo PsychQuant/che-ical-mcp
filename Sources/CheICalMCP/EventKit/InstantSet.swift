@@ -10,7 +10,7 @@ final class ComparisonCounter {
 /// #520: the instants of a list, to ask whether any of them is the same instant as another one, to the
 /// second: what `list.contains { UndoPostState.sameInstant($0, query) }` answers, without the scan.
 /// The #503 verdict (`DeletedOccurrenceCheck.verdict`) made that scan for every slot of the rule and
-/// for every listed slot, which took seconds on a long series.
+/// for every listed slot: a third of a second for 4,000 listed occurrences, growing with the square.
 ///
 /// The tolerance is not transitive (0.6 s apart twice is 1.2 s apart), so the instants are not
 /// rounded into a hash set: they are sorted, and a lookup finds the first one at or after the query
