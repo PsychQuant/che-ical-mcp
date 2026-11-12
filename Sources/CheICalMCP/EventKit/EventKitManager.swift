@@ -1670,9 +1670,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     reachedFrom: crossesAccounts ? nil : DeletedOccurrenceCheck.reachedFrom(isWholeSeries: reach.isWholeSeries, anchor: reach.anchor),
                     viaStandIn: viaStandInForCheck,
                     changesAllDay: datePlan.isAllDay != event.isAllDay,
-                    // #506: up to now plus two years, for a change of the start, end, all_day or zone in
-                    // the same account only; another account or a new rule pattern needs the whole series.
-                    horizonFrom: crossesAccounts || changesPattern ? nil : Date())
+                    // #506: up to now plus two years, for a change of the start, end or zone in the same
+                    // account only; another account, a new rule pattern or an all_day change (verify r1:
+                    // unmeasured on every route) needs the whole series.
+                    horizonFrom: crossesAccounts || changesPattern || datePlan.isAllDay != event.isAllDay ? nil : Date())
             } ?? .unknown(.notListed)
             let change = DeletedOccurrenceCheck.changeKind(
                 allDayChanges: datePlan.isAllDay != event.isAllDay,
@@ -2458,8 +2459,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 return deletedOccurrenceVerdict(of: series, id: seriesID, reachedFrom: nil,
                                                 viaStandIn: ownID ? false : resolved.viaStandIn, changesAllDay: false)
             }()
-            if verdict != .none {
-                throw EventKitError.moveRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))
+            // #506 verify r1 (item 10): exhaustive, so a later horizon here is not read as no deletion.
+            switch verdict {
+            case .none: break
+            case .noneThrough, .deleted, .unknown: throw EventKitError.moveRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))
             }
         }
 

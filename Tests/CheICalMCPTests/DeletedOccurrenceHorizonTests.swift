@@ -20,6 +20,25 @@ final class DeletedOccurrenceHorizonTests: XCTestCase {
     private let openWeekly = DeletedOccurrenceCheck.Rule(frequency: .weekly, interval: 1, daysOfWeek: [], daysOfMonth: [],
                                                         endDate: nil, occurrenceCount: 0, hasOtherParts: false)
 
+    /// An EKRecurrenceRule (no store needed) for the coverage helpers, weekly unless given.
+    private func rule(_ frequency: EKRecurrenceFrequency = .weekly, end: Date? = nil, count: Int = 0,
+                      daysOfMonth: [Int]? = nil, daysOfWeek: [EKWeekday]? = nil) -> EKRecurrenceRule {
+        let recurrenceEnd = end.map { EKRecurrenceEnd(end: $0) } ?? (count > 0 ? EKRecurrenceEnd(occurrenceCount: count) : nil)
+        return EKRecurrenceRule(recurrenceWith: frequency, interval: 1,
+                                daysOfTheWeek: daysOfWeek.map { $0.map { EKRecurrenceDayOfWeek($0) } },
+                                daysOfTheMonth: daysOfMonth.map { $0.map { NSNumber(value: $0) } }, monthsOfTheYear: nil,
+                                weeksOfTheYear: nil, daysOfTheYear: nil, setPositions: nil, end: recurrenceEnd)
+    }
+
+    private func ranges(_ window: DateInterval, horizon: Date?, now: Date, rules: [EKRecurrenceRule], first: Date) -> [DateInterval] {
+        DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now,
+                                             rules: rules.map(DetachedOccurrenceSpan.RuleExtent.init), firstStart: first, calendar: calendar)
+    }
+
+    private func window(first: Date, end: Date?) -> DateInterval {
+        UndoPostState.seriesScanWindow(firstStart: first, ruleEnd: end)
+    }
+
     // MARK: - The horizon
 
     func testTheHorizonIsTwoYearsFromNowOnTheWallClockOfTheSeriesZone() throws {
@@ -40,11 +59,12 @@ final class DeletedOccurrenceHorizonTests: XCTestCase {
     /// reaches past the horizon, so no range around now is added.
     func testAYoungSeriesIsListedAsBefore() {
         let now = at("2026-11-12T10:00:00")
-        let window = UndoPostState.seriesScanWindow(firstStart: at("2026-01-05T10:00:00"), ruleEnd: nil)
+        let first = at("2026-01-05T10:00:00")
+        let window = UndoPostState.seriesScanWindow(firstStart: first, ruleEnd: nil)
         let horizon = DeletedOccurrenceCheck.horizon(now: now, calendar: calendar)!
-        XCTAssertEqual(DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now),
+        XCTAssertEqual(ranges(window, horizon: horizon, now: now, rules: [rule()], first: first),
                        SeriesExceptionsPlanner.listingRanges(for: window))
-        XCTAssertEqual(DeletedOccurrenceCheck.listingRanges(window: window, horizon: nil, now: now),
+        XCTAssertEqual(ranges(window, horizon: nil, now: now, rules: [rule()], first: first),
                        SeriesExceptionsPlanner.listingRanges(for: window), "no horizon: unchanged")
     }
 
@@ -56,7 +76,7 @@ final class DeletedOccurrenceHorizonTests: XCTestCase {
         let window = UndoPostState.seriesScanWindow(firstStart: first, ruleEnd: nil)
         let horizon = try XCTUnwrap(DeletedOccurrenceCheck.horizon(now: now, calendar: calendar))
         XCTAssertLessThan(SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max()!, horizon)
-        let ranges = DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now)
+        let ranges = ranges(window, horizon: horizon, now: now, rules: [rule()], first: first)
         let end = try XCTUnwrap(DeletedOccurrenceCheck.listedEnd(of: ranges, from: first))
         XCTAssertGreaterThanOrEqual(end, horizon)
         // The range around now runs from 1094 days before now to a day past the horizon.
@@ -73,7 +93,7 @@ final class DeletedOccurrenceHorizonTests: XCTestCase {
         let first = at("2016-11-07T10:00:00")
         let window = UndoPostState.seriesScanWindow(firstStart: first, ruleEnd: nil)
         let horizon = try XCTUnwrap(DeletedOccurrenceCheck.horizon(now: now, calendar: calendar))
-        let ranges = DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now)
+        let ranges = ranges(window, horizon: horizon, now: now, rules: [rule()], first: first)
         let fromFirst = try XCTUnwrap(DeletedOccurrenceCheck.listedEnd(of: ranges, from: first))
         XCTAssertLessThan(fromFirst, now, "the block from the first start ends before now")
         // From an occurrence near now (span future), the listing around now reaches the horizon.
@@ -151,9 +171,29 @@ final class DeletedOccurrenceHorizonTests: XCTestCase {
         let anchor = at("2026-11-16T10:00:00")
         XCTAssertEqual(verdict(first: first, listed: [early, late], observed: observed, reachedFrom: anchor, horizon: horizon),
                        .noneThrough(late.end))
-        // A deletion found in the listing before the gap still refuses the whole-series write.
+        // A deletion found in the listing before the gap still refuses the whole-series write. Verify r1:
+        // the refusal offers span future from an occurrence in the block around now, which reaches the
+        // horizon and passes (gate step 6 measured that shape), not the first occurrence after the deletion.
         XCTAssertEqual(verdict(first: first, listed: [early, late], observed: observed.filter { $0 != at("2018-01-01T10:00:00") }, horizon: horizon),
-                       .deleted(blocked: .notCovered))
+                       .deleted(blocked: nil))
+    }
+
+    /// Verify r1 (item 1): the route is taken from the first held, unedited occurrence after the last
+    /// deletion whose unbroken listing reaches the horizon, and the refusal text names it.
+    func testAnEarlyDeletionOffersTheRouteFromTheBlockAroundNow() {
+        let first = at("2016-11-07T10:00:00")
+        let early = DateInterval(start: at("2015-11-01T00:00:00"), end: at("2021-11-01T00:00:00"))
+        let late = DateInterval(start: at("2022-11-01T00:00:00"), end: at("2029-11-15T00:00:00"))
+        let observed = slots(from: first, until: late.end).filter { (early.contains($0) || late.contains($0)) && $0 != at("2019-03-04T10:00:00") }
+        let refused = verdict(first: first, listed: [early, late], observed: observed, horizon: horizon)
+        XCTAssertEqual(refused, .deleted(blocked: nil))
+        XCTAssertTrue(DeletedOccurrenceCheck.deletedReason(blocked: nil).contains("span 'future' with the occurrence_date of an occurrence after it"))
+        // The route it offers passes: span future from an occurrence in the block around now.
+        XCTAssertEqual(verdict(first: first, listed: [early, late], observed: observed, reachedFrom: at("2026-11-16T10:00:00"), horizon: horizon),
+                       .noneThrough(late.end))
+        // Without the block around now, no occurrence after the deletion reaches the horizon.
+        XCTAssertEqual(verdict(first: first, listed: [early], observed: observed.filter { early.contains($0) }, horizon: horizon),
+                       .deleted(blocked: .horizonNotReached))
     }
 
     func testAnAnchorOutsideTheListingIsUnknown() {
@@ -171,7 +211,146 @@ final class DeletedOccurrenceHorizonTests: XCTestCase {
         XCTAssertEqual(verdict(listed: oneBlock, observed: missing, horizon: nil), .deleted(blocked: .notCovered), "as before")
         let short = [DateInterval(start: at("2025-01-01T00:00:00"), end: at("2028-06-01T00:00:00"))]
         XCTAssertEqual(verdict(listed: short, observed: missing.filter { $0 < at("2028-06-01T00:00:00") }, horizon: horizon),
-                       .deleted(blocked: .notCovered))
+                       .deleted(blocked: .horizonNotReached))
+    }
+
+    /// Verify r1 (item 2): the no-horizon route text says the route was not evaluated against the
+    /// two-year check; only the horizon case says the listing does not reach two years from now.
+    func testTheRouteTextsSayWhetherTheHorizonWasEvaluated() {
+        let notEvaluated = DeletedOccurrenceCheck.deletedReason(blocked: .notCovered)
+        XCTAssertEqual(SourcePins.ranges(of: "was not evaluated against the two-year check (#506)", in: notEvaluated).count, 1, notEvaluated)
+        XCTAssertFalse(notEvaluated.contains("does not reach two years from now"), notEvaluated)
+        XCTAssertTrue(notEvaluated.contains("goes on past what this check can list"), notEvaluated)
+        let reached = DeletedOccurrenceCheck.deletedReason(blocked: .horizonNotReached)
+        XCTAssertEqual(SourcePins.ranges(of: "from no occurrence after the last deleted one does the listing reach two years from now without a gap (#506)", in: reached).count, 1, reached)
+        XCTAssertFalse(reached.contains("was not evaluated"), reached)
+        XCTAssertTrue(reached.contains("Nothing was written."), reached)
+    }
+
+    // MARK: - Coverage before the window around now (verify r1 item 4) and its computation (item 8)
+
+    /// A bounded series main listed whole keeps main's ranges: no window around now is listed.
+    func testASeriesTheBaseListingCoversKeepsMainsRanges() throws {
+        let now = at("2026-11-12T10:00:00")
+        let horizon = try XCTUnwrap(DeletedOccurrenceCheck.horizon(now: now, calendar: calendar))
+        // Begun four years ago, ending in six months.
+        let first = at("2022-11-07T10:00:00"), end = at("2027-05-10T10:00:00")
+        let soon = window(first: first, end: end)
+        XCTAssertEqual(ranges(soon, horizon: horizon, now: now, rules: [rule(end: end)], first: first),
+                       SeriesExceptionsPlanner.listingRanges(for: soon))
+        // Ended years ago.
+        let oldFirst = at("2015-01-05T10:00:00"), oldEnd = at("2016-01-04T10:00:00")
+        let ended = window(first: oldFirst, end: oldEnd)
+        XCTAssertEqual(ranges(ended, horizon: horizon, now: now, rules: [rule(end: oldEnd)], first: oldFirst),
+                       SeriesExceptionsPlanner.listingRanges(for: ended))
+    }
+
+    /// A series begun ten years ago that ends in a year: its listing has a gap, so it is not covered;
+    /// taking the listing's last end (main's computation) would call it covered across the gap.
+    func testCoverageIsTakenFromTheUnbrokenListingFromTheFirstStart() throws {
+        let now = at("2026-11-12T10:00:00")
+        let horizon = try XCTUnwrap(DeletedOccurrenceCheck.horizon(now: now, calendar: calendar))
+        let first = at("2016-11-07T10:00:00"), end = at("2027-11-08T10:00:00")
+        let rules = [rule(end: end)].map(DetachedOccurrenceSpan.RuleExtent.init)
+        let listed = ranges(window(first: first, end: end), horizon: horizon, now: now, rules: [rule(end: end)], first: first)
+        XCTAssertFalse(DeletedOccurrenceCheck.coversWholeSeries(rules: rules, firstStart: first, ranges: listed, calendar: calendar))
+        XCTAssertTrue(DetachedOccurrenceSpan.coversWholeSeries(rules: rules, firstStart: first, scannedTo: listed.map(\.end).max()!, calendar: calendar),
+                      "the last end alone would say covered")
+    }
+
+    /// Verify r1 (item 7): a bounded series begun about six years ago that ends in a year is listed
+    /// whole once the window around now is added, so it answers `.none` (every occurrence compared),
+    /// without the two fields.
+    func testABoundedSeriesTheTwoListingsCoverAnswersNone() throws {
+        let now = at("2026-11-12T10:00:00")
+        let horizon = try XCTUnwrap(DeletedOccurrenceCheck.horizon(now: now, calendar: calendar))
+        let first = at("2020-11-02T10:00:00"), end = at("2027-11-08T10:00:00")
+        let ekRule = rule(end: end)
+        let listed = ranges(window(first: first, end: end), horizon: horizon, now: now, rules: [ekRule], first: first)
+        XCTAssertNotEqual(listed, SeriesExceptionsPlanner.listingRanges(for: window(first: first, end: end)), "the window around now is listed")
+        let covers = DeletedOccurrenceCheck.coversWholeSeries(rules: [DetachedOccurrenceSpan.RuleExtent(ekRule)], firstStart: first,
+                                                              ranges: listed, calendar: calendar)
+        XCTAssertTrue(covers)
+        let checkRule = DeletedOccurrenceCheck.Rule(ekRule)
+        let all = DeletedOccurrenceCheck.expectedSlots(of: checkRule, firstStart: first, until: listed.map(\.end).max()!, calendar: calendar) ?? []
+        XCTAssertEqual(DeletedOccurrenceCheck.verdict(rules: [checkRule], firstStart: first, observedSlots: all, uneditedSlots: all, slotsTrusted: true,
+                                                      changesAllDay: false, reachedFrom: nil, scannedTo: listed.map(\.end).max()!,
+                                                      coversWholeSeries: covers, calendar: calendar, listed: listed, horizon: horizon), .none)
+    }
+
+    /// Verify r1 (item 8): an end_date more than five years out, and a count the check cannot place,
+    /// are not covered and are checked up to the horizon.
+    func testAFarEndAndAnUnplaceableCountAreCheckedUpToTheHorizon() throws {
+        let now = at("2026-11-12T10:00:00")
+        let horizon = try XCTUnwrap(DeletedOccurrenceCheck.horizon(now: now, calendar: calendar))
+        let cases: [(String, EKRecurrenceRule, Date)] = [
+            ("end_date seven years out", rule(end: at("2033-12-12T10:00:00")), at("2026-12-07T10:00:00")),
+            ("monthly days 5 and 20, count 150", rule(.monthly, count: 150, daysOfMonth: [5, 20]), at("2026-12-05T10:00:00")),
+        ]
+        for (name, ekRule, first) in cases {
+            let extent = DetachedOccurrenceSpan.RuleExtent(ekRule)
+            let listed = ranges(window(first: first, end: ekRule.recurrenceEnd?.endDate), horizon: horizon, now: now, rules: [ekRule], first: first)
+            let covers = DeletedOccurrenceCheck.coversWholeSeries(rules: [extent], firstStart: first, ranges: listed, calendar: calendar)
+            XCTAssertFalse(covers, name)
+            let checkRule = DeletedOccurrenceCheck.Rule(ekRule)
+            let end = listed.map(\.end).max()!
+            let all = try XCTUnwrap(DeletedOccurrenceCheck.expectedSlots(of: checkRule, firstStart: first, until: end, calendar: calendar), name)
+            func check(_ observed: [Date]) -> DeletedOccurrenceCheck.Verdict {
+                DeletedOccurrenceCheck.verdict(rules: [checkRule], firstStart: first, observedSlots: observed, uneditedSlots: observed, slotsTrusted: true,
+                                               changesAllDay: false, reachedFrom: nil, scannedTo: end, coversWholeSeries: covers,
+                                               calendar: calendar, listed: listed, horizon: horizon)
+            }
+            XCTAssertEqual(check(all), .noneThrough(try XCTUnwrap(DeletedOccurrenceCheck.listedEnd(of: listed, from: first))), name)
+            XCTAssertEqual(check(all.enumerated().filter { $0.offset != 3 }.map(\.element)),
+                           .deleted(blocked: nil), name)
+        }
+    }
+
+    /// Verify r1 (item 8): an all-day series with a horizon, in the host zone (not fixed, so the host
+    /// run and the TZ=UTC run exercise different zones).
+    func testAnAllDaySeriesInTheHostZoneIsCheckedUpToTheHorizon() throws {
+        let host = Calendar.gregorian(in: .current)
+        let first = try XCTUnwrap(host.date(from: DateComponents(year: 2026, month: 12, day: 7)))
+        let rule = DeletedOccurrenceCheck.Rule(frequency: .weekly, interval: 1, daysOfWeek: [], daysOfMonth: [], endDate: nil,
+                                               occurrenceCount: 0, hasOtherParts: false)
+        let listedEnd = try XCTUnwrap(host.date(byAdding: .day, value: 1826, to: first))
+        let listed = [DateInterval(start: first.addingTimeInterval(-367 * day), end: listedEnd)]
+        let horizon = try XCTUnwrap(DeletedOccurrenceCheck.horizon(now: first, calendar: host))
+        let all = try XCTUnwrap(DeletedOccurrenceCheck.expectedSlots(of: rule, firstStart: first, until: listedEnd, calendar: host))
+        XCTAssertTrue(all.allSatisfy { host.component(.hour, from: $0) == 0 }, "local midnights, whatever the host zone")
+        func check(_ observed: [Date]) -> DeletedOccurrenceCheck.Verdict {
+            DeletedOccurrenceCheck.verdict(rules: [rule], firstStart: first, observedSlots: observed, uneditedSlots: observed, slotsTrusted: true,
+                                           changesAllDay: false, reachedFrom: nil, scannedTo: listedEnd, coversWholeSeries: false,
+                                           calendar: host, isAllDay: true, listed: listed, horizon: horizon)
+        }
+        XCTAssertEqual(check(all), .noneThrough(listedEnd))
+        XCTAssertEqual(check(all.enumerated().filter { $0.offset != 20 }.map(\.element)), .deleted(blocked: nil))
+    }
+
+    // MARK: - The expansion cap (verify r1 item 6)
+
+    /// A daily series old enough to pass 20,000 slots before the end of the listing is unknown with a
+    /// cause of its own, never `noneThrough` over occurrences it did not expand.
+    func testASeriesPastTheExpansionCapIsUnknown() {
+        let first = at("1965-01-04T10:00:00")
+        let daily = DeletedOccurrenceCheck.Rule(frequency: .daily, interval: 1, daysOfWeek: [], daysOfMonth: [], endDate: nil,
+                                                occurrenceCount: 0, hasOtherParts: false)
+        let listed = [DateInterval(start: at("2022-11-01T00:00:00"), end: at("2029-11-15T00:00:00"))]
+        XCTAssertNil(DeletedOccurrenceCheck.expectedSlots(of: daily, firstStart: first, until: at("2029-11-15T00:00:00"), calendar: calendar))
+        XCTAssertEqual(DeletedOccurrenceCheck.expansion(of: daily, firstStart: first, until: at("2029-11-15T00:00:00"), calendar: calendar), .tooMany)
+        // Every listed occurrence held: the occurrences around now were never expanded, so nothing may pass.
+        var observed: [Date] = []
+        var d = at("2022-11-01T10:00:00")
+        while d < at("2029-11-15T00:00:00") { observed.append(d); d = calendar.date(byAdding: .day, value: 1, to: d)! }
+        let result = DeletedOccurrenceCheck.verdict(rules: [daily], firstStart: first, observedSlots: observed, uneditedSlots: observed,
+                                                    slotsTrusted: true, changesAllDay: false, reachedFrom: at("2026-11-16T10:00:00"),
+                                                    scannedTo: at("2029-11-15T00:00:00"), coversWholeSeries: false, calendar: calendar,
+                                                    listed: listed, horizon: horizon)
+        XCTAssertEqual(result, .unknown(.tooManySlots))
+        let reason = DeletedOccurrenceCheck.unknownReason(.tooManySlots)
+        XCTAssertTrue(reason.contains("more occurrences than the check expands (20000)"), reason)
+        // A short series is unaffected.
+        XCTAssertNotNil(DeletedOccurrenceCheck.expectedSlots(of: daily, firstStart: at("2026-01-05T10:00:00"), until: at("2029-11-15T00:00:00"), calendar: calendar))
     }
 
     /// Every other #503 cause still answers first.

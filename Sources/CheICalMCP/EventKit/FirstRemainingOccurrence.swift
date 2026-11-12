@@ -271,7 +271,8 @@ extension EventKitManager {
         let calendar = Calendar.gregorian(in: zone)
         let horizon = now.flatMap { DeletedOccurrenceCheck.horizon(now: $0, calendar: calendar) }
         guard let window = seriesScanWindow(of: series) else { return .unknown(.notListed) }
-        let ranges = DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now ?? Date())
+        let extents = (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init)
+        let ranges = DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now ?? Date(), rules: extents, firstStart: series.startDate, calendar: calendar)
         guard let (_, candidates) = seriesOccurrences(of: series, id: id, ranges: ranges),
               let listedTo = ranges.map(\.end).max() else {
             return .unknown(.notListed)
@@ -297,9 +298,7 @@ extension EventKitManager {
         // #506: whole only up to the end of the unbroken listing from the first start (with no range
         // around now, the listing's end, as before).
         let covers = firstStart.map {
-            DetachedOccurrenceSpan.coversWholeSeries(
-                rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
-                firstStart: $0, scannedTo: DeletedOccurrenceCheck.listedEnd(of: ranges, from: $0) ?? $0, calendar: calendar)
+            DeletedOccurrenceCheck.coversWholeSeries(rules: extents, firstStart: $0, ranges: ranges, calendar: calendar)
         } ?? false
         return DeletedOccurrenceCheck.verdict(
             rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),

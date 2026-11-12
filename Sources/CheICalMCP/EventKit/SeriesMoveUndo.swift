@@ -35,7 +35,11 @@ enum SeriesMoveUndo {
                                          verdict: () throws -> DeletedOccurrenceCheck.Verdict) rethrows -> String? {
         guard isSeries, verb == .undo, acrossAccounts else { return nil }
         let result = try verdict()
-        return result == .none ? nil : DeletedOccurrenceCheck.undoAccountMoveReason(result, title: title)
+        // #506 verify r1 (item 10): exhaustive, so a later horizon here is not read as no deletion.
+        switch result {
+        case .none: return nil
+        case .noneThrough, .deleted, .unknown: return DeletedOccurrenceCheck.undoAccountMoveReason(result, title: title)
+        }
     }
 
     /// PR #516 round 1: what #503's verdict lists for the undo of a whole-series move. A move made

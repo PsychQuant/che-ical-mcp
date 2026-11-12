@@ -63,7 +63,8 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertLessThan(check.lowerBound, firstWrite.lowerBound)
         XCTAssertTrue(move.contains("if isRecurring, !(span == .this && occurrenceDate != nil),"))
         XCTAssertTrue(move.contains("FirstRemainingOccurrence.movesAcrossAccounts(fromSourceID: master.calendar?.source?.sourceIdentifier,"))
-        XCTAssertTrue(move.contains("if verdict != .none {"))
+        // #506 verify r1 (item 10): an exhaustive switch replaced `if verdict != .none {`.
+        XCTAssertTrue(move.contains("switch verdict {"))
         XCTAssertTrue(move.contains("throw EventKitError.moveRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))"))
         // PR #505 round 5 (INFO 6): a malformed call answers with its argument error, before the
         // series is listed.
@@ -87,8 +88,9 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         // #506: the listing ranges come from the horizon helper, which returns #442's ranges when no horizon is given
         // or they reach it (DeletedOccurrenceHorizonTests.testAYoungSeriesIsListedAsBefore).
         XCTAssertTrue(body.contains("seriesOccurrences(of: series, id: id, ranges: ranges)"))
-        XCTAssertTrue(body.contains("DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now ?? Date())"))
-        XCTAssertTrue(body.contains("DetachedOccurrenceSpan.coversWholeSeries("))
+        XCTAssertTrue(body.contains("DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now ?? Date(), rules: extents,"))
+        // #506 verify r1: coverage through `DeletedOccurrenceCheck.coversWholeSeries(ranges:)`, which wraps #442's.
+        XCTAssertTrue(body.contains("DeletedOccurrenceCheck.coversWholeSeries("))
         XCTAssertTrue(body.contains("UndoPostState.ruleSlot(of:"), "edited occurrences count by their rule slot")
         XCTAssertTrue(body.contains("DeletedOccurrenceCheck.firstSlotResult("), "the first slot is proven, never taken from a stand-in")
         XCTAssertTrue(body.contains("firstSlotCause: firstSlotCause, listed: ranges, horizon: horizon)"), "the cause reaches the verdict (round 5)")

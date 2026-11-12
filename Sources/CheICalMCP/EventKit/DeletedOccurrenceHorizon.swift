@@ -10,9 +10,11 @@ import Foundation
 /// after the horizon). An occurrence deleted on its own on or after it is not checked and comes back
 /// with the write: the accepted risk, named in the response.
 ///
-/// Applies only to a change of the start, end, all_day or zone in the same account (`updateEvent`
-/// passes no horizon for a move to another account or a new rule pattern, and `move_events_batch`
-/// and the undo of a move pass none), so those still need the whole series covered.
+/// Applies only to a change of the start, end or zone in the same account (`updateEvent` passes no
+/// horizon for a move to another account, a new rule pattern or an all_day change, and
+/// `move_events_batch` and the undo of a move pass none), so those still need the whole series
+/// covered. Verify r1 (item 3): all_day is unmeasured on every route; through the first occurrence's
+/// own id (#428) #442 does not refuse it, so a horizon there would have let it through.
 extension DeletedOccurrenceCheck {
     static let horizonYears = 2
 
@@ -32,12 +34,26 @@ extension DeletedOccurrenceCheck {
     }
 
     /// The ranges the verdict lists the series over: #503's ranges (`listingRanges(for:)`) unless a
-    /// horizon is given and they end before it; then the window around now is listed too, merged
-    /// and cut into one-query pieces (`listingRanges(covering:)`).
-    static func listingRanges(window: DateInterval, horizon: Date?, now: Date) -> [DateInterval] {
+    /// horizon is given, they end before it, and they do not cover the series (verify r1, item 4: a
+    /// series main listed whole keeps main's listing and cost); then the window around now is listed
+    /// too, merged and cut into one-query pieces (`listingRanges(covering:)`). Coverage is read here from
+    /// the stored start (`firstStart`), before anything is listed; the verdict reads it again from the
+    /// proven first slot, and a series that then turns out not covered without the window answers unknown.
+    static func listingRanges(window: DateInterval, horizon: Date?, now: Date, rules: [DetachedOccurrenceSpan.RuleExtent],
+                              firstStart: Date, calendar: Calendar) -> [DateInterval] {
         let base = SeriesExceptionsPlanner.listingRanges(for: window)
-        guard let horizon, let end = base.map(\.end).max(), end < horizon else { return base }
+        guard let horizon, let end = base.map(\.end).max(), end < horizon,
+              !coversWholeSeries(rules: rules, firstStart: firstStart, ranges: base, calendar: calendar) else { return base }
         return SeriesExceptionsPlanner.listingRanges(covering: [window, windowAroundNow(now: now, horizon: horizon)])
+    }
+
+    /// Whether the unbroken listing that holds `firstStart` reaches the series' last possible slot
+    /// (`DetachedOccurrenceSpan.coversWholeSeries`). Verify r1 (item 8): the end of that block, not the
+    /// listing's last end, so a gap is never counted as listed.
+    static func coversWholeSeries(rules: [DetachedOccurrenceSpan.RuleExtent], firstStart: Date, ranges: [DateInterval],
+                                  calendar: Calendar) -> Bool {
+        DetachedOccurrenceSpan.coversWholeSeries(rules: rules, firstStart: firstStart,
+                                                 scannedTo: listedEnd(of: ranges, from: firstStart) ?? firstStart, calendar: calendar)
     }
 
     /// The end of the unbroken listing that holds `from` (ranges that meet or overlap count as one;

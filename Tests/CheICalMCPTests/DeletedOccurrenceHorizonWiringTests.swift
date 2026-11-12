@@ -10,7 +10,8 @@ final class DeletedOccurrenceHorizonWiringTests: XCTestCase {
     func testUpdateEventPassesTheHorizonOnlyForTheDecidedChangesAndReturnsIt() throws {
         let manager = SourcePins.code(try SourcePins.source("EventKit/EventKitManager.swift"))
         let update = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: manager))
-        XCTAssertTrue(update.contains("horizonFrom: crossesAccounts || changesPattern ? nil : Date())"))
+        // Verify r1 (item 3): an all_day change gets no horizon either (unmeasured on every route).
+        XCTAssertTrue(update.contains("horizonFrom: crossesAccounts || changesPattern || datePlan.isAllDay != event.isAllDay ? nil : Date())"))
         XCTAssertEqual(SourcePins.ranges(of: "horizonFrom:", in: update).count, 1)
         XCTAssertTrue(update.contains("case .noneThrough(let until): deletionsChecked = DeletionCheckHorizon(until: until, zone: Self.occurrenceZone(of: event))"))
         XCTAssertTrue(update.contains("return (event, seriesIdentifier, matchedOccurrence, deletionsChecked)"))
@@ -29,6 +30,21 @@ final class DeletedOccurrenceHorizonWiringTests: XCTestCase {
         XCTAssertTrue(serverText.contains("response[\"deleted_occurrences_note\"] = DeletedOccurrenceCheck.horizonNote(checkedUntil: until)"))
     }
 
+    /// Verify r1 (item 10): the move and its undo switch over every verdict, so a `noneThrough` there
+    /// could not be read as no deletion or described as one without a compile error.
+    func testTheMovePathsSwitchOverEveryVerdict() throws {
+        let manager = SourcePins.code(try SourcePins.source("EventKit/EventKitManager.swift"))
+        let move = try XCTUnwrap(SourcePins.body(of: "func moveEvent(", in: manager))
+        XCTAssertFalse(move.contains("verdict != .none"))
+        XCTAssertTrue(move.contains("case .noneThrough, .deleted, .unknown: throw EventKitError.moveRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict))"))
+        let undo = SourcePins.code(try SourcePins.source("EventKit/SeriesMoveUndo.swift"))
+        XCTAssertFalse(undo.contains("result == .none"))
+        XCTAssertTrue(undo.contains("case .noneThrough, .deleted, .unknown: return DeletedOccurrenceCheck.undoAccountMoveReason(result, title: title)"))
+        let check = SourcePins.code(try SourcePins.source("EventKit/DeletedOccurrenceCheck.swift"))
+        let found = try XCTUnwrap(SourcePins.body(of: "private static func foundText(", in: check))
+        XCTAssertTrue(found.contains("case .noneThrough:"))
+    }
+
     /// The other callers of the verdict pass no horizon: a move to another account still needs the
     /// whole series covered.
     func testTheMoveAndUndoCallersPassNoHorizon() throws {
@@ -45,9 +61,11 @@ final class DeletedOccurrenceHorizonWiringTests: XCTestCase {
         let file = SourcePins.code(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift"))
         let body = try XCTUnwrap(SourcePins.body(of: "func deletedOccurrenceVerdict(", in: file))
         XCTAssertTrue(body.contains("let horizon = now.flatMap { DeletedOccurrenceCheck.horizon(now: $0, calendar: calendar) }"))
-        XCTAssertTrue(body.contains("let ranges = DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now ?? Date())"))
+        // Verify r1 (item 4): the window around now only when the base listing does not cover the series.
+        XCTAssertTrue(body.contains("let ranges = DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now ?? Date(), rules: extents, firstStart: series.startDate, calendar: calendar)"))
         XCTAssertTrue(body.contains("seriesOccurrences(of: series, id: id, ranges: ranges)"))
-        XCTAssertTrue(body.contains("scannedTo: DeletedOccurrenceCheck.listedEnd(of: ranges, from: $0) ?? $0, calendar: calendar)"))
+        // Verify r1 (item 8): coverage through the pure helper that DeletedOccurrenceHorizonTests runs.
+        XCTAssertTrue(body.contains("DeletedOccurrenceCheck.coversWholeSeries(rules: extents, firstStart: $0, ranges: ranges, calendar: calendar)"))
         XCTAssertTrue(body.contains("listed: ranges, horizon: horizon)"))
         // The horizon is taken in the zone the rule is expanded in, declared before it.
         let zone = try XCTUnwrap(body.range(of: "let calendar = Calendar.gregorian(in: zone)"))
