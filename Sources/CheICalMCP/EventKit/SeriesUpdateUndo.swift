@@ -157,8 +157,12 @@ enum SeriesUpdateUndo {
         // listings keeps the marker instead of being found only by the read-back after the undo writes.
         guard sameSlots(before.keptSlots, after.keptSlots) else { return false }
         if fields.contains("location"), before.detached.contains(where: { $0.snapshot.structuredLocationLat != nil }) { return false }
+        // #527: the occurrence after the save at a slot is the first of `after.detached` at that
+        // instant, in its own order, found through an index instead of a scan per occurrence.
+        let afterIndex = InstantIndex(after.detached.map(\.slot))
         for was in before.detached {
-            guard let now = after.detached.first(where: { UndoPostState.sameInstant($0.slot, was.slot) }) else { return false }
+            guard let position = afterIndex.firstPosition(sameInstantAs: was.slot) else { return false }
+            let now = after.detached[position]
             var changed = Set(changedFields(was.snapshot, now.snapshot))
             // Verify r2: EventKit couples a location string with the place title, so a place without
             // coordinates whose title is the location string on both sides moved with `location`.
@@ -190,9 +194,12 @@ enum SeriesUpdateUndo {
         !hasCoordinates && (placeTitle ?? "") == (location ?? "")
     }
 
-    /// Two lists of slots hold the same instants, to the second.
+    /// Two lists of slots hold the same instants, to the second: as many slots, and every slot of
+    /// `a` is the same instant as one of `b` (#527: asked through an `InstantSet` of `b`).
     static func sameSlots(_ a: [Date], _ b: [Date]) -> Bool {
-        a.count == b.count && a.allSatisfy { slot in b.contains { UndoPostState.sameInstant($0, slot) } }
+        guard a.count == b.count else { return false }
+        let held = InstantSet(b)
+        return a.allSatisfy { held.contains($0) }
     }
 
     /// Verify r2 (2): the series' first rule slot can be shown and its first occurrence was not edited on
@@ -246,16 +253,20 @@ enum SeriesUpdateUndo {
             result.otherWindows = true
             return result
         }
-        func contains(_ slots: [Date], _ slot: Date) -> Bool { slots.contains { UndoPostState.sameInstant($0, slot) } }
-        func detached(_ list: [DetachedOccurrence], at slot: Date) -> DetachedOccurrence? {
-            list.first { UndoPostState.sameInstant($0.slot, slot) }
-        }
         let recordedSlots = recorded.keptSlots + recorded.detached.map(\.slot)
         let currentSlots = current.keptSlots + current.detached.map(\.slot)
-        for slot in recordedSlots where !contains(currentSlots, slot) { result.deleted.append(slot) }
-        for slot in currentSlots where !contains(recordedSlots, slot) { result.added.append(slot) }
-        for slot in recordedSlots where contains(currentSlots, slot) {
-            switch (detached(recorded.detached, at: slot), detached(current.detached, at: slot)) {
+        // #527: each list is asked through a set, and the occurrence edited on its own at a slot is
+        // the first of its list at that instant, found through an index: the comparison and the
+        // element are those of the scans (`contains { sameInstant }`, `first { sameInstant }`).
+        let recordedSet = InstantSet(recordedSlots)
+        let currentSet = InstantSet(currentSlots)
+        let recordedDetached = InstantIndex(recorded.detached.map(\.slot))
+        let currentDetached = InstantIndex(current.detached.map(\.slot))
+        for slot in recordedSlots where !currentSet.contains(slot) { result.deleted.append(slot) }
+        for slot in currentSlots where !recordedSet.contains(slot) { result.added.append(slot) }
+        for slot in recordedSlots where currentSet.contains(slot) {
+            switch (recordedDetached.firstPosition(sameInstantAs: slot).map { recorded.detached[$0] },
+                    currentDetached.firstPosition(sameInstantAs: slot).map { current.detached[$0] }) {
             case (nil, nil): continue
             case let (was?, now?):
                 if !changedFields(was.snapshot, now.snapshot).isEmpty { result.edited.append(slot) }
