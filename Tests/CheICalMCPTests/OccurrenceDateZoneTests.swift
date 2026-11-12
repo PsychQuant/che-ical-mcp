@@ -104,7 +104,7 @@ final class OccurrenceDateZoneTests: XCTestCase {
         XCTAssertEqual(body.components(separatedBy: "occurrenceDateTimeZone(").count - 1, 1, "looked up in that call only")
         XCTAssertFalse(body.contains(#"arguments["occurrence_date"]?.stringValue.map"#), "the old host-zone parse")
         let manager = "EventKit/EventKitManager.swift"
-        let update = try call(in: "func updateEvent( identifier: String, fields: Set<String>, title: String? = nil, startDate: Date? = nil, endDate: Date? = nil, notes: String? = nil, location: String? = nil, url: String? = nil, calendarName: String? = nil, calendarSource: String? = nil, isAllDay: Bool? = nil, alarmOffsets: [Int]? = nil, recurrenceRule: RecurrenceRuleInput? = nil, clearRecurrence: Bool = false, structuredLocation: StructuredLocationInput? = nil, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil, applyToAll: Bool = false, timezone: TimeZone? = nil, clearTimezone: Bool = false ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?) {", file: manager)
+        let update = try call(in: "func updateEvent( identifier: String, fields: Set<String>, title: String? = nil, startDate: Date? = nil, endDate: Date? = nil, notes: String? = nil, location: String? = nil, url: String? = nil, calendarName: String? = nil, calendarSource: String? = nil, isAllDay: Bool? = nil, alarmOffsets: [Int]? = nil, recurrenceRule: RecurrenceRuleInput? = nil, clearRecurrence: Bool = false, structuredLocation: StructuredLocationInput? = nil, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil, applyToAll: Bool = false, timezone: TimeZone? = nil, clearTimezone: Bool = false ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?, deletionsChecked: DeletionCheckHorizon?) {", file: manager)
         XCTAssertEqual(SourcePins.ranges(of: "findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent))", in: update).count, 1)
         XCTAssertEqual(update.components(separatedBy: "findOccurrence(").count - 1, 1)
         let conformance = try call(in: "extension EventKitManager: EventWriteSource {", file: "EventWriteSource.swift")
@@ -127,7 +127,7 @@ final class OccurrenceDateZoneTests: XCTestCase {
         let captured = try XCTUnwrap(update.range(of: capture))
         let firstField = try XCTUnwrap(update.range(of: "let newCalendar ="))
         XCTAssertLessThan(captured.lowerBound, firstField.lowerBound)
-        XCTAssertEqual(SourcePins.ranges(of: "return (event, seriesIdentifier, matchedOccurrence)", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "return (event, seriesIdentifier, matchedOccurrence, deletionsChecked)", in: update).count, 1)
     }
 
     /// The zone lookup resolves the event without the edited-before refusal and the write may
