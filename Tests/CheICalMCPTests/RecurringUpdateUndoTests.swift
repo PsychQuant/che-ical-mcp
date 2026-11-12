@@ -128,8 +128,12 @@ final class RecurringUpdateUndoTests: XCTestCase {
         XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
         let message = EventKitErrorSanitizer.sanitizeForResponse(error).code
         XCTAssertTrue(message.contains("it changed the whole series"), message)
-        XCTAssertTrue(message.contains("Undo restores a whole-series update only on an iCloud calendar, when it wrote nothing but title, notes or location"), message)
-        XCTAssertTrue(message.contains("never one with no end"), message)
+        XCTAssertTrue(message.contains("Undo restores a whole-series update only when it passed only event_id, span and title, notes or location"), message)
+        for exclusion in ["#428", "on an iCloud calendar", "starts and ends within the dates", "never a series with no end",
+                          "no location written over a place with coordinates", "could be listed before and after the save",
+                          "followed the update in every field it wrote", "kept an own value different from both", "this one is not that shape"] {
+            XCTAssertTrue(message.contains(exclusion), "\(exclusion): \(message)")
+        }
         XCTAssertTrue(message.contains("revert it in Calendar"), message)
         let other = EventKitErrorSanitizer.sanitizeForResponse(UndoOperation.recurringUpdateRefusal(title: "Standup", kind: .occurrence)).code
         XCTAssertFalse(other.contains("Undo restores a whole-series update"), other)

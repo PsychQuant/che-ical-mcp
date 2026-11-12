@@ -45,6 +45,10 @@ struct SeriesUpdateRecord {
 }
 
 enum SeriesUpdateUndo {
+    /// The restorable shape as the refusal of a whole-series marker states it, a closed list matching
+    /// `recordable`, `covers` and `occurrencesFollowOrKeep` (verify r1).
+    static let restorableShape = "passed only event_id, span and title, notes or location, with span all through the series' own identifier (through the series' identifier when its first occurrence was edited on its own, the call goes through that occurrence's own identifier, #428, and does not count), on an iCloud calendar, on a series that starts and ends within the dates undo lists its occurrences over (at most four years; never a series with no end), with no location written over a place with coordinates (the series' own or that of an occurrence edited on its own), whose occurrences could be listed before and after the save, and where each occurrence edited on its own either followed the update in every field it wrote (it had the series' old value and took the new one) or kept an own value different from both"
+
     /// The fields whose inverse was measured (Diagnosis 2026-11-09), in the order texts list them.
     static let restorableOrder = ["title", "notes", "location"]
     /// The keys of an `update_event` call that write nothing.

@@ -55,7 +55,7 @@ extension UndoOperation {
     static func recurringUpdateRefusal(title: String, kind: RecurringUpdateKind) -> UnrecoverableUndoError {
         // #263: one whole-series update is restored; this text says which, for the ones that are not.
         let rule = kind == .series
-            ? "Undo restores a whole-series update only on an iCloud calendar, when it wrote nothing but title, notes or location through the series' own identifier, on a series that ends within the four years undo lists its occurrences over (never one with no end); it does not restore other updates that touched a recurring event, because restoring one can move, detach or delete occurrences of the series."
+            ? "Undo restores a whole-series update only when it \(SeriesUpdateUndo.restorableShape); this one is not that shape, and undo does not restore other updates that touched a recurring event, because restoring one can move, detach or delete occurrences of the series."
             : "Undo does not restore updates that touched a recurring event, because restoring one can move, detach or delete occurrences of the series."
         return UnrecoverableUndoError(message: "Cannot undo the update of the recurring event '\(undoShownTitle(title))': \(kind.reason). \(rule) Nothing was written. This history entry was discarded so earlier operations remain undoable. If the change should be reverted, revert it in Calendar (or with update_event).")
     }
