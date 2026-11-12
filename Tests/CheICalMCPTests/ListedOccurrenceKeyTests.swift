@@ -105,8 +105,9 @@ final class ListedOccurrenceKeyTests: XCTestCase {
             kept += result.count
             dropped += events.count - result.count
         }
+        // About 24,600 kept and 5,200 dropped with this seed; the bounds leave room for another generator.
         XCTAssertGreaterThan(kept, 5_000)
-        XCTAssertGreaterThan(dropped, 5_000)
+        XCTAssertGreaterThan(dropped, 2_000)
     }
 
     // MARK: - Scaling

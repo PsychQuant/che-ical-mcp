@@ -164,6 +164,7 @@ final class InstantSetTests: XCTestCase {
         for slot in slots where set.contains(slot.addingTimeInterval(0.5)) { found += 1 }
         for slot in slots where set.contains(slot.addingTimeInterval(43_200)) { found -= 1 }
         XCTAssertEqual(found, count, "every slot is found and no midpoint is")
+        XCTAssertEqual(counter.lookups, 2 * count)
         // At most log2(20,000) + 1 = 16 steps and two tolerance checks per lookup.
         XCTAssertLessThanOrEqual(counter.count - sorting, 2 * count * 18)
         // A comparison sort of 20,000 elements needs about 270,000 comparisons; ten times that is far

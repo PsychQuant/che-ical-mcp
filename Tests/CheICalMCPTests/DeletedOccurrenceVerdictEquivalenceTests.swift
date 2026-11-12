@@ -154,6 +154,7 @@ final class DeletedOccurrenceVerdictEquivalenceTests: XCTestCase {
             "deleted(allDay)", "deleted(firstSlotMissing)", "deleted(nothingAfter)", "unknown(firstSlot)", "unknown(editedWithoutSlot)",
             "unknown(ruleNotFollowed)", "unknown(listedOffRule)", "unknown(allDayEnd)", "unknown(notCovered)", "unknown(horizonNotReached)",
         ]
+        // With this seed the rarest kind (an all-day rule end) is reached 20 times and the next 35 times.
         for name in required {
             XCTAssertGreaterThanOrEqual(kinds[name, default: 0], 5, "\(name) was hardly reached: \(kinds)")
         }
@@ -241,15 +242,17 @@ final class DeletedOccurrenceVerdictEquivalenceTests: XCTestCase {
         XCTAssertEqual(current(input, comparisons: counter), .unknown(.tooManySlots))
         XCTAssertEqual(onMain(input), .unknown(.tooManySlots))
         XCTAssertEqual(counter.count, 0)
+        XCTAssertEqual(counter.lookups, 0)
     }
 
     // MARK: - Scaling
 
     /// The most the verdict takes: `maxSlots` (20,000) expected slots, every one listed. Its slot
     /// comparisons, counted through the injected counter (the sorts and the lookups), stay near
-    /// n log n. On `main` the two scans made about 200 million comparisons each here. The lower bound
-    /// shows the counter is the one the verdict's comparisons go through: each listed slot and each
-    /// expected slot is looked up at least once.
+    /// n log n. On `main` the two scans made about 200 million comparisons each here. The lookups are
+    /// counted exactly: one per listed slot (is it a slot of the rule) and one per expected slot (is it
+    /// held), so a scan put back for either would lower the count, and a set asked once per pair of
+    /// slots would raise it.
     func testTheComparisonsOfTheLongestSeriesDoNotGrowWithItsSquare() {
         let count = DeletedOccurrenceCheck.maxSlots
         let first = at("1972-01-03T10:00:00")
@@ -262,15 +265,17 @@ final class DeletedOccurrenceVerdictEquivalenceTests: XCTestCase {
         let none = ComparisonCounter()
         XCTAssertEqual(current(Input(rules: [rule(.daily)], firstStart: first, observed: observed, unedited: observed,
                                      scannedTo: scannedTo, covers: true), comparisons: none), .none)
-        XCTAssertGreaterThanOrEqual(none.count, 2 * count)
+        XCTAssertEqual(none.lookups, 2 * count)
         XCTAssertLessThanOrEqual(none.count, 8_000_000)
+        XCTAssertGreaterThan(none.count, none.lookups, "the comparisons are counted through the same counter")
 
-        // With a deletion the third set (the unedited slots) is built and asked too.
+        // With a deletion the third set (the unedited slots) is built and asked too: once for each of the
+        // 9,999 expected slots after the deleted one, and the first slot is asked for once more.
         let deleted = ComparisonCounter()
         let withoutOne = observed.filter { $0 != slots[10_000] }
         XCTAssertEqual(current(Input(rules: [rule(.daily)], firstStart: first, observed: withoutOne, unedited: withoutOne,
                                      scannedTo: scannedTo, covers: true), comparisons: deleted), .deleted(blocked: nil))
-        XCTAssertGreaterThan(deleted.count, none.count)
+        XCTAssertEqual(deleted.lookups, (count - 1) + count + 9_999 + 1)
         XCTAssertLessThanOrEqual(deleted.count, 12_000_000)
     }
 }

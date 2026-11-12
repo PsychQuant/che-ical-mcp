@@ -1,10 +1,11 @@
 import Foundation
 
-/// #520: counts the date comparisons of the `InstantSet`s it is given to (the sort's and the lookups'),
-/// for the tests that show they do not grow with the square of the list. No caller in the server
-/// passes one.
+/// #520: counts the work of the `InstantSet`s it is given to, for the tests that show it does not grow
+/// with the square of the list: `count`, every comparison of two dates (the sort's and the lookups'),
+/// and `lookups`, every call of `contains`. No caller in the server passes one.
 final class ComparisonCounter {
     var count = 0
+    var lookups = 0
 }
 
 /// #520: the instants of a list, to ask whether any of them is the same instant as another one, to the
@@ -36,6 +37,7 @@ struct InstantSet {
     }
 
     func contains(_ query: Date) -> Bool {
+        counter?.lookups += 1
         // The first element at or after the query (a NaN query is before nothing: `low` stays 0, and
         // `sameInstant` is false for it).
         var low = 0
