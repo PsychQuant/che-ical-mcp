@@ -395,6 +395,11 @@ enum UndoOperation {
     /// #236: an update that touched a recurring event, kept only as a marker. Its undo is refused
     /// and the record discarded; nothing is restored (`RecurringUpdateKind`).
     case updateRecurringEvent(id: String, title: String, kind: RecurringUpdateKind)
+    /// #263: an `update_event` with span "all" on an iCloud series that wrote only title, notes or
+    /// location, recorded with what its undo restores and compares (`SeriesUpdateRecord`). Its undo
+    /// restores those fields across the series when the series is as the update left it, and keeps
+    /// the record otherwise. Every other recurring update stays `updateRecurringEvent`.
+    case updateSeries(SeriesUpdateRecord)
     case createReminder(id: String, title: String, created: ReminderSnapshot)
     case deleteReminder(snapshot: ReminderSnapshot)
     case updateReminder(id: String, oldSnapshot: ReminderSnapshot, saved: ReminderSnapshot)
@@ -440,6 +445,8 @@ enum UndoOperation {
             return .updateEvent(id: swapped(id), oldSnapshot: oldSnapshot, saved: saved)
         case .updateRecurringEvent(let id, let title, let kind):
             return .updateRecurringEvent(id: swapped(id), title: title, kind: kind)
+        case .updateSeries(let record):
+            return .updateSeries(record.replacingIdentifier(swapped(record.id)))
         case .moveEvent(let id, let from, let to, let title, let isSeries):
             return .moveEvent(id: swapped(id), fromCalendarIdentifier: from, toCalendarIdentifier: to, title: title, isSeries: isSeries)
         case .batch(let operations):
@@ -483,6 +490,8 @@ enum UndoOperation {
             return "Updated event: \(undoVisibleTitle(old.title))"
         case .updateRecurringEvent(_, let title, _):
             return "Updated recurring event: \(undoVisibleTitle(title)) (undo not available)"
+        case .updateSeries(let record):
+            return "Updated recurring event: \(undoVisibleTitle(record.old.title)) (whole series; undo restores its \(SeriesUpdateUndo.list(record.fields)))"
         case .moveEvent(_, _, _, let title, _):
             return "Moved event: \(undoVisibleTitle(title))"
         case .moveByCopy(let original, let isSplit, _, _, _):
@@ -836,6 +845,9 @@ extension UndoOperation {
         case .updateRecurringEvent(_, let title, _):
             // Its undo always fails and discards the record, so it never reaches the redo stack.
             return "Cannot redo the update of recurring event '\(undoVisibleTitle(title))': that update was not undone, so there is nothing to redo." + nothingWritten
+        case .updateSeries(let record):
+            // #263: like a one-off update, redo does not write the update again.
+            return "Cannot redo the update of recurring event '\(undoVisibleTitle(record.old.title))': redo does not apply updates again, so it stays as the undo left it. Use update_event with span 'all' to apply the changes again." + nothingWritten
         case .moveEvent(_, _, _, let title, _):
             return "Cannot redo the move of event '\(undoVisibleTitle(title))': redo does not move events again. Use move_events_batch to move it again." + nothingWritten
         case .moveByCopy(let original, _, _, _, _):

@@ -120,4 +120,24 @@ final class RecurringUpdateUndoTests: XCTestCase {
             XCTAssertFalse(message.contains("discard_id"), "the entry is already discarded")
         }
     }
+
+    /// #263: the whole-series marker says which whole-series update undo restores, so the caller
+    /// can tell why this one is not.
+    func testTheSeriesMarkerSaysWhichWholeSeriesUpdateIsRestored() {
+        let error = UndoOperation.recurringUpdateRefusal(title: "Standup", kind: .series)
+        XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
+        let message = EventKitErrorSanitizer.sanitizeForResponse(error).code
+        XCTAssertTrue(message.contains("it changed the whole series"), message)
+        XCTAssertTrue(message.contains("Undo restores a whole-series update only when it passed only event_id, span and title, notes or location"), message)
+        for exclusion in ["#428", "#326", "on an iCloud calendar", "starts and ends within the dates", "never a series with no end",
+                          "first occurrence was not edited or deleted on its own",
+                          "no location written over a place with coordinates", "listed before and after the save",
+                          "in each field it wrote, either followed the update", "kept an own value different from both",
+                          "nothing else of it changed", "this one is not that shape"] {
+            XCTAssertTrue(message.contains(exclusion), "\(exclusion): \(message)")
+        }
+        XCTAssertTrue(message.contains("revert it in Calendar"), message)
+        let other = EventKitErrorSanitizer.sanitizeForResponse(UndoOperation.recurringUpdateRefusal(title: "Standup", kind: .occurrence)).code
+        XCTAssertFalse(other.contains("Undo restores a whole-series update"), other)
+    }
 }

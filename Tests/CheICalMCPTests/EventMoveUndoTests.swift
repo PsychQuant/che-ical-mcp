@@ -27,6 +27,7 @@ final class EventMoveIdentifierTests: XCTestCase {
         switch operation {
         case .createEvent(let id, _, _), .updateEvent(let id, _, _), .updateRecurringEvent(let id, _, _): return id
         case .moveEvent(let id, _, _, _, _): return id
+        case .updateSeries(let record): return record.id   // #263
         default: return nil
         }
     }
@@ -36,6 +37,7 @@ final class EventMoveIdentifierTests: XCTestCase {
             .createEvent(id: "old", title: "Standup", created: snapshot),
             .updateEvent(id: "old", oldSnapshot: snapshot, saved: snapshot),
             .updateRecurringEvent(id: "old", title: "Standup", kind: .rulesRemoved),
+            UndoSnapshotFixtures.seriesUpdate(id: "old"),   // #263
             .moveEvent(id: "old", fromCalendarIdentifier: "A", toCalendarIdentifier: "B", title: "Standup", isSeries: false)
         ]
         for operation in named {
@@ -45,7 +47,7 @@ final class EventMoveIdentifierTests: XCTestCase {
         guard case .batch(let members) = UndoOperation.batch(named).replacingEventIdentifier("old", with: "new") else {
             return XCTFail("a batch stays a batch")
         }
-        XCTAssertEqual(members.compactMap { id(of: $0) }, ["new", "new", "new", "new"], "inside a batch too")
+        XCTAssertEqual(members.compactMap { id(of: $0) }, ["new", "new", "new", "new", "new"], "inside a batch too")
     }
 
     /// #466 with #435: a move by copy names the copy, a live event that a later move can give a new

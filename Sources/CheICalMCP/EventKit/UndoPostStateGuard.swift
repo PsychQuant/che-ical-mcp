@@ -364,6 +364,10 @@ extension UndoOperation {
             return .event(id: id, title: title, state: created, restoring: nil)
         case .updateEvent(let id, let oldSnapshot, let saved):
             return .event(id: id, title: saved.title, state: saved, restoring: oldSnapshot)
+        case .updateSeries(let record):
+            // #263: the series object as the update left it; the rule and the exceptions are
+            // compared by the arm (`SeriesUpdateUndo.refusal`).
+            return .event(id: record.id, title: record.saved.title, state: record.saved, restoring: record.old)
         case .moveEvent(let id, let fromCalendarIdentifier, let toCalendarIdentifier, let title, _):
             return .eventCalendar(id: id, title: title, calendarIdentifier: toCalendarIdentifier,
                                   restoringCalendarIdentifier: fromCalendarIdentifier)

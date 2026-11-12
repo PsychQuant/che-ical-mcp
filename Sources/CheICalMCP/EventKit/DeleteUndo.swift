@@ -342,7 +342,7 @@ extension UndoOperation {
             // #466: the source is restored as `.deleteEvent` or `.deleteOccurrence` restores it; its
             // snapshot holds no rules, so neither discloses anything.
             return UndoOperation.deleteEvent(snapshot: original).undoDisclosures
-        case .createEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .moveEvent,
+        case .createEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .updateSeries, .moveEvent,
              .createReminder, .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder,
              .calendarOperation:
             return []
