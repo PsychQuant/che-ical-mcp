@@ -2,7 +2,8 @@ import EventKit
 import Foundation
 
 /// #236, maintainer decision after PR #259 round 4: undo of an `update_event` that touched a
-/// recurring event is refused, never attempted. Restoring one could move the wrong occurrence,
+/// recurring event is refused, never attempted, except the whole-series update on iCloud that #263
+/// restores (`SeriesUpdateUndo`, its own record `UndoOperation.updateSeries`). Restoring one could move the wrong occurrence,
 /// detach it, or delete the rest of the series, and every restore strategy tried had a
 /// store-dependent way to do so. The update is recorded only as a marker
 /// (`UndoOperation.updateRecurringEvent`); undo on it writes nothing and discards it, as #204
@@ -52,7 +53,11 @@ extension UndoOperation {
     /// Undo of a recurring-update marker: permanent (`UnrecoverableUndoError`, the record is
     /// discarded). Author-controlled text; the store-derived title passes `undoShownTitle`.
     static func recurringUpdateRefusal(title: String, kind: RecurringUpdateKind) -> UnrecoverableUndoError {
-        UnrecoverableUndoError(message: "Cannot undo the update of the recurring event '\(undoShownTitle(title))': \(kind.reason). Undo does not restore updates that touched a recurring event, because restoring one can move, detach or delete occurrences of the series. Nothing was written. This history entry was discarded so earlier operations remain undoable. If the change should be reverted, revert it in Calendar (or with update_event).")
+        // #263: one whole-series update is restored; this text says which, for the ones that are not.
+        let rule = kind == .series
+            ? "Undo restores a whole-series update only when it \(SeriesUpdateUndo.restorableShape); this one is not that shape, and undo does not restore other updates that touched a recurring event, because restoring one can move, detach or delete occurrences of the series."
+            : "Undo does not restore updates that touched a recurring event, because restoring one can move, detach or delete occurrences of the series."
+        return UnrecoverableUndoError(message: "Cannot undo the update of the recurring event '\(undoShownTitle(title))': \(kind.reason). \(rule) Nothing was written. This history entry was discarded so earlier operations remain undoable. If the change should be reverted, revert it in Calendar (or with update_event).")
     }
 }
 

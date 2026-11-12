@@ -41,6 +41,7 @@ final class UndoBatchRestoreTests: XCTestCase {
             .createEvent(id: "e", title: "Standup", created: event),
             .updateEvent(id: "e", oldSnapshot: event, saved: event),
             .updateRecurringEvent(id: "e", title: "Standup", kind: .series),
+            UndoSnapshotFixtures.seriesUpdate(),   // #263
             .moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: false),
             .createReminder(id: "r", title: "Pay rent", created: reminder),
             .updateReminder(id: "r", oldSnapshot: reminder, saved: reminder),
@@ -884,6 +885,7 @@ final class UndoBatchRestoreTests: XCTestCase {
             .createEvent(id: "e", title: "Standup", created: event),
             edited("e"),
             .updateRecurringEvent(id: "e", title: "Standup", kind: .series),
+            UndoSnapshotFixtures.seriesUpdate(),   // #263
             .moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: false),
             .createReminder(id: "r", title: "Pay rent", created: reminder),
             .updateReminder(id: "r", oldSnapshot: reminder, saved: reminder),

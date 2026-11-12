@@ -37,6 +37,7 @@ final class UndoRedoTextHandlerTests: XCTestCase {
             .createReminder(id: "r", title: title, created: reminder),
             .deleteReminder(snapshot: reminder),
             .updateRecurringEvent(id: "e", title: title, kind: .series),
+            UndoSnapshotFixtures.seriesUpdate(title: title),   // #263
         ]
         for op in ops {
             let text = try await redoText(of: op)

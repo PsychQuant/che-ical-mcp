@@ -21,7 +21,7 @@ final class EventUpdateRecordTests: XCTestCase {
         var postStateReads: [String] = []
         let op = EventUpdateRecord.operation(
             requestedID: "before-save", identifierAfterSave: "after-save", oldSnapshot: snapshot(title: "Before"),
-            recurringKind: nil, postState: { postStateReads.append($0); return self.snapshot(title: "After") })
+            recurringKind: nil, seriesRecord: nil, postState: { postStateReads.append($0); return self.snapshot(title: "After") })
 
         guard case .updateEvent(let id, let old, let saved) = op else { return XCTFail("\(op)") }
         XCTAssertEqual(id, "after-save")
@@ -36,7 +36,7 @@ final class EventUpdateRecordTests: XCTestCase {
         var postStateReads: [String] = []
         let op = EventUpdateRecord.operation(
             requestedID: "before-save", identifierAfterSave: "after-save", oldSnapshot: snapshot(title: "Weekly"),
-            recurringKind: .series, postState: { postStateReads.append($0); return self.snapshot(title: "x") })
+            recurringKind: .series, seriesRecord: nil, postState: { postStateReads.append($0); return self.snapshot(title: "x") })
 
         guard case .updateRecurringEvent(let id, let title, let kind) = op else { return XCTFail("\(op)") }
         XCTAssertEqual(id, "after-save")
@@ -45,12 +45,34 @@ final class EventUpdateRecordTests: XCTestCase {
         XCTAssertEqual(postStateReads, [], "a marker restores nothing, so it reads no post-state")
     }
 
+    /// #263: a whole-series update the record site found restorable is recorded with what its undo
+    /// restores and compares; without that record it stays the marker above.
+    func testAWholeSeriesUpdateWithASeriesRecordIsRestorable() {
+        let exceptions = SeriesExceptions(window: DateInterval(start: Date(timeIntervalSince1970: 1_800_000_000), duration: 86_400),
+                                          keptSlots: [], detached: [])
+        let series = SeriesUpdateRecord(id: "S", externalIdentifier: "X-S", old: snapshot(title: "Weekly"), saved: snapshot(title: "x"),
+                                        fields: ["title"], before: exceptions, after: exceptions)
+        let op = EventUpdateRecord.operation(
+            requestedID: "S", identifierAfterSave: "S", oldSnapshot: snapshot(title: "Weekly"),
+            recurringKind: .series, seriesRecord: series, postState: { _ in self.snapshot(title: "x") })
+        guard case .updateSeries(let recorded) = op else { return XCTFail("\(op)") }
+        XCTAssertEqual(recorded.fields, ["title"])
+
+        for kind: RecurringUpdateKind in [.occurrence, .future, .rulesAdded, .rulesRemoved] {
+            let other = EventUpdateRecord.operation(
+                requestedID: "S", identifierAfterSave: "S", oldSnapshot: snapshot(title: "Weekly"),
+                recurringKind: kind, seriesRecord: series, postState: { _ in self.snapshot(title: "x") })
+            guard case .updateRecurringEvent(_, _, let marked) = other else { return XCTFail("\(kind): \(other)") }
+            XCTAssertEqual(marked, kind, "only the whole-series kind takes the record")
+        }
+    }
+
     /// The event normally has an identifier after a save; if it has none, the requested one is
     /// the best the record can hold (the undo then fails as not found and keeps the record).
     func testTheRequestedIdentifierIsTheFallbackWhenTheSavedEventHasNone() {
         let op = EventUpdateRecord.operation(
             requestedID: "before-save", identifierAfterSave: nil, oldSnapshot: snapshot(title: "Before"),
-            recurringKind: nil, postState: { _ in self.snapshot(title: "After") })
+            recurringKind: nil, seriesRecord: nil, postState: { _ in self.snapshot(title: "After") })
 
         guard case .updateEvent(let id, _, _) = op else { return XCTFail("\(op)") }
         XCTAssertEqual(id, "before-save")
@@ -80,7 +102,8 @@ final class EventUpdateRecordTests: XCTestCase {
         let record = try XCTUnwrap(code.range(of: "EventUpdateRecord.operation(", range: body..<code.endIndex))
         XCTAssertLessThan(save.lowerBound, record.lowerBound, "the record is built after the save")
 
-        for direct in [#"record\s*\(\s*\.updateEvent\s*\("#, #"record\s*\(\s*\.updateRecurringEvent\s*\("#] {
+        for direct in [#"record\s*\(\s*\.updateEvent\s*\("#, #"record\s*\(\s*\.updateRecurringEvent\s*\("#,
+                       #"record\s*\(\s*\.updateSeries\s*\("#] {
             XCTAssertNil(code.range(of: direct, options: .regularExpression), "record through EventUpdateRecord, not \(direct)")
         }
     }
