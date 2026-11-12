@@ -61,6 +61,6 @@ extension DeletedOccurrenceCheck {
 
     /// The sentence `update_event` adds when the verdict was `noneThrough`.
     static func horizonNote(checkedUntil: String) -> String {
-        "This series goes on past what the check lists, so occurrences deleted on their own were checked only before \(checkedUntil) (at least \(horizonYears) years from now, #506), and none was found. An occurrence deleted on its own on or after that date was not checked and may have come back with this write; undo does not remove it."
+        "The check cannot list this series whole (it has no end, ends about five years or more after its start, or has a count whose end the check cannot place), so occurrences deleted on their own were checked only before \(checkedUntil) (at least \(horizonYears) years from now, #506), and none was found. An occurrence deleted on its own on or after that date was not checked and may have come back with this write; undo does not remove it."
     }
 }

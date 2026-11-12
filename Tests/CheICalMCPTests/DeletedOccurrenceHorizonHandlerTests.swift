@@ -26,10 +26,11 @@ final class DeletedOccurrenceHorizonHandlerTests: XCTestCase {
     func testTheDescriptionsNameTheHorizon() throws {
         let tool = try XCTUnwrap(CheICalMCPServer.defineTools().first { $0.name == "update_event" })
         let description = tool.description ?? ""
-        XCTAssertTrue(description.contains("the response adds deleted_occurrences_checked_until"), description)
-        XCTAssertTrue(description.contains("was not checked and may have come back with the write"), description)
+        // Docs pins occur exactly once, so a second copy left behind by an edit is caught.
+        XCTAssertEqual(SourcePins.ranges(of: "the response adds deleted_occurrences_checked_until", in: description).count, 1, description)
+        XCTAssertEqual(SourcePins.ranges(of: "was not checked and may have come back with the write", in: description).count, 1, description)
         let schema = "\(String(describing: tool.inputSchema))"
-        XCTAssertTrue(schema.contains("the listing does not reach two years from now without a gap from the first occurrence the write reaches"), schema)
+        XCTAssertEqual(SourcePins.ranges(of: "the listing does not reach two years from now without a gap from the first occurrence the write reaches", in: schema).count, 1, schema)
         XCTAssertFalse(schema.contains("(not when: the series is open-ended,"), schema)
         for reason in [SeriesRuleWrite.startPassesOccurrencesReason, SeriesRuleWrite.laterStartReason, SeriesRuleWrite.zoneChangeReason] {
             XCTAssertTrue(reason.contains("is checked only up to about two years from now, #506)"), reason)
