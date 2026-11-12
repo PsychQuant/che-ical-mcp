@@ -28,6 +28,14 @@ final class SeriesUpdateUndoDocsTests: XCTestCase {
         "unless the written value equals the old one",
         "measured only on a series that had not started",
         "moved more than a year outside the listed dates",
+        // Verify r3:
+        "nor a count whose last occurrence cannot be bounded",
+        "or kept an own value different from both",
+        "(the series' own or that of an occurrence edited on its own)",
+        "or over a series place named other than its location",
+        "or shows a first occurrence that is not its first slot",
+        "compares them exactly",
+        "coordinates added later to a place that had none",
     ]
 
     private static let chinese = [
@@ -45,6 +53,14 @@ final class SeriesUpdateUndoDocsTests: XCTestCase {
         "除非寫入的值等於舊值",
         "只在還沒開始的系列量過",
         "移到列出日期一年以外",
+        // Verify r3:
+        "有次數上限但算不出最後一場界限的也不算",
+        "就是保留自己的值（和舊值、新值都不同）",
+        "（系列自己的地點與單獨修改過的場次的地點都算）",
+        "名稱和 location 不同的系列地點",
+        "或顯示的第一個場次不是它的第一個時段",
+        "#236 對系列的檢查則精確比較",
+        "之後才補上座標的地點不會擋住復原",
     ]
 
     private func assertEachOnce(_ phrases: [String], in text: String, _ name: String,

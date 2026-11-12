@@ -922,16 +922,20 @@ count 系列，#503 本來就以 not covered 拒絕）：
 之後一樣才寫，寫完讀回。比對與讀回只有純函式、原始碼結構與 handler 測試；EventKit 上的寫入與讀回沒有自動測試，undo
 是 stateful，`--cli` 走不到（見上表）。**出 #263 的那個版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是
 新 binary 之後），只用名稱含 `#263` 的拋棄式 iCloud 日曆。系列的建立、場次的單獨修改與刪除都用 `--cli`（各自獨立的
-process，不進 session 的 undo stack）；session 上只做 `update_event`、`undo`、`redo`、`undo_history`、`list_calendars`。
-除了第 8c 步，每個系列每週 10:00–11:00、6 次，**第一場在未來**（反向寫入只在還沒開始的系列量過，也避開 #451），帶 `end_date` 而且
-**至少在最後一場之後一週**（#509 會先拒絕往後移的時間，第 9 步才會留下 marker；不設結束的系列一定拿到 marker），標題各不相同；
+process，不進 session 的 undo stack）；session 上只做 `update_event`、`undo`、`redo`、`undo_history`、`list_calendars`、`list_events`（第 8 步 H2 與第 8b 步）。
+**開始之前**用 `list_calendars` 確認每個拋棄式日曆的 source 是 iCloud（`create_calendar` 只建在預設來源，#437）；不是的話停下來，
+記成測試環境的問題（拋棄式日曆不在 iCloud），不是 iCloud 判定失敗。
+除了第 8c 步，每個系列每週 10:00–11:00、6 次，**第一場在未來**（反向寫入只在還沒開始的系列量過，也避開 #451），帶 `end_date`，
+放在**最後一場（第 6 場）之後、第 7 場會開始的 10:00 之前**，例如第 7 場那天的 09:00（end_date 含當天以內的場次；#509 會先拒絕
+往後移的時間，這樣第 9 步往後移一小時也不會越過結束點而留下 marker；不設結束的系列一定拿到 marker），標題各不相同；各步寫的場次數
+都是相對第一次 `list_events` 讀到的場次數；
 每次 undo 之後用另一次 `--cli` 的 `list_events`（只列這個拋棄式日曆）讀回，逐場比對 title、start、end、notes、location：
 
 0. **行為探測**（舊 binary 也會列 `(undo not available)`，分不出來）：先做第 9 步的第一個形狀（span `all` 改 `start_time`）→
    `undo` 的拒絕訊息要含 `Undo restores a whole-series update only when it passed only event_id, span and title, notes or location`
    與 `this one is not that shape`。舊 binary 的訊息是 `Undo does not restore updates that touched a recurring event`：停下來，測試
    表面不是新版。
-1. **iCloud 判定**：`--cli` 建系列 A（第 2 場刪掉、第 4 場改標題，都用 `--cli` span `this`）→ session：
+1. **iCloud 判定**：`--cli` 建系列 A，notes 為 `A notes`、location 為 `Room A`（沒有座標）（第 2 場刪掉、第 4 場改標題，都用 `--cli` span `this`）→ session：
    `update_event` 系列 id、span `all`，改 `title`、`notes`、`location` → `undo_history` 最上面要是
    `Updated recurring event: … (whole series; undo restores its title, notes and location)`。出現 `(undo not available)`
    （第 0 步已確認是新 binary）就是 iCloud 判定（CalDAV、帳號標題 `iCloud`）在這台機器上不成立，或擷取沒有涵蓋整串，或第 4 場
@@ -953,7 +957,7 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 6. **等過同步再復原**：新建系列 F（第 3 場用 `--cli` 改標題）→ session：span `all` 改 `location` → 等至少 60 秒、什麼都
    不改 → `undo` 要成功，讀回如第 2 步。以 #236 的欄位或 `changed on their own` 拒絕，就是同步後系列或場次的欄位自己變了：
    記下訊息列出的內容回報到 #263（#236 第 5 步、#466 第 2 步就是為這個存在）。
-7. **寫回空值**：新建一個沒有 notes 也沒有 location 的系列 G → session：span `all` 寫 `notes` 與 `location` → `undo` 要成功，
+7. **寫回空值**：新建一個沒有 notes 也沒有 location 的系列 G（`--cli` 建立時不帶這兩個欄位） → session：span `all` 寫 `notes` 與 `location` → `undo` 要成功，
    讀回每一場的 notes 與 location 都是空的（反向寫入量過的是有值的欄位，清空沒有量過）。
 8. **單獨修改過的場次本來就有要寫的值（marker）**：新建系列 H，用 `--cli` 把第 3 場的 `location` 單獨改成 `Room B` → session：
    span `all` 把 `location` 改成 `Room B` → `undo_history` 是 `(undo not available)`：那個場次自己的值和寫入的值相同，之後分不出
@@ -972,6 +976,13 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
    （開始與結束都在列出的日期內），用 `--cli` 單獨改一個未來場次的標題、刪掉另一個未來場次 → session：span `all` 改 `notes` →
    `undo_history` 要是可還原的紀錄 → `undo`：成功，讀回已發生與未發生的場次的 notes 都回到修改前，刪掉的場次仍不在，改過標題的場次
    保留自己的標題。反向寫入只在還沒開始的系列量過，這一步是已開始系列唯一的檢查；讀回不符就記在 #263。
+8d. **第一場單獨移動過（marker）**：新建系列 K，用 `--cli` span `this` 把第一場往後移一小時 → session：span `all` 改 `title` →
+   `undo_history` 是 `(undo not available)`。再做一次，第一場往後移一天（系列 K2）：同樣是 marker（`firstSlotRecordable`、
+   `firstSlotIsPlain`）。拿到可還原的紀錄就記在 #263，這次 release 擋下。
+8e. **清空欄位（量測，不算通過條件）**：新建系列 L，notes 為 `L notes`、location 為 `Room L` → session：span `all` 把 `notes` 與
+   `location` 都改成 `""` → `undo_history` 記下是否可還原 → 可還原時 `undo`：記下是成功還原，還是被 #236 的 guard 以
+   `was changed after this operation`（列出 `notes` 或 `structured_location`）拒絕；後者是已知限制（guard 精確比較 nil 與 ""），
+   記在 #263。
 9. **不還原的形狀（marker）**：新建系列 E → session：span `all` 改 `start_time` 一小時 → `undo_history` 是
    `(undo not available)`，`undo` 以 `it changed the whole series` 拒絕、紀錄被丟棄、系列不變。另建一個不設結束的系列，span
    `all` 改 `title`：同樣是 marker。

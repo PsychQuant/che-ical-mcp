@@ -72,7 +72,8 @@ final class SeriesUpdateUndoWiringTests: XCTestCase {
         }
         let arm = SourcePins.code(try SourcePins.source(Self.arm))
         XCTAssertEqual(SourcePins.ranges(of: "isICloud: Self.isICloudSeries(series)", in: arm).count, 2, "the plan and the undo arm")
-        XCTAssertEqual(SourcePins.ranges(of: "placeHasCoordinates: series.structuredLocation?.geoLocation != nil", in: arm).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "placeHasCoordinates: series.structuredLocation?.geoLocation != nil,", in: arm).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "placeIsLocation: SeriesUpdateUndo.placeIsLocation(EventSnapshot(from: series, includeRecurrence: false))", in: arm).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "requested: requested, isICloud: Self.isICloudSeries(series),", in: arm).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "kind: kind, wholeSeriesCall: wholeSeries, throughOwnOccurrence: throughOwnOccurrence, viaStandIn: viaStandIn,", in: arm).count, 1)
     }

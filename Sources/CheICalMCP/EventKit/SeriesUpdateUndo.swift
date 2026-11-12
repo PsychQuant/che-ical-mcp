@@ -45,12 +45,13 @@ struct SeriesUpdateRecord {
 }
 
 enum SeriesUpdateUndo {
-    /// The restorable shape as the refusal of a whole-series marker states it, a closed list matching
-    /// `recordable`, `covers` and `occurrencesFollowOrKeep` (verify r1).
-    static let restorableShape = "passed only event_id, span and title, notes or location, with span all through the series' own identifier, on an iCloud calendar, on a series that starts and ends within the dates undo lists its occurrences over (at most four years; never a series with no end) and whose first occurrence was not edited or deleted on its own (through the series' identifier such a series goes through an occurrence's own identifier, #428, or a stand-in, #326, or shows a first occurrence that is not its first slot), with no location written over a place with coordinates (the series' own or that of an occurrence edited on its own), with the same occurrences edited or deleted on their own listed before and after the save, and where each occurrence edited on its own, in each field it wrote, either followed the update (it had the series' old value and took the new one) or kept an own value different from both, and nothing else of it changed"
+    /// The restorable shape as the refusal of a whole-series marker and every public text state it, a
+    /// closed list matching `recordable`, `covers`, `firstSlotRecordable`, `firstSlotIsPlain` and
+    /// `occurrencesFollowOrKeep` (verify r1-r3; `SeriesUpdateUndoDocsTests` pins each restatement).
+    static let restorableShape = "passed only event_id, span and title, notes or location, with span all through the series' own identifier, on an iCloud calendar, on a series that starts and ends within the dates undo lists its occurrences over (at most four years; never a series with no end, nor a count whose last occurrence cannot be bounded, which is a count with days of the month, months, weeks or days of the year, set positions, days of the week on a daily, monthly or yearly rule, or a monthly or yearly start after the 28th) and whose first occurrence was not edited or deleted on its own (through the series' identifier such a series goes through an occurrence's own identifier, #428, or a stand-in, #326, or shows a first occurrence that is not its first slot), with no location written over a place with coordinates (the series' own or that of an occurrence edited on its own) or over a series place named other than its location, with the same occurrences edited or deleted on their own listed before and after the save, and where each occurrence edited on its own, in each field it wrote, either followed the update (it had the series' old value and took the new one) or kept an own value different from both, and nothing else of it changed"
 
     /// What the restorable shape rests on and its listing limit, said after it in every public text (verify r2).
-    static let restorableShapeNotes = "The two shapes are inferred across the three fields from what was measured (follows: notes and location; keeps: title), so an occurrence that already held the written value is in neither, unless the written value equals the old one; the inverse was measured only on a series that had not started. An occurrence edited on its own and moved more than a year outside the listed dates is not listed: its slot counts as deleted, and it is not checked or compared."
+    static let restorableShapeNotes = "The two shapes are inferred across the three fields from what was measured (follows: notes and location; keeps: title), so an occurrence that already held the written value is in neither, unless the written value equals the old one; the inverse was measured only on a series that had not started. An occurrence edited on its own and moved more than a year outside the listed dates is not listed: its slot counts as deleted, and it is not checked or compared. This record's own comparisons read nil and empty notes, location and place title as the same, and a place without coordinates whose title is the location string moves with the location; #236's guard on the series compares them exactly, so the undo of a write that clears a field may be refused there. As for every update-undo, coordinates added later to a place that had none do not block the undo and are overwritten."
 
     /// The fields whose inverse was measured (Diagnosis 2026-11-09), in the order texts list them.
     static let restorableOrder = ["title", "notes", "location"]
@@ -79,12 +80,15 @@ enum SeriesUpdateUndo {
 
     /// The restorable fields of an update, judged before its save from what the call is; nil keeps
     /// the #236 marker. A `location` string written over a place with coordinates is not restorable:
-    /// writing the string back would not give the coordinates back.
+    /// writing the string back would not give the coordinates back. Verify r3: nor over a place without
+    /// coordinates named other than the location string (`placeIsLocation` false): the string written
+    /// back would name the place after itself.
     static func recordable(kind: RecurringUpdateKind?, wholeSeriesCall: Bool, throughOwnOccurrence: Bool, viaStandIn: Bool,
-                           requested: Set<String>, isICloud: Bool, placeHasCoordinates: Bool) -> [String]? {
+                           requested: Set<String>, isICloud: Bool, placeHasCoordinates: Bool,
+                           placeIsLocation: Bool) -> [String]? {
         guard kind == .series, wholeSeriesCall, !throughOwnOccurrence, !viaStandIn, isICloud,
               let fields = restorableFields(requested: requested) else { return nil }
-        if fields.contains("location"), placeHasCoordinates { return nil }
+        if fields.contains("location"), placeHasCoordinates || !placeIsLocation { return nil }
         return fields
     }
 
@@ -141,7 +145,10 @@ enum SeriesUpdateUndo {
     /// written one now), an occurrence that already held the written value (it cannot be told from one
     /// that followed), one that did not follow, or one that changed in another field. When `location` is
     /// written, an occurrence whose place has coordinates keeps the marker too: writing the string back
-    /// cannot give them back (as for the series' own place). nil and "" are the same.
+    /// cannot give them back (as for the series' own place). nil and "" are the same. Verify r2: the
+    /// plain occurrences (`keptSlots`) must be the same before and after too, and a place without
+    /// coordinates whose title is the location string on both sides (`placeIsLocation`) moves with
+    /// `location`, so it is not another change.
     static func occurrencesFollowOrKeep(before: SeriesExceptions, after: SeriesExceptions, old: EventSnapshot,
                                         written: [String: String], fields: [String]) -> Bool {
         guard fields.allSatisfy({ written[$0] != nil }) else { return false }
@@ -173,8 +180,14 @@ enum SeriesUpdateUndo {
     /// A place with no coordinates whose title is the location string (nil and "" the same), what
     /// EventKit makes of a location string written alone.
     static func placeIsLocation(_ event: EventSnapshot) -> Bool {
-        event.structuredLocationLat == nil && event.structuredLocationLon == nil
-            && (event.structuredLocationTitle ?? "") == (event.location ?? "")
+        placeIsLocation(placeTitle: event.structuredLocationTitle, location: event.location,
+                        hasCoordinates: event.structuredLocationLat != nil || event.structuredLocationLon != nil)
+    }
+
+    /// `placeIsLocation` on the values. In memory EventKit reads the location string as the place's
+    /// title, so a store's read of a place named otherwise is built from values in the tests.
+    static func placeIsLocation(placeTitle: String?, location: String?, hasCoordinates: Bool) -> Bool {
+        !hasCoordinates && (placeTitle ?? "") == (location ?? "")
     }
 
     /// Two lists of slots hold the same instants, to the second.

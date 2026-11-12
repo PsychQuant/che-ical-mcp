@@ -35,7 +35,8 @@ extension EventKitManager {
         guard let fields = SeriesUpdateUndo.recordable(
             kind: kind, wholeSeriesCall: wholeSeries, throughOwnOccurrence: throughOwnOccurrence, viaStandIn: viaStandIn,
             requested: requested, isICloud: Self.isICloudSeries(series),
-            placeHasCoordinates: series.structuredLocation?.geoLocation != nil) else { return nil }
+            placeHasCoordinates: series.structuredLocation?.geoLocation != nil,
+            placeIsLocation: SeriesUpdateUndo.placeIsLocation(EventSnapshot(from: series, includeRecurrence: false))) else { return nil }
         markNeedsRefresh()
         refreshIfNeeded()
         defer { markNeedsRefresh() }

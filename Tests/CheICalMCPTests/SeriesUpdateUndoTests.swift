@@ -56,11 +56,16 @@ final class SeriesUpdateUndoTests: XCTestCase {
 
     func testTheRecordIsTakenOnlyForAWholeSeriesUpdateThroughTheSeriesOwnObjectOnICloud() {
         func recordable(kind: RecurringUpdateKind? = .series, whole: Bool = true, own: Bool = false, standIn: Bool = false,
-                        iCloud: Bool = true, coordinates: Bool = false,
+                        iCloud: Bool = true, coordinates: Bool = false, placeIsLocation: Bool = true,
                         requested: Set<String> = ["event_id", "span", "title"]) -> [String]? {
             SeriesUpdateUndo.recordable(kind: kind, wholeSeriesCall: whole, throughOwnOccurrence: own, viaStandIn: standIn,
-                                        requested: requested, isICloud: iCloud, placeHasCoordinates: coordinates)
+                                        requested: requested, isICloud: iCloud, placeHasCoordinates: coordinates,
+                                        placeIsLocation: placeIsLocation)
         }
+        // Verify r3: a series place without coordinates named other than its location string would come
+        // back named after the string, so a location write over it keeps the marker too.
+        XCTAssertNil(recordable(placeIsLocation: false, requested: ["event_id", "span", "location"]))
+        XCTAssertEqual(recordable(placeIsLocation: false), ["title"], "only when the location is written")
         XCTAssertEqual(recordable(), ["title"])
         for kind: RecurringUpdateKind in [.occurrence, .future, .rulesAdded, .rulesRemoved] {
             XCTAssertNil(recordable(kind: kind), "\(kind) stays refused")
@@ -226,6 +231,34 @@ final class SeriesUpdateUndoTests: XCTestCase {
         XCTAssertTrue(SeriesUpdateUndo.firstSlotRecordable(baseline: .stored, slot: slot(0)))
         XCTAssertFalse(SeriesUpdateUndo.firstSlotRecordable(baseline: .unproven, slot: slot(0)))
         XCTAssertFalse(SeriesUpdateUndo.firstSlotRecordable(baseline: .stored, slot: nil))
+    }
+
+    /// Verify r3: the place-coupling exemption holds only for a place without coordinates named as the
+    /// location string on both sides.
+    func testThePlaceMovesWithLocationOnlyWhenItIsTheLocationOnBothSides() {
+        let old = seriesWith(notes: nil, location: "Room A")
+        XCTAssertFalse(followOrKeep(before: [occurrence(location: "Room A")], after: [occurrence(location: "Room B", lat: 25.0)], old: old,
+                                    written: ["location": "Room B"]), "coordinates after the save")
+        // A place named other than its location string (Hall at Room A): in memory EventKit reads the
+        // location string as the place title, so this is checked on the values.
+        XCTAssertFalse(SeriesUpdateUndo.placeIsLocation(placeTitle: "Hall", location: "Room A", hasCoordinates: false))
+        XCTAssertTrue(SeriesUpdateUndo.placeIsLocation(placeTitle: nil, location: "", hasCoordinates: false))
+        XCTAssertFalse(SeriesUpdateUndo.placeIsLocation(placeTitle: "Room A", location: "Room A", hasCoordinates: true))
+        XCTAssertFalse(SeriesUpdateUndo.placeIsLocation(EventSnapshot(from: { () -> EKEvent in
+            let e = EKEvent(eventStore: SharedTestStore.store); e.location = "Room A"
+            let place = EKStructuredLocation(title: "Room A"); place.geoLocation = CLLocation(latitude: 25, longitude: 121); e.structuredLocation = place
+            e.startDate = start; e.endDate = start.addingTimeInterval(60); return e }())), "coordinates are not a location string")
+    }
+
+    /// The published exception: a written value equal to the old one is the follows shape.
+    func testAWrittenValueEqualToTheOldOneFollows() {
+        XCTAssertTrue(followOrKeep(before: [occurrence(notes: "Default")], after: [occurrence(notes: "Default")], old: seriesWith(notes: "Default"),
+                                   written: ["notes": "Default"]))
+    }
+
+    /// Verify r3: a count whose last occurrence cannot be bounded is never covered.
+    func testACountWithoutABoundIsNotCovered() {
+        XCTAssertFalse(SeriesUpdateUndo.covers(exceptions(kept: [0, 1]), firstStart: start, end: .unknown))
     }
 
     func testTheWrittenValuesComeFromTheCall() {
