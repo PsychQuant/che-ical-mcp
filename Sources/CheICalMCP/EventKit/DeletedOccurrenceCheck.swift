@@ -86,13 +86,20 @@ enum DeletedOccurrenceCheck {
         case listedOffRule
         /// An all-day series whose rule end is less than a day after an occurrence's start (round 4).
         case allDayEnd
-        /// The listing cannot be shown to reach the series' end.
+        /// The listing cannot be shown to reach the series' end (no horizon was given).
         case notCovered
+        /// #506: with a horizon, the listing does not reach it without a gap from the first slot the
+        /// write reaches (`DeletedOccurrenceHorizon`).
+        case horizonNotReached
     }
 
     enum Verdict: Equatable {
         /// Every slot the write reaches is listed, and the listing covers the series.
         case none
+        /// #506: the listing does not cover the series, but every slot the write reaches is held up to
+        /// this date (exclusive), the end of the unbroken listing, at or after the horizon. Later slots
+        /// were not checked.
+        case noneThrough(Date)
         /// A slot the write reaches has no occurrence: one was deleted on its own (or moved where the
         /// listing does not reach). `blocked`: why span future from an occurrence after the last
         /// deletion cannot pass this same check, nil when it can (PR #505 rounds 1-3).
@@ -203,9 +210,14 @@ enum DeletedOccurrenceCheck {
     /// write is not an all-day change (#451 refuses that from a later occurrence), the first slot is
     /// held (else the series' id resolves to a stand-in, which this check answers unknown), and an
     /// occurrence is held after the last missing slot (there must be one to start from).
+    /// #506: `listed` is the ranges the series was listed over (nil: one unbroken range up to
+    /// `scannedTo`); a slot outside them is not compared. `horizon` (nil: the whole series must be
+    /// covered, as before) lets a series the listing does not cover answer `noneThrough` when the
+    /// listing reaches it without a gap from the first slot the write reaches.
     static func verdict(rules: [Rule], firstStart: Date?, observedSlots: [Date], uneditedSlots: [Date], slotsTrusted: Bool,
                         changesAllDay: Bool, reachedFrom: Date?, scannedTo: Date, coversWholeSeries: Bool,
-                        calendar: Calendar, isAllDay: Bool = false, firstSlotCause: FirstSlotCause = .notShown) -> Verdict {
+                        calendar: Calendar, isAllDay: Bool = false, firstSlotCause: FirstSlotCause = .notShown,
+                        listed: [DateInterval]? = nil, horizon: Date? = nil) -> Verdict {
         guard rules.count == 1 else { return .unknown(.ruleNotFollowed) }
         guard let firstStart else { return .unknown(.firstSlot(firstSlotCause)) }
         guard slotsTrusted else { return .unknown(.editedWithoutSlot) }
@@ -233,17 +245,29 @@ enum DeletedOccurrenceCheck {
         // so no end shape is refused for its own sake.
         func held(_ slot: Date) -> Bool { observedSlots.contains { UndoPostState.sameInstant($0, slot) } }
         func heldUnedited(_ slot: Date) -> Bool { uneditedSlots.contains { UndoPostState.sameInstant($0, slot) } }
+        // #506: a slot in a gap of the listing (or past it) is not compared.
+        let ranges = listed ?? [DateInterval(start: .distantPast, end: scannedTo)]
+        func reachesHorizon(from start: Date) -> Bool {
+            guard let horizon, let end = listedEnd(of: ranges, from: start) else { return false }
+            return end >= horizon
+        }
         let reached = reachedFrom.map { from in expected.filter { $0.timeIntervalSince(from) > -1 } } ?? expected
-        let missing = reached.filter { !held($0) }
+        let missing = reached.filter { isListed($0, in: ranges) && !held($0) }
         if let lastMissing = missing.max() {
-            let blocked: RouteBlock? = !coversWholeSeries ? .notCovered
+            let routeStart = expected.first { $0 > lastMissing && heldUnedited($0) }
+            let routeChecked = coversWholeSeries || routeStart.map(reachesHorizon(from:)) == true
+            let blocked: RouteBlock? = !routeChecked ? .notCovered
                 : changesAllDay ? .allDay
                 : !held(firstStart) ? .firstSlotMissing
-                : !expected.contains(where: { $0 > lastMissing && heldUnedited($0) }) ? .nothingAfter
+                : routeStart == nil ? .nothingAfter
                 : nil
             return .deleted(blocked: blocked)
         }
-        return coversWholeSeries ? .none : .unknown(.notCovered)
+        if coversWholeSeries { return .none }
+        guard horizon != nil else { return .unknown(.notCovered) }
+        let from = reachedFrom ?? firstStart
+        guard reachesHorizon(from: from), let end = listedEnd(of: ranges, from: from) else { return .unknown(.horizonNotReached) }
+        return .noneThrough(end)
     }
 
     /// PR #505 round 1 (MEDIUM, LOW 4): a whole-series write (span all, or span future from the first
@@ -390,7 +414,7 @@ enum DeletedOccurrenceCheck {
             let measured = change == .start ? "measured" : "measured for a new start only, not for this kind of change"
             route = "To change the time, start from an occurrence after the last one deleted: span 'future' with the occurrence_date of an occurrence after it, not edited on its own, changes the occurrences from there on, and the ones deleted before it stay deleted (\(measured)). Otherwise change the series in Calendar (not measured)."
         case .notCovered?:
-            route = "No update route keeps the deletions here: the series goes on past what this check can list, so a write from a later occurrence is refused the same way. Change the series in Calendar (not measured)."
+            route = "No update route keeps the deletions here: the series goes on past what this check can list, so a write from a later occurrence is refused the same way (for a change of the start, end, all_day or time zone in the same account, the listing from an occurrence after the last deleted one does not reach two years from now, #506). Change the series in Calendar (not measured)."
         case .allDay?:
             route = "No update route keeps the deletions for an all_day change: from a later occurrence it is refused (#451). Change the series in Calendar (not measured)."
         case .firstSlotMissing?:
@@ -457,7 +481,8 @@ enum DeletedOccurrenceCheck {
         case .ruleNotFollowed: return "its rule is one the check does not follow (more than one rule, a numbered weekday, set positions, months, weeks or days of the year, days of the week on a daily, monthly or yearly rule, days of the month on a daily, weekly or yearly rule, an interval below 1, several days every two weeks or more, a first start off the rule's days, a day of the month after the 28th or counted from the month's end, or February 29 every year)"
         case .listedOffRule: return "a listed occurrence falls where the rule gives none"
         case .allDayEnd: return "it is an all-day series whose rule ends less than a day after an occurrence's start, and whether that day is listed east of UTC was not measured"
-        case .notCovered: return "the listing cannot be shown to reach the series' end (no end, an end about five years or more after its start, or a count whose last occurrence the check cannot place close enough: a count with days of the month, a monthly or yearly count from the 29th to the 31st, or a long weekly count on several days)"
+        case .notCovered: return "the listing cannot be shown to reach the series' end (no end, an end about five years or more after its start, or a count whose last occurrence the check cannot place close enough: a count with days of the month, a monthly or yearly count from the 29th to the 31st, or a long weekly count on several days); a change of the start, end, all_day or time zone in the same account, without a new rule pattern, is checked up to two years from now instead (#506)"
+        case .horizonNotReached: return "the series goes on past what the check lists, and the listing does not reach two years from now without a gap from the first occurrence this write reaches (#506: the series is listed from about a year before its first occurrence to about five years after it, and around now from about four years before to about three years ahead, so a series begun more than about nine years ago leaves a gap, as does an occurrence to start from past the listing)"
         }
     }
 

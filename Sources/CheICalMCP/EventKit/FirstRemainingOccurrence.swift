@@ -195,14 +195,16 @@ extension EventKitManager {
     /// The occurrences of the series `stale` that the scan window lists (see
     /// `firstRemainingOccurrence`), with the candidate facts `FirstRemainingOccurrence` judges, or
     /// nil when the series has no rules or no readable calendar or start.
-    private func seriesOccurrences(of stale: EKEvent, id: String) -> ([EKEvent], [FirstRemainingOccurrence.Candidate])? {
+    /// #506: `ranges` replaces the listing ranges of the scan window (`SeriesExceptionsPlanner.listingRanges(for:)`).
+    private func seriesOccurrences(of stale: EKEvent, id: String,
+                                   ranges: [DateInterval]? = nil) -> ([EKEvent], [FirstRemainingOccurrence.Candidate])? {
         guard let calendar = stale.calendar, let window = seriesScanWindow(of: stale) else { return nil }
         let series = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: stale.calendarItemExternalIdentifier)
         var listed: [EKEvent] = []
         var byExternalID: [Bool] = []
         // The window and a year on each side, as #285's exception capture lists them (verify round
         // 3): an edited occurrence moved a few months out of the window blocks the stand-in too.
-        for range in SeriesExceptionsPlanner.listingRanges(for: window) {
+        for range in ranges ?? SeriesExceptionsPlanner.listingRanges(for: window) {
             let predicate = eventStore.predicateForEvents(withStart: range.start, end: range.end, calendars: [calendar])
             eventStore.enumerateEvents(matching: predicate) { event, _ in
                 let ids = UndoPostState.OccurrenceIDs(eventIdentifier: event.eventIdentifier,
@@ -260,15 +262,21 @@ extension EventKitManager {
     /// compared with the rule's expected slots (`DeletedOccurrenceCheck`). `unknown` when the series
     /// cannot be listed, the listing is empty or does not cover the series (fail closed, as #442
     /// does), or the first slot cannot be proven (PR #505 round 1: `viaStandIn`, a detached object).
+    /// #506: `horizonFrom` (now; nil: the whole series must be covered, as before) checks a series the
+    /// listing does not cover up to now plus two years, in the zone the rule is expanded in, and lists
+    /// the window around now as well when the listing from the first start ends before it.
     func deletedOccurrenceVerdict(of series: EKEvent, id: String, reachedFrom: Date?, viaStandIn: Bool,
-                                  changesAllDay: Bool) -> DeletedOccurrenceCheck.Verdict {
-        guard let (_, candidates) = seriesOccurrences(of: series, id: id), let window = seriesScanWindow(of: series),
-              let listedTo = SeriesExceptionsPlanner.listingRanges(for: window).map(\.end).max() else {
+                                  changesAllDay: Bool, horizonFrom now: Date? = nil) -> DeletedOccurrenceCheck.Verdict {
+        let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
+        let calendar = Calendar.gregorian(in: zone)
+        let horizon = now.flatMap { DeletedOccurrenceCheck.horizon(now: $0, calendar: calendar) }
+        guard let window = seriesScanWindow(of: series) else { return .unknown(.notListed) }
+        let ranges = DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now ?? Date())
+        guard let (_, candidates) = seriesOccurrences(of: series, id: id, ranges: ranges),
+              let listedTo = ranges.map(\.end).max() else {
             return .unknown(.notListed)
         }
         guard !candidates.isEmpty else { return .unknown(.notListed) }
-        let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
-        let calendar = Calendar.gregorian(in: zone)
         func ruleSlot(_ candidate: FirstRemainingOccurrence.Candidate) -> Date {
             UndoPostState.ruleSlot(of: candidate, isAllDay: series.isAllDay, zone: zone)
         }
@@ -286,10 +294,12 @@ extension EventKitManager {
             if case .failure(let failure) = firstSlot { return failure.cause }
             return .notShown
         }()
+        // #506: whole only up to the end of the unbroken listing from the first start (with no range
+        // around now, the listing's end, as before).
         let covers = firstStart.map {
             DetachedOccurrenceSpan.coversWholeSeries(
                 rules: (series.recurrenceRules ?? []).map(DetachedOccurrenceSpan.RuleExtent.init),
-                firstStart: $0, scannedTo: listedTo, calendar: calendar)
+                firstStart: $0, scannedTo: DeletedOccurrenceCheck.listedEnd(of: ranges, from: $0) ?? $0, calendar: calendar)
         } ?? false
         return DeletedOccurrenceCheck.verdict(
             rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
@@ -297,7 +307,7 @@ extension EventKitManager {
             observedSlots: candidates.map(ruleSlot), uneditedSlots: candidates.filter { !$0.isDetached }.map(ruleSlot),
             slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID },
             changesAllDay: changesAllDay, reachedFrom: reachedFrom, scannedTo: listedTo, coversWholeSeries: covers, calendar: calendar,
-            isAllDay: series.isAllDay, firstSlotCause: firstSlotCause)
+            isAllDay: series.isAllDay, firstSlotCause: firstSlotCause, listed: ranges, horizon: horizon)
     }
 
     /// PR #505 round 5 (MEDIUM): whether a whole-series write's planned dates can be compared with the

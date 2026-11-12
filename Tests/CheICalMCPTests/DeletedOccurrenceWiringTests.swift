@@ -84,12 +84,14 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
     func testTheVerdictListsTheSeriesAsTheAllDayCheckDoes() throws {
         let file = SourcePins.code(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift"))
         let body = try XCTUnwrap(SourcePins.body(of: "func deletedOccurrenceVerdict(", in: file))
-        XCTAssertTrue(body.contains("seriesOccurrences(of: series, id: id)"))
-        XCTAssertTrue(body.contains("SeriesExceptionsPlanner.listingRanges(for: window)"))
+        // #506: the listing ranges come from the horizon helper, which returns #442's ranges when no horizon is given
+        // or they reach it (DeletedOccurrenceHorizonTests.testAYoungSeriesIsListedAsBefore).
+        XCTAssertTrue(body.contains("seriesOccurrences(of: series, id: id, ranges: ranges)"))
+        XCTAssertTrue(body.contains("DeletedOccurrenceCheck.listingRanges(window: window, horizon: horizon, now: now ?? Date())"))
         XCTAssertTrue(body.contains("DetachedOccurrenceSpan.coversWholeSeries("))
         XCTAssertTrue(body.contains("UndoPostState.ruleSlot(of:"), "edited occurrences count by their rule slot")
         XCTAssertTrue(body.contains("DeletedOccurrenceCheck.firstSlotResult("), "the first slot is proven, never taken from a stand-in")
-        XCTAssertTrue(body.contains("firstSlotCause: firstSlotCause)"), "the cause reaches the verdict (round 5)")
+        XCTAssertTrue(body.contains("firstSlotCause: firstSlotCause, listed: ranges, horizon: horizon)"), "the cause reaches the verdict (round 5)")
         XCTAssertTrue(body.contains("let atStart = candidates.filter { UndoPostState.sameInstant($0.start, series.startDate) }"),
                       "every occurrence at the object's own start is counted (round 3: it must be one)")
         XCTAssertTrue(body.contains("earliestListedSlot: candidates.map(ruleSlot).min()"))
@@ -97,7 +99,7 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(body.contains("slotsTrusted: !candidates.contains { $0.isDetached && !$0.slotFromRID }"))
         XCTAssertTrue(body.contains("guard !candidates.isEmpty else { return .unknown(.notListed) }"), "an empty listing is not 'none deleted'")
         // PR #505 round 4 (LOW 4, 7): an all-day series' end is read with its all-day flag.
-        XCTAssertTrue(body.contains("isAllDay: series.isAllDay, firstSlotCause: firstSlotCause)"))
+        XCTAssertTrue(body.contains("isAllDay: series.isAllDay, firstSlotCause: firstSlotCause, listed: ranges, horizon: horizon)"))
     }
 
     /// PR #505 round 6 (LOW 8): the start_time description's list names the conditions the check

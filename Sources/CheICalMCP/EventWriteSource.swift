@@ -66,6 +66,16 @@ struct EventWriteValue: Sendable, Equatable {
     /// span "all"): that occurrence's start before the update, and the zone it was matched in
     /// (#383 verify).
     var matchedOccurrence: MatchedOccurrence? = nil
+    /// #506: set only by `update_event` when #503's check went up to a horizon on a series it could
+    /// not list whole: the end of what it compared, and the zone to show it in.
+    var deletionsChecked: DeletionCheckHorizon? = nil
+}
+
+/// #506: what #503's deleted-occurrence check compared, on a series it could not list whole: every
+/// slot the write reached before `until` (at or after now plus two years).
+struct DeletionCheckHorizon: Sendable, Equatable {
+    let until: Date
+    let zone: TimeZone?
 }
 
 /// The occurrence an `update_event` call's `occurrence_date` matched (#383 verify).
@@ -130,6 +140,7 @@ extension EventKitManager: EventWriteSource {
             timezone: request.timezone, clearTimezone: request.clearTimezone)
         var value = EventWriteValue(saved.event, seriesIdentifier: saved.seriesIdentifier)
         value.matchedOccurrence = saved.matchedOccurrence
+        value.deletionsChecked = saved.deletionsChecked
         return value
     }
 
