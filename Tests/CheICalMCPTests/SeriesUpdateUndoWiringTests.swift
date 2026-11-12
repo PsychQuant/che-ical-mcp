@@ -41,7 +41,11 @@ final class SeriesUpdateUndoWiringTests: XCTestCase {
                          "markNeedsRefresh()",
                          "refreshIfNeeded()",
                          "captureSeriesExceptions(of: series)",
-                         "SeriesUpdateUndo.covers("], in: plan)
+                         "SeriesUpdateUndo.covers(",
+                         "wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn)",
+                         "SeriesUpdateUndo.firstSlotRecordable(baseline: first.baseline, slot: first.slot)",
+                         "SeriesUpdateUndo.firstSlotIsPlain(before, firstSlot: firstSlot)",
+                         "return SeriesUpdatePlan("], in: plan)
         XCTAssertTrue(plan.contains("defer { markNeedsRefresh() }"))
         let record = try Self.body("func seriesUpdateRecord(", in: Self.arm)
         try assertOrder(["markNeedsRefresh()",
@@ -49,7 +53,8 @@ final class SeriesUpdateUndoWiringTests: XCTestCase {
                          "SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore, windows: plan.before.windows)",
                          "postWriteSnapshot(eventID: id, saved: series)",
                          "SeriesUpdateUndo.occurrencesFollowOrKeep(before: plan.before, after: after, old: old,",
-                         "written: plan.written, fields: plan.fields)"], in: record)
+                         "written: plan.written, fields: plan.fields)",
+                         "SeriesUpdateUndo.firstSlotIsPlain(after, firstSlot: plan.firstSlot)"], in: record)
         XCTAssertTrue(record.contains("defer { markNeedsRefresh() }"), "the next read of another call still refreshes")
     }
 
@@ -85,7 +90,9 @@ final class SeriesUpdateUndoWiringTests: XCTestCase {
         XCTAssertTrue(undo.contains("return try await undoSeriesUpdate(operation, record)"))
 
         let arm = try Self.body("func undoSeriesUpdate(", in: Self.arm)
-        try assertOrder(["let series = try await verifiedEvent(of: operation, verb: .undo)",
+        try assertOrder(["markNeedsRefresh()",
+                         "refreshIfNeeded()",
+                         "let series = try await verifiedEvent(of: operation, verb: .undo)",
                          "SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore, windows: record.after.windows)",
                          "SeriesUpdateUndo.refusal(record, current:",
                          "throw SeriesUpdateUndo.refusalError(",

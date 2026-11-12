@@ -143,10 +143,19 @@ enum SeriesUpdateUndo {
                                         written: [String: String], fields: [String]) -> Bool {
         guard fields.allSatisfy({ written[$0] != nil }) else { return false }
         guard before.detached.count == after.detached.count else { return false }
+        // Verify r2 (4a): the same plain occurrences too, so a deletion or a return between the two
+        // listings keeps the marker instead of being found only by the read-back after the undo writes.
+        guard sameSlots(before.keptSlots, after.keptSlots) else { return false }
         if fields.contains("location"), before.detached.contains(where: { $0.snapshot.structuredLocationLat != nil }) { return false }
         for was in before.detached {
             guard let now = after.detached.first(where: { UndoPostState.sameInstant($0.slot, was.slot) }) else { return false }
-            guard Set(changedFields(was.snapshot, now.snapshot)).isSubset(of: Set(fields)) else { return false }
+            var changed = Set(changedFields(was.snapshot, now.snapshot))
+            // Verify r2: EventKit couples a location string with the place title, so a place without
+            // coordinates whose title is the location string on both sides moved with `location`.
+            if fields.contains("location"), placeIsLocation(was.snapshot), placeIsLocation(now.snapshot) {
+                changed.remove("structured_location")
+            }
+            guard changed.isSubset(of: Set(fields)) else { return false }
             for field in fields {
                 guard let b = normalised(field, was.snapshot), let a = normalised(field, now.snapshot),
                       let o = normalised(field, old), let n = written[field] else { return false }
@@ -156,6 +165,33 @@ enum SeriesUpdateUndo {
             }
         }
         return true
+    }
+
+    /// A place with no coordinates whose title is the location string (nil and "" the same), what
+    /// EventKit makes of a location string written alone.
+    static func placeIsLocation(_ event: EventSnapshot) -> Bool {
+        event.structuredLocationLat == nil && event.structuredLocationLon == nil
+            && (event.structuredLocationTitle ?? "") == (event.location ?? "")
+    }
+
+    /// Two lists of slots hold the same instants, to the second.
+    static func sameSlots(_ a: [Date], _ b: [Date]) -> Bool {
+        a.count == b.count && a.allSatisfy { slot in b.contains { UndoPostState.sameInstant($0, slot) } }
+    }
+
+    /// Verify r2 (2): the series' first rule slot can be shown and its first occurrence was not edited on
+    /// its own (`wholeSeriesBaseline`, PR #505 r5). A first occurrence edited on its own and moved does
+    /// not go through #428, and the series object then shows its moved start, not its slot.
+    static func firstSlotRecordable(baseline: DeletedOccurrenceCheck.StoredBaseline, slot: Date?) -> Bool {
+        baseline == .stored && slot != nil
+    }
+
+    /// Verify r2 (2): the first rule slot is a plain occurrence in the listing (not edited on its own,
+    /// not deleted, not outside the listed windows), so the first occurrence is compared like the rest.
+    static func firstSlotIsPlain(_ exceptions: SeriesExceptions, firstSlot: Date?) -> Bool {
+        guard let firstSlot else { return false }
+        return exceptions.keptSlots.contains { UndoPostState.sameInstant($0, firstSlot) }
+            && !exceptions.detached.contains { UndoPostState.sameInstant($0.slot, firstSlot) }
     }
 
     /// Whether the series starts and ends inside one of the listed windows

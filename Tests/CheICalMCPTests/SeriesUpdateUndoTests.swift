@@ -175,6 +175,59 @@ final class SeriesUpdateUndoTests: XCTestCase {
                                    old: seriesWith(notes: "Default"), written: ["notes": "New"]), "only when location is written")
     }
 
+    /// Verify r2: EventKit couples the location string with the place title, so an occurrence that
+    /// followed a location write also changed its place; that counts as part of `location`.
+    func testAnOccurrenceThatFollowedALocationWriteIsRestorable() {
+        let old = seriesWith(notes: nil, location: "Room A")
+        XCTAssertTrue(followOrKeep(before: [occurrence(title: "Own", location: "Room A")], after: [occurrence(title: "Own", location: "Room B")],
+                                   old: old, written: ["location": "Room B"]))
+        XCTAssertTrue(followOrKeep(before: [occurrence(location: nil)], after: [occurrence(location: "Room B")], old: seriesWith(notes: nil),
+                                   written: ["location": "Room B"]), "no location before, the written one after")
+    }
+
+    /// The shape measured on 2026-11-09: an own title kept, notes and location followed.
+    func testTheMeasuredShapeIsRestorable() {
+        let old = seriesWith(notes: "Old notes", location: "Room A", title: "Weekly")
+        XCTAssertTrue(followOrKeep(before: [occurrence(title: "Own", notes: "Old notes", location: "Room A")],
+                                   after: [occurrence(title: "Own", notes: "New notes", location: "Room B")],
+                                   old: old, written: ["title": "Renamed", "notes": "New notes", "location": "Room B"]))
+    }
+
+    /// The coordinates guard decides only in the keeps shape: an own place with coordinates that neither
+    /// write touched. Without the guard this would be restorable.
+    func testAKeptOwnPlaceWithCoordinatesKeepsTheMarkerWhenLocationIsWritten() {
+        let own = occurrence(location: "Room X", lat: 25.0)
+        XCTAssertFalse(followOrKeep(before: [own], after: [own], old: seriesWith(notes: nil, location: "Room A"),
+                                    written: ["location": "Room B"]))
+    }
+
+    /// Verify r2 (4a): a plain occurrence deleted or back between the two listings keeps the marker.
+    func testTheSameOccurrencesMustBeListedBeforeAndAfter() {
+        let old = seriesWith(notes: "Default")
+        let before = SeriesExceptions(window: window, keptSlots: [slot(0), slot(1)], detached: [])
+        let after = SeriesExceptions(window: window, keptSlots: [slot(0)], detached: [])
+        XCTAssertFalse(SeriesUpdateUndo.occurrencesFollowOrKeep(before: before, after: after, old: old, written: ["notes": "New"], fields: ["notes"]))
+        XCTAssertFalse(SeriesUpdateUndo.occurrencesFollowOrKeep(before: after, after: before, old: old, written: ["notes": "New"], fields: ["notes"]))
+        XCTAssertTrue(SeriesUpdateUndo.occurrencesFollowOrKeep(before: before, after: before, old: old, written: ["notes": "New"], fields: ["notes"]))
+    }
+
+    /// Verify r2 (2): the series' first rule slot must be a plain occurrence in a listing; a first
+    /// occurrence edited on its own (moved or not), deleted, or outside the listing keeps the marker.
+    func testTheFirstSlotMustBeAPlainListedOccurrence() {
+        XCTAssertTrue(SeriesUpdateUndo.firstSlotIsPlain(exceptions(kept: [0, 1, 2]), firstSlot: slot(0)))
+        XCTAssertFalse(SeriesUpdateUndo.firstSlotIsPlain(exceptions(kept: [1, 2], detached: [(0, "Own")]), firstSlot: slot(0)), "edited on its own")
+        XCTAssertFalse(SeriesUpdateUndo.firstSlotIsPlain(exceptions(kept: [1, 2]), firstSlot: slot(0)), "deleted, or not listed")
+        XCTAssertFalse(SeriesUpdateUndo.firstSlotIsPlain(exceptions(kept: [0, 1, 2]), firstSlot: nil), "no slot shown")
+        // A first occurrence moved one day later: the series object shows the moved start, which is not
+        // the rule slot, and the slot itself is detached.
+        let moved = start.addingTimeInterval(day)
+        XCTAssertFalse(SeriesUpdateUndo.firstSlotIsPlain(exceptions(kept: [1, 2], detached: [(0, "Weekly")]), firstSlot: moved))
+        XCTAssertFalse(SeriesUpdateUndo.firstSlotIsPlain(exceptions(kept: [1, 2], detached: [(0, "Weekly")]), firstSlot: slot(0)))
+        XCTAssertTrue(SeriesUpdateUndo.firstSlotRecordable(baseline: .stored, slot: slot(0)))
+        XCTAssertFalse(SeriesUpdateUndo.firstSlotRecordable(baseline: .unproven, slot: slot(0)))
+        XCTAssertFalse(SeriesUpdateUndo.firstSlotRecordable(baseline: .stored, slot: nil))
+    }
+
     func testTheWrittenValuesComeFromTheCall() {
         XCTAssertEqual(SeriesUpdateUndo.writtenValues(title: "T", notes: nil, location: ""), ["title": "T", "location": ""])
     }

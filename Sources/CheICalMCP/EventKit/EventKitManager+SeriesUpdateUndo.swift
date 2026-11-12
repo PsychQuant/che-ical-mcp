@@ -12,6 +12,8 @@ extension EventKitManager {
         let written: [String: String]
         /// The series' exceptions before the save, over the window placed now.
         let before: SeriesExceptions
+        /// The series' first rule slot, a plain occurrence in `before` (verify r2).
+        let firstSlot: Date
     }
 
     /// Whether `series` is an iCloud series, from its calendar's account.
@@ -22,8 +24,12 @@ extension EventKitManager {
     /// Called after every refusal of `updateEvent` and before its first field is assigned. Nil keeps
     /// the #236 marker: the shape is not restorable, or the series' exceptions cannot be listed, or
     /// the listing does not cover the whole series (a series with no end never is). Lists only when
-    /// the shape is restorable, after a forced refresh (verify r1: without it a long-lived store can
-    /// list an occurrence edited elsewhere with its old fields, as the listing after the save is not).
+    /// the shape is restorable, after a refresh is requested (verify r1: a long-lived store can list an
+    /// occurrence edited elsewhere with its old fields). `refreshIfNeeded` is
+    /// `refreshSourcesIfNecessary`, which runs in the background, so the listing is not proven current.
+    /// Verify r2: also nil when the series' first occurrence was edited or deleted on its own, or its
+    /// first rule slot cannot be shown (`wholeSeriesBaseline`), or that slot is not a plain occurrence
+    /// in the listing (`SeriesUpdateUndo.firstSlotIsPlain`).
     func seriesUpdatePlan(series: EKEvent, kind: RecurringUpdateKind?, wholeSeries: Bool, throughOwnOccurrence: Bool,
                           viaStandIn: Bool, requested: Set<String>, written: [String: String]) -> SeriesUpdatePlan? {
         guard let fields = SeriesUpdateUndo.recordable(
@@ -37,15 +43,20 @@ extension EventKitManager {
         guard SeriesUpdateUndo.covers(before, firstStart: series.startDate, end: seriesExceptionsStore.seriesEnd(of: series)) else {
             return nil
         }
-        return SeriesUpdatePlan(fields: fields, written: written, before: before)
+        guard let id = series.eventIdentifier, !id.isEmpty else { return nil }
+        let first = wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn)
+        guard SeriesUpdateUndo.firstSlotRecordable(baseline: first.baseline, slot: first.slot), let firstSlot = first.slot,
+              SeriesUpdateUndo.firstSlotIsPlain(before, firstSlot: firstSlot) else { return nil }
+        return SeriesUpdatePlan(fields: fields, written: written, before: before, firstSlot: firstSlot)
     }
 
     /// Called after the save: the record, with the series' exceptions listed again over the windows
     /// listed before the save, and the series read back as the undo reads it. Nil (the marker) when
     /// the series has no identifier, its exceptions cannot be listed now, or an occurrence edited on
-    /// its own is in neither measured shape (`SeriesUpdateUndo.occurrencesFollowOrKeep`). The listing
-    /// runs after a forced refresh; the refresh flag is set again after it, so the next read of
-    /// another call still refreshes, as after any write.
+    /// its own is in neither measured shape (`SeriesUpdateUndo.occurrencesFollowOrKeep`), or the first
+    /// rule slot is not a plain occurrence after the save either. The listing runs after a refresh is
+    /// requested (in the background, not proven current); the refresh flag is set again after it, so
+    /// the next read of another call still refreshes, as after any write.
     func seriesUpdateRecord(plan: SeriesUpdatePlan, series: EKEvent, old: EventSnapshot) -> SeriesUpdateRecord? {
         markNeedsRefresh()
         refreshIfNeeded()
@@ -56,7 +67,8 @@ extension EventKitManager {
         }
         let saved = postWriteSnapshot(eventID: id, saved: series)
         guard SeriesUpdateUndo.occurrencesFollowOrKeep(before: plan.before, after: after, old: old,
-                                                       written: plan.written, fields: plan.fields) else {
+                                                       written: plan.written, fields: plan.fields),
+              SeriesUpdateUndo.firstSlotIsPlain(after, firstSlot: plan.firstSlot) else {
             return nil
         }
         return SeriesUpdateRecord(id: id, externalIdentifier: series.calendarItemExternalIdentifier, old: old,
@@ -72,6 +84,10 @@ extension EventKitManager {
     /// the state before the update is reported as such and the record discarded; the actor excludes
     /// this server's other calls, not another process's change in between.
     func undoSeriesUpdate(_ operation: UndoOperation, _ record: SeriesUpdateRecord) async throws -> String {
+        // Verify r2: a refresh is requested before the guard and the listing that decide whether to
+        // write, as before the two listings of the record site (in the background, not proven current).
+        markNeedsRefresh()
+        refreshIfNeeded()
         let series = try await verifiedEvent(of: operation, verb: .undo)
         let exceptions = SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore, windows: record.after.windows)
         let current = SeriesUpdateUndo.Current(
