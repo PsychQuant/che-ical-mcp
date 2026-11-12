@@ -32,6 +32,13 @@ final class DeletedOccurrenceHorizonHandlerTests: XCTestCase {
         let schema = "\(String(describing: tool.inputSchema))"
         XCTAssertEqual(SourcePins.ranges(of: "the listing does not reach two years from now without a gap from the first occurrence the write reaches", in: schema).count, 1, schema)
         XCTAssertFalse(schema.contains("(not when: the series is open-ended,"), schema)
+        // Verify r1 (items 3, 5): the parameter texts say the two-year scope and the risk, and all_day is excluded.
+        for part in ["On a series the check cannot list whole, a change of the start, end or time zone is checked for deleted occurrences only up to the date the response reports as deleted_occurrences_checked_until (at least two years from now), so a pass there does not rule out an occurrence deleted on its own after that date",
+                     "on a series the check cannot list whole, deletions are checked only up to the date the response reports as deleted_occurrences_checked_until (at least two years from now), so a pass there does not rule out one deleted after that date",
+                     "the two-year check of #506 does not apply to all_day, so a series the check cannot list whole is refused through any identifier",
+                     "or the write also changes all_day, moves the series to another account or writes a new rule pattern"] {
+            XCTAssertEqual(SourcePins.ranges(of: part, in: schema).count, 1, part)
+        }
         for reason in [SeriesRuleWrite.startPassesOccurrencesReason, SeriesRuleWrite.laterStartReason, SeriesRuleWrite.zoneChangeReason] {
             XCTAssertTrue(reason.contains("is checked only up to about two years from now, #506)"), reason)
         }

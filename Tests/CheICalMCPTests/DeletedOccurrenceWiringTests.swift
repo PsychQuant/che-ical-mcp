@@ -108,7 +108,8 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
     /// refuses on that round 4 and 5 added.
     func testTheStartTimeDescriptionNamesTheLaterConditions() throws {
         let server = try SourcePins.source("Server.swift")
-        for part in ["or the series is all-day and its rule ends less than a day after an occurrence's start), since it brought deleted occurrences back (#503).",
+        for part in [// #506 verify r1 (item 6): the list now ends with the expansion cap.
+                     "or the series is all-day and its rule ends less than a day after an occurrence's start, or its rule gives more than 20,000 occurrences before the end of the listing), since it brought deleted occurrences back (#503).",
                      "dates written over the whole series that equal the shown times of a first occurrence edited on its own",
                      "a recurrence with another pattern (frequency, interval, days or count) over more than one occurrence (not measured)."] {
             XCTAssertEqual(SourcePins.ranges(of: part, in: server).count, 1, part)
