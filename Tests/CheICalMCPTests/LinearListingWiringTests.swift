@@ -55,12 +55,27 @@ final class LinearListingWiringTests: XCTestCase {
         XCTAssertTrue(body.contains("UndoPostState.sameInstant(sorted[low - 1], query)"))
     }
 
-    /// The production callers pass no counter: it is the tests' probe.
+    /// No file of the server passes a counter or names one: it is the tests' probe. Every Swift file
+    /// under `Sources/` is read but the two that declare and take it (verify round 1: three named
+    /// files would have missed a caller added elsewhere).
     func testNoProductionCallerPassesACounter() throws {
-        for file in ["EventKit/FirstRemainingOccurrence.swift", "EventKit/EventKitManager.swift", "EventKit/EventKitManager+UndoGuard.swift"] {
-            let code = SourcePins.code(try SourcePins.source(file))
-            XCTAssertFalse(code.contains("comparisons:"), file)
-            XCTAssertFalse(code.contains("ComparisonCounter"), file)
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources")
+        let declaring: Set<String> = ["DeletedOccurrenceCheck.swift", "InstantSet.swift"]
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThan(files.count, 50, "the scan must read the source tree")
+        XCTAssertEqual(files.filter { declaring.contains($0.lastPathComponent) }.count, 2, "the two exempt files exist, once each")
+        var read = 0
+        for file in files where !declaring.contains(file.lastPathComponent) {
+            let code = SourcePins.code(try String(contentsOf: file, encoding: .utf8))
+            XCTAssertFalse(code.contains("comparisons:"), file.lastPathComponent)
+            XCTAssertFalse(code.contains("ComparisonCounter"), file.lastPathComponent)
+            read += 1
         }
+        XCTAssertEqual(read, files.count - 2)
+        // The one production call of the verdict, pinned where it is.
+        let caller = SourcePins.code(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift"))
+        XCTAssertEqual(SourcePins.ranges(of: "DeletedOccurrenceCheck.verdict(", in: caller).count, 1)
     }
 }
