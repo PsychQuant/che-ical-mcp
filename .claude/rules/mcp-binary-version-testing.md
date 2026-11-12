@@ -933,17 +933,30 @@ count 系列，#503 本來就以 not covered 拒絕）：
    `horizonNotReached` 拒絕，從 2026-11-16 用 span `future`：`updated`，檢查到 2029-11-14。
 5. 從 2018-11-12 起的每日系列：這次呼叫 6.16 s；本週開始的每日系列 2.16 s（日曆裡只有這個系列，#520）。
 
-**沒量過，打 tag 之前做**。下面每一形狀都另建一個同形狀、在期限內（例如三個月後）單獨刪掉一場的系列，同樣的呼叫要以 #503 的
-deleted 文字拒絕、讀回不變。放行的預期：`updated`，到 `deleted_occurrences_checked_until` 為止的場數與寫入前相同（讀回範圍取
-寫入前後都涵蓋的一段，例如下兩年），回應有 `deleted_occurrences_checked_until` 與 `deleted_occurrences_note`。結果與預期不同就記在
-#506：
+**2026-11-12 用最後的 binary 也量了**（PR #521 的 `321e0a8` build、Developer ID 簽章，`--cli`，拋棄式日曆 `#506 gate`）。
+每一步都另建一個同形狀、在期限內單獨刪掉一場的系列，同樣的呼叫都以 #503 的 deleted 文字拒絕、讀回不變：
 
-1. **只改 `end_time`**：從下週起每週 10:00–11:00、沒有結束日 → 系列 id、span `all`、只帶 `end_time` 為第一天 11:30。
-2. **還沒開始的系列改時區**：從下個月起每週 10:00、`timezone` Asia/Taipei、沒有結束日 → 系列 id、span `all`、只帶
-   `timezone: "America/New_York"`。已開始的系列由 #478 先拒絕，不在這一步。記下讀回的牆上時間。
-3. **經場次自己的 id（#416/#428）**：從下週起每週 10:00、沒有結束日 → `--cli` 的 `update_event` span `this` 只改第一場的標題 →
-   系列 id、span `all`、`start_time` 為第一天 15:00（`end_time` 對應，同一天）。#428 會改走第一場自己的 id，回應要有
-   `occurrence_id`，也要有 `deleted_occurrences_checked_until`（它經過遞迴呼叫的回傳值帶上來）；第一場保留改過的標題。
+1. **只改 `end_time`**：從 2026-11-16 起每週 10:00–11:00 → 系列 id、span `all`、只帶 `end_time` 11:30：`updated`，到下兩年都是
+   104 場、每場 10:00–11:30，`deleted_occurrences_checked_until` 2031-11-15。對照（刪 2027-02-15）：拒絕，103 場不變。
+2. **還沒開始的系列改時區**：從 2026-12-07 起每週 10:00 Asia/Taipei → 系列 id、span `all`、只帶 `timezone: "America/New_York"`：
+   `updated`，101 場、`item_timezone` 都是 America/New_York，檢查到 2031-12-06。store 保留第一場的瞬間、規則改在紐約的牆上時間
+   展開：每場都是紐約 21:00（前一天），所以紐約進入夏令時間（2027-03-14）之後，臺北時間從 10:00 變成 09:00。這是時區修改本來的
+   語意，不是這次的改動。對照（刪 2027-03-01）：拒絕，100 場不變。
+3. **經場次自己的 id（#416/#428）**：從 2026-11-16 起每週 10:00 → `--cli` 的 span `this` 只改第一場的標題 → 系列 id、span `all`、
+   `start_time` 2026-11-16 15:00（`end_time` 16:00）：`updated`，回應有 `occurrence_id`（第一場的 `/RID=`）與
+   `deleted_occurrences_checked_until` 2031-11-15；104 場都在 15:00–16:00，第一場保留改過的標題。對照（刪 2027-02-15）：拒絕，
+   訊息是經系列 id 那一種（span `this` 帶 `occurrence_date`、從某天起沒有量過的路），103 場不變。
+6. **舊系列從較後的場次起**：從 2016-11-07 起每週 10:00 → 系列 id、span `all`、第一天 15:00：以 `horizonNotReached` 拒絕
+   （最後的措辭：「the check cannot list the series whole, and the listing does not reach two years from now without a gap…」），
+   讀回不變 → 同一個系列 span `future`、`occurrence_date` 2026-11-16、15:00：`updated`（新的系列 id、`id_changed: true`），
+   檢查到 2029-11-14；2026-11-09 之前留在 10:00。對照（刪 2027-02-15，span `future`）：拒絕，105 場不變。
+
+量完之後刪掉拋棄式日曆，`list_calendars` 在 09:49:55 與 09:51:03（+08:00）各查一次，名稱含 `#506` 的都是 0。
+
+**沒量過、不擋 tag**（依程式判斷：與已量的形狀走同一份列出範圍、同一個 `verdict`，放行後寫的是同一段 `datePlan.datesToWrite`；
+#506 只改了判定、沒動寫入）。每一形狀都另建一個在期限內刪掉一場的系列，同樣的呼叫要拒絕、讀回不變；放行的預期是 `updated`、
+到 `deleted_occurrences_checked_until` 為止的場數不變、回應有那兩個欄位。結果不同就記在 #506：
+
 4. **`all_day: true`**：從下週起每週 10:00、沒有結束日、沒有單獨改過的場次 → 系列 id、span `all`、`all_day: true`。
    預期是**拒絕**：#442 在 #503 之前執行，列不完整個系列時把「有沒有單獨改過的場次」當成無法排除而拒絕
    （`refusesAllDayChange` 的 `hasEditedOccurrence` 讀 `editedOccurrenceUnknown`，`DeletedOccurrenceWiringTests` 釘住順序）；
@@ -951,18 +964,4 @@ deleted 文字拒絕、讀回不變。放行的預期：`updated`，到 `deleted
 5. **次數推算不出結束、或結束日在列出範圍之後**：(a) 每月、`days_of_month: [5, 20]`、`occurrence_count: 150`，第一場 2026-12-05；
    (b) 每週一三、`occurrence_count: 600`，第一場 2026-12-07（週一）；(c) 每週、`end_date` 在七年後、而且在某一場之後至少一週，
    第一場 2026-12-07。都是 10:00，改成第一天 09:00（往前移，#509 才不會先回它的文字）。第一場要落在規則的日子上，否則檢查以
-   規則無法展開拒絕，這一步就不算數。
-6. **舊系列從較後的場次起**：用最後的 binary 重做 2026-11-12 第 4 步的後半：從 2016-11-07 起每週 10:00 → 系列 id、
-   span `future`、`occurrence_date` 為下週一、`start_time` 15:00：`updated`，同一個系列 span `all` 以 `horizonNotReached` 拒絕，
-   兩段文字是最後的措辭。
-
-**哪些擋 tag**（依程式判斷，不是依量過與否）：
-
-- **不擋**：1、4、5、6。1 與 5 走的是已量形狀的同一條路：主物件路線的 `deletedOccurrenceVerdict(… horizonFrom:)`、同一份列出
-  範圍、同一個 `verdict`，放行後寫的是同一段 `event.startDate` / `event.endDate`（`datePlan.datesToWrite`），#506 只改了
-  判定、沒動寫入。5 的次數計算是 #503 已量過的 `expectedSlots` 在列得完的次數系列上用的同一段。4 在 #503 之前就被 #442
-  拒絕，期限的程式碼走不到。6 與已量的那次程式相同，只有文字不同。
-- **擋**：2 與 3。2 的判定相同，但放行後寫的是 `event.timeZone`（`SeriesRuleWrite.writesZone`），不是已量的那段；而跨日光節約時間
-  的時區修改正是 #503 量到會讓刪除的場次回來的機制，這次放行之後 store 怎麼依新時區展開無結束的規則沒有量過。3 讀系列的方式不同
-  （從 `/RID=` 前面那段 id 取系列物件再 `refresh()`），寫入走第一場自己的 id（#428 的路線），回應的
-  `deleted_occurrences_checked_until` 經 `updateEvent` 的遞迴回傳值帶上來，這三處都只有原始碼釘選、沒有在裝置上跑過。
+   規則無法展開拒絕，這一步就不算數。5 的次數計算是 #503 已量過的 `expectedSlots` 在列得完的次數系列上用的同一段。
