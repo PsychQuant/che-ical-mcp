@@ -16,6 +16,9 @@ final class DeletedOccurrenceHorizonWiringTests: XCTestCase {
         XCTAssertTrue(update.contains("case .noneThrough(let until): deletionsChecked = DeletionCheckHorizon(until: until, zone: Self.occurrenceZone(of: event))"))
         XCTAssertTrue(update.contains("return (event, seriesIdentifier, matchedOccurrence, deletionsChecked)"))
         XCTAssertTrue(update.contains("saved.matchedOccurrence,\n                        saved.deletionsChecked)"))
+        // Verify r2 (MEDIUM 1): the route window is shown in the event's zone, as occurrence_start is.
+        XCTAssertTrue(update.contains("let named = window.map { (from: OccurrenceStart.string($0.start, zone: zone), before: OccurrenceStart.string($0.end, zone: zone)) }"))
+        XCTAssertTrue(update.contains("case .deleted(let blocked, let window):"))
         // The onlyTheAccount arm cannot swallow a noneThrough: it comes after it.
         let through = try XCTUnwrap(update.range(of: "case .noneThrough(let until):"))
         let account = try XCTUnwrap(update.range(of: "case _ where onlyTheAccount:"))

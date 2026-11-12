@@ -1684,10 +1684,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             case .none: break
             case .noneThrough(let until): deletionsChecked = DeletionCheckHorizon(until: until, zone: Self.occurrenceZone(of: event))
             case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict, fromLaterOccurrence: reach.isFromLaterOccurrence))
-            case .deleted(let blocked):
+            case .deleted(let blocked, let window):
                 // Round 7 (MEDIUM 1, LOW 5): no span-future route across accounts or through the first occurrence's own id.
                 let route = DeletedOccurrenceCheck.refusalRoute(blocked, crossesAccounts: crossesAccounts, throughFirstOwnID: DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours))
-                throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: route, change: change))
+                // #506 verify r2: where the route starts, in the event's zone, as occurrence_start is shown.
+                let zone = Self.occurrenceZone(of: event)
+                let named = window.map { (from: OccurrenceStart.string($0.start, zone: zone), before: OccurrenceStart.string($0.end, zone: zone)) }
+                throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.deletedReason(blocked: route, change: change, routeWindow: route == nil ? named : nil))
             case .unknown(let cause): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason(cause))
             }
         }

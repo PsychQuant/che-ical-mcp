@@ -110,7 +110,10 @@ enum DeletedOccurrenceCheck {
         /// A slot the write reaches has no occurrence: one was deleted on its own (or moved where the
         /// listing does not reach). `blocked`: why span future from an occurrence after the last
         /// deletion cannot pass this same check, nil when it can (PR #505 rounds 1-3).
-        case deleted(blocked: RouteBlock?)
+        /// #506 verify r2: `routeWindow`, only on a series the listing does not cover with the route
+        /// offered: span future passes from a held, unedited occurrence in it (start: the first such
+        /// one after the last deletion; end: the end of its unbroken listing, exclusive).
+        case deleted(blocked: RouteBlock?, routeWindow: DateInterval? = nil)
         /// The check cannot tell, and why.
         case unknown(UnknownCause)
     }
@@ -269,13 +272,19 @@ enum DeletedOccurrenceCheck {
             // (on an old series, one in the block around now), not at the first such slot.
             let after = expected.filter { $0 > lastMissing && heldUnedited($0) }
             let routeStart = coversWholeSeries ? after.first : after.first(where: reachesHorizon(from:))
+            // Verify r2 (LOW 3): no occurrence after the deletion, or only edited ones, is nothingAfter on
+            // any series; horizonNotReached only when there are some and none reaches the horizon.
             let blocked: RouteBlock? = !coversWholeSeries && horizon == nil ? .notCovered
-                : !coversWholeSeries && routeStart == nil ? .horizonNotReached
                 : changesAllDay ? .allDay
                 : !held(firstStart) ? .firstSlotMissing
-                : routeStart == nil ? .nothingAfter
+                : after.isEmpty ? .nothingAfter
+                : routeStart == nil ? .horizonNotReached
                 : nil
-            return .deleted(blocked: blocked)
+            // Verify r2 (MEDIUM 1): on a series the listing does not cover, the refusal names where the
+            // route can start, since the next occurrence after the deletion may not reach the horizon.
+            let window = coversWholeSeries || blocked != nil ? nil
+                : routeStart.flatMap { start in listedEnd(of: ranges, from: start).map { DateInterval(start: start, end: $0) } }
+            return .deleted(blocked: blocked, routeWindow: window)
         }
         if coversWholeSeries { return .none }
         guard horizon != nil else { return .unknown(.notCovered) }
@@ -374,7 +383,8 @@ enum DeletedOccurrenceCheck {
             if let end = rule.endDate, slot > end { return false }
             slots.append(slot)
             if rule.occurrenceCount > 0, slots.count >= rule.occurrenceCount { return false }
-            if slots.count >= maxSlots { capped = true; return false }
+            // Verify r2 (LOW 1): too many only when a slot past `maxSlots` exists in range.
+            if slots.count > maxSlots { capped = true; return false }
             return true
         }
         func past(_ date: Date) -> Bool { date >= until || (rule.endDate.map { date > $0 } ?? false) }
@@ -444,12 +454,18 @@ enum DeletedOccurrenceCheck {
     /// PR #505 round 1 (LOW 6): the partial route is offered only where it can pass this check, on a
     /// series the listing covers whole. Round 5 (LOW): "measured" only for a new start (a time of day or
     /// a date), the kind measured; for an end alone, a zone, a rule or an account it is not measured.
-    static func deletedReason(blocked: RouteBlock?, change: ChangeKind = .start) -> String {
+    /// #506 verify r2: `routeWindow` (the window's start and end, formatted by the caller) names where the
+    /// route starts on a series the listing does not cover; nil keeps main's text.
+    static func deletedReason(blocked: RouteBlock?, change: ChangeKind = .start, routeWindow: (from: String, before: String)? = nil) -> String {
         let route: String
         switch blocked {
         case nil:
             let measured = change == .start ? "measured" : "measured for a new start only, not for this kind of change"
-            route = "To change the time, start from an occurrence after the last one deleted: span 'future' with the occurrence_date of an occurrence after it, not edited on its own, changes the occurrences from there on, and the ones deleted before it stay deleted (\(measured)). Otherwise change the series in Calendar (not measured)."
+            if let routeWindow {
+                route = "To change the time, start from the occurrence on \(routeWindow.from), or a later one before \(routeWindow.before), that is not edited on its own: span 'future' with its occurrence_date changes the occurrences from there on, and the ones deleted before it stay deleted (\(measured)); this series goes on past what the check lists, and only from those occurrences does the listing reach two years from now (#506). Otherwise change the series in Calendar (not measured)."
+            } else {
+                route = "To change the time, start from an occurrence after the last one deleted: span 'future' with the occurrence_date of an occurrence after it, not edited on its own, changes the occurrences from there on, and the ones deleted before it stay deleted (\(measured)). Otherwise change the series in Calendar (not measured)."
+            }
         case .notCovered?:
             route = "No update route keeps the deletions here: the series goes on past what this check can list, so a write from a later occurrence is refused the same way; because this call also changes the rule pattern or all_day, the route was not evaluated against the two-year check (#506), which applies to a change of the start, end or time zone alone. Change the series in Calendar (not measured)."
         case .horizonNotReached?:
@@ -526,7 +542,7 @@ enum DeletedOccurrenceCheck {
         case .allDayEnd: return "it is an all-day series whose rule ends less than a day after an occurrence's start, and whether that day is listed east of UTC was not measured"
         case .notCovered: return "the listing cannot be shown to reach the series' end (no end, an end about five years or more after its start, or a count whose last occurrence the check cannot place close enough: a count with days of the month, a monthly or yearly count from the 29th to the 31st, or a long weekly count on several days); a change of the start, end or time zone in the same account, without a new rule pattern or all_day, is checked up to two years from now instead (#506)"
         case .tooManySlots: return "its rule gives more occurrences than the check expands (\(maxSlots)) between its first occurrence and the end of the listing, so the later ones were not compared"
-        case .horizonNotReached: return "the check cannot list the series whole, and the listing does not reach two years from now without a gap from the first occurrence this write reaches (#506: the series is listed from about a year before its first occurrence to about five years after it, and around now from about four years before to about three years ahead, so a series begun more than about nine years ago leaves a gap, as does an occurrence to start from past the listing)"
+        case .horizonNotReached: return "the check cannot list the series whole, and the listing does not reach two years from now without a gap from the first occurrence this write reaches (#506: the series is listed from about a year before its first occurrence to about five years after it, and, when that ends before two years from now, also around now from about four years before to about three years ahead, so a series begun more than about nine years ago leaves a gap, as does an occurrence to start from past the listing)"
         }
     }
 

@@ -49,7 +49,8 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
         XCTAssertTrue(update.contains("case .unknown(let cause): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason(cause))"))
         // PR #505 round 7 (MEDIUM 1, LOW 5): the route block knows the account and the first occurrence's own id.
         XCTAssertTrue(update.contains("let route = DeletedOccurrenceCheck.refusalRoute(blocked, crossesAccounts: crossesAccounts, throughFirstOwnID: DetachedOccurrenceSpan.addressesFirstBySlot(ownNeighbours))"))
-        XCTAssertTrue(update.contains("DeletedOccurrenceCheck.deletedReason(blocked: route, change: change)"))
+        // #506 verify r2: the route window is named only when the route is offered.
+        XCTAssertTrue(update.contains("DeletedOccurrenceCheck.deletedReason(blocked: route, change: change, routeWindow: route == nil ? named : nil)"))
         XCTAssertTrue(update.contains("case _ where onlyTheAccount: throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.accountMoveReason(verdict, fromLaterOccurrence: reach.isFromLaterOccurrence))"))
     }
 
