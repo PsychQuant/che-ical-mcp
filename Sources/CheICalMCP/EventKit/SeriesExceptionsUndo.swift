@@ -51,6 +51,21 @@ enum SeriesExceptionsUndo {
         return exceptions
     }
 
+    /// #263: the exceptions of `series` listed over `windows` as recorded, instead of a window placed
+    /// around the time of the call, so two listings made at different times compare
+    /// (`SeriesUpdateUndo.diff`). Listed as `capture(of:in:now:)` lists (each window and a year on each
+    /// side, merged); nil when nothing can be listed (no windows, identifier or calendar). The
+    /// coverage flags are left false: whether the windows cover the series is `SeriesUpdateUndo.covers`.
+    static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store,
+                                                            windows: [DateInterval]) -> SeriesExceptions? {
+        let ids = store.identifiers(of: series)
+        guard !windows.isEmpty, let id = ids.eventIdentifier, !id.isEmpty, store.hasCalendar(series) else { return nil }
+        let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: ids.externalIdentifier)
+        let observed = observedOccurrences(of: series, ids: seriesIDs,
+                                           over: SeriesExceptionsPlanner.listingRanges(covering: windows), in: store)
+        return SeriesExceptionsPlanner.capture(observed, of: seriesIDs, windows: windows)
+    }
+
     /// The series' own occurrences, listed over `ranges`, one query each: a window and a year on each
     /// side of it (`SeriesExceptionsPlanner.listingRanges`), because an occurrence edited on its own is
     /// matched by its current time, so one moved out of a window is only found there (PR #318 verify

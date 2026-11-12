@@ -1684,6 +1684,17 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
         }
 
+        // #263: a whole-series update on iCloud that writes only title, notes or location gets a
+        // record undo can restore. Its exceptions are listed here, after every refusal and before
+        // the first field is assigned, and again after the save (`seriesUpdateRecord`). The kind is
+        // read as after the save (`recurringKind` below), from the same request values.
+        let seriesPlan = seriesUpdatePlan(
+            series: masterEvent,
+            kind: RecurringUpdateKind.of(hadRules: hadRules, hasRulesAfter: clearRecurrence ? false : (recurrenceRule != nil || hadRules),
+                                         onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span),
+            wholeSeries: applyToAll, throughOwnOccurrence: addressesOwnOccurrence, viaStandIn: resolved.viaStandIn,
+            requested: fields)
+
         if let t = title { event.title = t }
 
         if let dates = datePlan.datesToWrite {
@@ -1765,8 +1776,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw error
         }
         markNeedsRefresh()
+        // #263: the restorable record of a whole-series update, when the plan above found one.
+        let seriesRecord = seriesPlan.flatMap { seriesUpdateRecord(plan: $0, series: event, old: oldSnapshot) }
         // #236: an update that touched a recurring event is recorded only as a marker; its undo is
-        // refused (RecurringUpdateKind). The rules after the update come from the request: a
+        // refused (RecurringUpdateKind), except #263's record. The rules after the update come from the request: a
         // detached occurrence reads back with none although its series still repeats. A detached
         // occurrence addressed by its own identifier is an occurrence update (round 5).
         let recurringKind = RecurringUpdateKind.of(
@@ -1777,7 +1790,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // one the event has now (read here, after the save); #236: and the state the update left.
         await CalendarUndoManager.shared.record(EventUpdateRecord.operation(
             requestedID: identifier, identifierAfterSave: event.eventIdentifier, oldSnapshot: oldSnapshot,
-            recurringKind: recurringKind, postState: { postWriteSnapshot(eventID: $0, saved: event) }))
+            recurringKind: recurringKind, seriesRecord: seriesRecord,
+            postState: { postWriteSnapshot(eventID: $0, saved: event) }))
         // #268 verify rounds 2-4: a save of one occurrence (span this) is known from the objects,
         // not from the id's shape; one with a calendar of another account was refused above. The
         // series object's identifier counts only when it refreshed and is a real series object (the
@@ -3311,6 +3325,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // #236: refused, never attempted; the record is discarded (UnrecoverableUndoError).
             throw UndoOperation.recurringUpdateRefusal(title: title, kind: kind)
 
+        case .updateSeries(let record):
+            // #263: the whole-series update on iCloud (`EventKitManager+SeriesUpdateUndo.swift`).
+            return try await undoSeriesUpdate(operation, record)
+
         case .moveEvent(let movedID, let fromCalendarIdentifier, _, let title, let isSeries):
             // Undo an in-place move (#226) = move it back to the recorded calendar, while the
             // event is still in the calendar it was moved to (#236). A series is resolved as the
@@ -3544,7 +3562,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         guard WriteStoreContext.current is WriteStoreLease<EKEventStore> else { return try await withWriteLease { try await self.executeRedo(operation) } }
         switch operation {
         case .createEvent, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent,
-             .updateRecurringEvent, .moveEvent, .moveByCopy, .createReminder, .deleteReminder, .updateReminder,
+             .updateRecurringEvent, .updateSeries, .moveEvent, .moveByCopy, .createReminder, .deleteReminder, .updateReminder,
              .calendarOperation:
             // #247: these write nothing on redo. `handleRedo` answers them itself and drops the
             // entry from the redo stack (`CalendarUndoManager.beginRedo`); this is a fallback with

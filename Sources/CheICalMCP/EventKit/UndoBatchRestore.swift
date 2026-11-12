@@ -137,7 +137,7 @@ extension UndoOperation {
         case .deleteFollowingOccurrences:
             // #244: never restored; its refusal (`batchMemberUndoRefusal`) runs before this check.
             return nil
-        case .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent, .createReminder, .updateReminder,
+        case .createEvent, .updateEvent, .updateRecurringEvent, .updateSeries, .moveEvent, .createReminder, .updateReminder,
              .completeReminder, .completeRecurringReminder, .batch, .calendarOperation:
             return nil
         }
@@ -427,7 +427,7 @@ extension UndoOperation {
         case .moveByCopy(let original, _, _, _, _): return original.title
         case .deleteOccurrence(let snapshot, _): return snapshot.title
         case .deleteReminder(let snapshot): return snapshot.title
-        case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent,
+        case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .updateSeries, .moveEvent,
              .createReminder, .updateReminder, .completeReminder, .completeRecurringReminder, .calendarOperation:
             return nil
         }
@@ -450,7 +450,7 @@ extension UndoOperation {
             var text = String(format: "%04d-%02d-%02d", year, month, day)
             if let hour = due.hour { text += String(format: "T%02d:%02d", hour, due.minute ?? 0) }
             return "due " + text
-        case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent,
+        case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .updateSeries, .moveEvent,
              .createReminder, .updateReminder, .completeReminder, .completeRecurringReminder, .calendarOperation:
             return nil
         }
@@ -483,7 +483,7 @@ extension UndoOperation {
             return true
         case .batch(let members):
             return members.allSatisfy(\.mayRunLastAfterAFailure)
-        case .createEvent, .updateEvent, .updateRecurringEvent, .moveEvent, .createReminder, .updateReminder,
+        case .createEvent, .updateEvent, .updateRecurringEvent, .updateSeries, .moveEvent, .createReminder, .updateReminder,
              .completeReminder, .completeRecurringReminder, .calendarOperation:
             return false
         case .moveByCopy:

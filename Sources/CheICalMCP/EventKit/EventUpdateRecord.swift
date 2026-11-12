@@ -5,12 +5,14 @@ import Foundation
 /// the record carries the identifier the event has after the save, as `.moveEvent` does; with the
 /// requested one the undo looks the event up under an identifier that is gone and fails as not
 /// found. #236: a one-off update also records the state it left, read under that identifier the
-/// way the undo reads it; an update that touched a recurring event is only a marker.
+/// way the undo reads it; an update that touched a recurring event is only a marker, except the
+/// whole-series update #263 restores, whose record the record site builds (`seriesRecord`).
 enum EventUpdateRecord {
     static func operation(requestedID: String, identifierAfterSave: String?, oldSnapshot: EventSnapshot,
-                          recurringKind: RecurringUpdateKind?,
+                          recurringKind: RecurringUpdateKind?, seriesRecord: SeriesUpdateRecord?,
                           postState: (String) -> EventSnapshot) -> UndoOperation {
         let id = identifierAfterSave ?? requestedID
+        if recurringKind == .series, let seriesRecord { return .updateSeries(seriesRecord) }
         if let recurringKind {
             return .updateRecurringEvent(id: id, title: oldSnapshot.title, kind: recurringKind)
         }
