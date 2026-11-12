@@ -29,6 +29,15 @@ enum UndoSnapshotFixtures {
         return EventSnapshot(from: event)
     }
 
+    /// #263: the record of a restorable whole-series update, for tests that need one of every kind.
+    static func seriesUpdate(id: String = "e", title: String = "Standup") -> UndoOperation {
+        let exceptions = SeriesExceptions(window: DateInterval(start: Date(timeIntervalSince1970: 1_800_000_000), duration: 86_400 * 30),
+                                          keptSlots: [], detached: [])
+        return .updateSeries(SeriesUpdateRecord(id: id, externalIdentifier: "X-\(id)", old: event(title: title, weeklyOccurrences: 3),
+                                                saved: event(title: title, weeklyOccurrences: 3), fields: ["title"],
+                                                before: exceptions, after: exceptions))
+    }
+
     /// An in-memory event calendar, never saved, for `event(calendar:)`.
     static func newCalendar() -> EKCalendar { EKCalendar(for: .event, eventStore: store) }
 

@@ -75,6 +75,47 @@ final class SeriesUpdateUndoTests: XCTestCase {
         XCTAssertEqual(recordable(coordinates: true), ["title"], "coordinates matter only when the location is written")
     }
 
+    /// Review before the PR: an occurrence edited on its own that already held the value the update
+    /// wrote cannot be told apart from one that took it from the series, so the inverse write could
+    /// overwrite its own edit. Such an update keeps the marker.
+    func testAnEditedOccurrenceHoldingTheWrittenValueKeepsTheMarker() {
+        let old = snapshot("Weekly", weekly: 5)
+        func detached(title: String, notes: String?, location: String?) -> SeriesExceptions {
+            let event = EKEvent(eventStore: SharedTestStore.store)
+            event.calendar = calendar
+            event.title = title
+            event.notes = notes
+            event.location = location
+            event.startDate = slot(3)
+            event.endDate = slot(3).addingTimeInterval(3600)
+            return SeriesExceptions(window: window, keptSlots: [slot(0)],
+                                    detached: [DetachedOccurrence(slot: slot(3), snapshot: EventSnapshot(from: event, includeRecurrence: false))])
+        }
+        func saved(location: String?, notes: String? = nil, title: String = "Weekly") -> EventSnapshot {
+            let event = EKEvent(eventStore: SharedTestStore.store)
+            event.calendar = calendar
+            event.title = title
+            event.notes = notes
+            event.location = location
+            event.startDate = start
+            event.endDate = start.addingTimeInterval(3600)
+            return EventSnapshot(from: event)
+        }
+        let roomB = detached(title: "Weekly", notes: nil, location: "Room B")
+        XCTAssertTrue(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: roomB, old: old, saved: saved(location: "Room B"), fields: ["location"]))
+        XCTAssertFalse(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: roomB, old: old, saved: saved(location: "Room C"), fields: ["location"]),
+                       "its own value differs from the new one: kept by the store (measured for a title)")
+        XCTAssertFalse(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: roomB, old: old, saved: saved(location: "Room B", title: "New"), fields: ["title"]),
+                       "only the written fields count")
+        let ownTitle = detached(title: "New", notes: nil, location: nil)
+        XCTAssertTrue(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: ownTitle, old: old, saved: saved(location: nil, title: "New"), fields: ["title"]))
+        let sameAsSeries = detached(title: "Weekly", notes: nil, location: nil)
+        XCTAssertFalse(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: sameAsSeries, old: old, saved: saved(location: nil, notes: "N"), fields: ["notes"]),
+                       "an occurrence that had the series' old value takes the new one and gets the old one back")
+        XCTAssertFalse(SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: exceptions(kept: [0, 1]), old: old, saved: saved(location: "Room B"), fields: ["location"]),
+                       "no occurrence edited on its own")
+    }
+
     /// The #416 and #428 routes write through an occurrence's own object: never the series kind.
     func testOwnOccurrenceRoutesNeverClassifyAsTheSeriesKind() {
         for span: EKSpan in [.thisEvent, .futureEvents] {

@@ -28,6 +28,7 @@ final class UndoRedoClassificationTests: XCTestCase {
             .deleteFollowingOccurrences(title: "Standup"),
             .updateEvent(id: "EVT-1", oldSnapshot: event, saved: event),
             .updateRecurringEvent(id: "EVT-1", title: "Standup", kind: .series),
+            UndoSnapshotFixtures.seriesUpdate(id: "EVT-1"),   // #263
             .moveEvent(id: "EVT-1", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: false),
             .createReminder(id: "REM-1", title: "Pay rent", created: reminder),
             .deleteReminder(snapshot: reminder),
@@ -61,7 +62,7 @@ final class UndoRedoClassificationTests: XCTestCase {
     /// The instruction names the title and the tool that repeats the operation, never the
     /// identifier (stale after an update-undo across accounts, #246), and says nothing was written.
     func testInstructionsNameTheTitleAndToolNotTheIdentifier() throws {
-        let expectedTool = ["create_event", "delete_event", "delete_event", nil, "update_event", nil, "move_events_batch",
+        let expectedTool = ["create_event", "delete_event", "delete_event", nil, "update_event", nil, "update_event", "move_events_batch",
                             "create_reminder", "delete_reminder", "update_reminder", "move_events_batch", nil, nil, nil]
         // `zip` stops at the shorter list, so a kind added to one list only would be skipped
         // silently (PR #282 round 3, finding 37).

@@ -81,6 +81,27 @@ enum SeriesUpdateUndo {
         return fields
     }
 
+    /// Whether an occurrence edited on its own held, before the update, the value the update wrote to
+    /// a field, while the series held another. After the update it cannot be told from an occurrence
+    /// that took the value from the series, so the inverse write could replace its own edit (the
+    /// measured shape kept an own title that differed from both values). Such an update keeps the
+    /// marker. nil and empty text are the same, as `differsFromSeries` reads them.
+    static func editedOccurrenceHoldsWrittenValue(before: SeriesExceptions, old: EventSnapshot, saved: EventSnapshot,
+                                                  fields: [String]) -> Bool {
+        func value(_ field: String, _ event: EventSnapshot) -> String? {
+            switch field {
+            case "title": return event.title
+            case "notes": return event.notes ?? ""
+            case "location": return event.location ?? ""
+            default: return nil
+            }
+        }
+        return fields.contains { field in
+            guard let new = value(field, saved), let was = value(field, old), new != was else { return false }
+            return before.detached.contains { value(field, $0.snapshot) == new }
+        }
+    }
+
     /// Whether the listing saw every occurrence of the series: it starts and ends inside one of the
     /// listed windows (`SeriesExceptionsPlanner.deleteWindow`, at most 1460 days). A series with no
     /// end, or whose end cannot be shown, is never covered, so its update stays the marker.

@@ -43,7 +43,9 @@ final class SeriesUpdateUndoWiringTests: XCTestCase {
         let record = try Self.body("func seriesUpdateRecord(", in: Self.arm)
         try assertOrder(["refreshIfNeeded()",
                          "SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore, windows: plan.before.windows)",
-                         "postWriteSnapshot(eventID: id, saved: series)"], in: record)
+                         "postWriteSnapshot(eventID: id, saved: series)",
+                         "SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue("], in: record)
+        XCTAssertTrue(record.contains("defer { markNeedsRefresh() }"), "the next read of another call still refreshes")
     }
 
     func testTheUndoArmChecksBeforeItWritesAndReadsBackAfter() throws {
@@ -63,6 +65,7 @@ final class SeriesUpdateUndoWiringTests: XCTestCase {
                          "refreshIfNeeded()",
                          "SeriesExceptionsUndo.capture(of: readSeries ?? series, in: seriesExceptionsStore, windows: record.before.windows)",
                          "SeriesUpdateUndo.readBackMismatch(record,",
+                         "markNeedsRefresh()",
                          "throw SeriesUpdateUndo.readBackError(",
                          "return SeriesUpdateUndo.undoneMessage(record)"], in: arm)
         let afterGuard = try XCTUnwrap(arm.range(of: "let series = try await verifiedEvent(of: operation, verb: .undo)")).upperBound

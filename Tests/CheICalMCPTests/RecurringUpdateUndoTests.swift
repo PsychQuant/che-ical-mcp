@@ -120,4 +120,18 @@ final class RecurringUpdateUndoTests: XCTestCase {
             XCTAssertFalse(message.contains("discard_id"), "the entry is already discarded")
         }
     }
+
+    /// #263: the whole-series marker says which whole-series update undo restores, so the caller
+    /// can tell why this one is not.
+    func testTheSeriesMarkerSaysWhichWholeSeriesUpdateIsRestored() {
+        let error = UndoOperation.recurringUpdateRefusal(title: "Standup", kind: .series)
+        XCTAssertEqual(UndoFailureDisposition.of(error), .discard)
+        let message = EventKitErrorSanitizer.sanitizeForResponse(error).code
+        XCTAssertTrue(message.contains("it changed the whole series"), message)
+        XCTAssertTrue(message.contains("Undo restores a whole-series update only on an iCloud calendar, when it wrote nothing but title, notes or location"), message)
+        XCTAssertTrue(message.contains("never one with no end"), message)
+        XCTAssertTrue(message.contains("revert it in Calendar"), message)
+        let other = EventKitErrorSanitizer.sanitizeForResponse(UndoOperation.recurringUpdateRefusal(title: "Standup", kind: .occurrence)).code
+        XCTAssertFalse(other.contains("Undo restores a whole-series update"), other)
+    }
 }

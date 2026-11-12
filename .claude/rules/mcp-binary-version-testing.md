@@ -944,10 +944,18 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
    session：`undo`：以 `(1 deleted on its own)` 拒絕，什麼都沒寫，讀回 5 場、notes 是新的 → `discard_id` 移除。
 5. **之後系列欄位被改**：新建系列 D → session：span `all` 改 `title` → `--cli`：span `all` 改 `location` → session：`undo`：
    以 #236 的 `was changed after this operation` 拒絕（列出 `location`），紀錄保留 → `discard_id` 移除。
-6. **不還原的形狀（marker）**：新建系列 E → session：span `all` 改 `start_time` 一小時 → `undo_history` 是
+6. **等過同步再復原**：新建系列 F（第 3 場用 `--cli` 改標題）→ session：span `all` 改 `location` → 等至少 60 秒、什麼都
+   不改 → `undo` 要成功，讀回如第 2 步。以 #236 的欄位或 `changed on their own` 拒絕，就是同步後系列或場次的欄位自己變了：
+   記下訊息列出的內容回報到 #263（#236 第 5 步、#466 第 2 步就是為這個存在）。
+7. **寫回空值**：新建一個沒有 notes 也沒有 location 的系列 G → session：span `all` 寫 `notes` 與 `location` → `undo` 要成功，
+   讀回每一場的 notes 與 location 都是空的（反向寫入量過的是有值的欄位，清空沒有量過）。
+8. **單獨修改過的場次本來就有要寫的值（marker）**：新建系列 H，用 `--cli` 把第 3 場的 `location` 單獨改成 `Room B` → session：
+   span `all` 把 `location` 改成 `Room B` → `undo_history` 是 `(undo not available)`：那個場次自己的值和寫入的值相同，之後分不出
+   來，反向寫入可能蓋掉它（`editedOccurrenceHoldsWrittenValue`）。
+9. **不還原的形狀（marker）**：新建系列 E → session：span `all` 改 `start_time` 一小時 → `undo_history` 是
    `(undo not available)`，`undo` 以 `it changed the whole series` 拒絕、紀錄被丟棄、系列不變。另建一個不設結束的系列，span
    `all` 改 `title`：同樣是 marker。
-7. **非 iCloud 來源**（有 Google 或 Exchange 帳號時；沒有就記成無法執行）：在該來源手動建的拋棄式日曆建系列（同上，有結束），
+10. **非 iCloud 來源**（有 Google 或 Exchange 帳號時；沒有就記成無法執行）：在該來源手動建的拋棄式日曆建系列（同上，有結束），
    session：span `all` 改 `title` → `undo_history` 是 `(undo not available)`，`undo` 拒絕並丟棄，什麼都沒寫。
 
 結果記在 #263。結束後刪掉拋棄式日曆（非 iCloud 來源的那個也要手動刪），隔一分鐘以上 `list_calendars` 兩次，名稱含 `#263`

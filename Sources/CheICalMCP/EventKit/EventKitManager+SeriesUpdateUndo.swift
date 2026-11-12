@@ -36,16 +36,23 @@ extension EventKitManager {
 
     /// Called after the save: the record, with the series' exceptions listed again over the windows
     /// listed before the save, and the series read back as the undo reads it. Nil (the marker) when
-    /// the series has no identifier or its exceptions cannot be listed now.
+    /// the series has no identifier, its exceptions cannot be listed now, or an occurrence edited on
+    /// its own already held a value the update wrote (`editedOccurrenceHoldsWrittenValue`). The
+    /// listing refreshes the store; the refresh flag is set again after it, so the next read of
+    /// another call still refreshes, as after any write.
     func seriesUpdateRecord(plan: SeriesUpdatePlan, series: EKEvent, old: EventSnapshot) -> SeriesUpdateRecord? {
         refreshIfNeeded()
+        defer { markNeedsRefresh() }
         guard let id = series.eventIdentifier, !id.isEmpty,
               let after = SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore, windows: plan.before.windows) else {
             return nil
         }
+        let saved = postWriteSnapshot(eventID: id, saved: series)
+        guard !SeriesUpdateUndo.editedOccurrenceHoldsWrittenValue(before: plan.before, old: old, saved: saved, fields: plan.fields) else {
+            return nil
+        }
         return SeriesUpdateRecord(id: id, externalIdentifier: series.calendarItemExternalIdentifier, old: old,
-                                  saved: postWriteSnapshot(eventID: id, saved: series), fields: plan.fields,
-                                  before: plan.before, after: after)
+                                  saved: saved, fields: plan.fields, before: plan.before, after: after)
     }
 
     /// The undo of `.updateSeries`. The #236 guard first: it resolves the series by its identifier,
@@ -88,6 +95,8 @@ extension EventKitManager {
             series: readSeries.map { EventSnapshot(from: $0) },
             exceptions: SeriesExceptionsUndo.capture(of: readSeries ?? series, in: seriesExceptionsStore, windows: record.before.windows))
         let mismatch = SeriesUpdateUndo.readBackMismatch(record, readBack: readBack)
+        // The read-back refreshed the store; the next read of another call refreshes again.
+        markNeedsRefresh()
         guard mismatch.isEmpty else {
             throw SeriesUpdateUndo.readBackError(record, mismatch: mismatch)
         }
