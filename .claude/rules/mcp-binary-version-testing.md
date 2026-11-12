@@ -923,7 +923,7 @@ count 系列，#503 本來就以 not covered 拒絕）：
 是 stateful，`--cli` 走不到（見上表）。**出 #263 的那個版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是
 新 binary 之後），只用名稱含 `#263` 的拋棄式 iCloud 日曆。系列的建立、場次的單獨修改與刪除都用 `--cli`（各自獨立的
 process，不進 session 的 undo stack）；session 上只做 `update_event`、`undo`、`redo`、`undo_history`、`list_calendars`。
-每個系列每週 10:00–11:00、6 次，**第一場在未來**（反向寫入只在還沒開始的系列量過，也避開 #451），帶 `end_date` 而且
+除了第 8c 步，每個系列每週 10:00–11:00、6 次，**第一場在未來**（反向寫入只在還沒開始的系列量過，也避開 #451），帶 `end_date` 而且
 **至少在最後一場之後一週**（#509 會先拒絕往後移的時間，第 9 步才會留下 marker；不設結束的系列一定拿到 marker），標題各不相同；
 每次 undo 之後用另一次 `--cli` 的 `list_events`（只列這個拋棄式日曆）讀回，逐場比對 title、start、end、notes、location：
 
@@ -957,12 +957,21 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
    讀回每一場的 notes 與 location 都是空的（反向寫入量過的是有值的欄位，清空沒有量過）。
 8. **單獨修改過的場次本來就有要寫的值（marker）**：新建系列 H，用 `--cli` 把第 3 場的 `location` 單獨改成 `Room B` → session：
    span `all` 把 `location` 改成 `Room B` → `undo_history` 是 `(undo not available)`：那個場次自己的值和寫入的值相同，之後分不出
-   來，反向寫入可能蓋掉它（`occurrencesFollowOrKeep`）。**變形（之前讀過的快取）**：新建系列 H2 → session 先 `list_events`
+   來，反向寫入可能蓋掉它（`occurrencesFollowOrKeep`）。**變形（之前讀過的快取，量測）**：新建系列 H2 → session 先 `list_events`
    這個日曆（讓長駐 store 讀過它）→ `--cli` 把第 3 場的 `location` 單獨改成 `Room B` → session：span `all` 把 `location` 改成
-   `Room B` → 同樣要是 `(undo not available)`（修改前那次列出會先強制 refresh；拿到可還原的紀錄，就是列出讀到第 3 場的舊值）。
+   `Room B` → 預期 `(undo not available)`。修改前那次列出之前只是**要求** refresh（`refreshSourcesIfNecessary` 在背景執行），
+   不保證列出是最新的；拿到可還原的紀錄，就記在 #263，當成列出讀到舊值的發現，不是 refresh 通過或失敗的判定。
    **量測（不算通過條件）**：新建系列 H3，notes 為 `Default`，用 `--cli` 把第 3 場的 notes 單獨改成 `Private` → session：span `all`
    把 notes 改成 `New` → 記下 `undo_history` 是可還原還是 `(undo not available)`，以及 `--cli` 讀回第 3 場的 notes：仍是 `Private`
    就是「保留」，可以 undo（undo 後第 3 場仍是 `Private`）；變成 `New` 就是被蓋掉，必須是 marker。結果記在 #263。
+8b. **復原那一側的快取**：新建系列 I → session：span `all` 改 `notes`（要拿到可還原的紀錄）→ session：`list_events` 這個日曆
+   （讓 session 讀一次，清掉修改留下的 refresh 旗標）→ `--cli`：單獨改第 3 場的 notes（另做一次：單獨刪第 3 場）→ session：`undo`：
+   預期以 `changed on their own` 拒絕、什麼都沒寫、紀錄保留 → `discard_id` 移除。**若 undo 寫入了**（回 `Undone` 或 `reading the series
+   back did not show it`），記在 #263，這次 release 擋下，不打 tag。
+8c. **已經開始的系列**（本節唯一第一場在過去的系列）：用 `--cli` 建第一場在兩週前、每週 6 次、`end_date` 在最後一場之後一週的系列 J
+   （開始與結束都在列出的日期內），用 `--cli` 單獨改一個未來場次的標題、刪掉另一個未來場次 → session：span `all` 改 `notes` →
+   `undo_history` 要是可還原的紀錄 → `undo`：成功，讀回已發生與未發生的場次的 notes 都回到修改前，刪掉的場次仍不在，改過標題的場次
+   保留自己的標題。反向寫入只在還沒開始的系列量過，這一步是已開始系列唯一的檢查；讀回不符就記在 #263。
 9. **不還原的形狀（marker）**：新建系列 E → session：span `all` 改 `start_time` 一小時 → `undo_history` 是
    `(undo not available)`，`undo` 以 `it changed the whole series` 拒絕、紀錄被丟棄、系列不變。另建一個不設結束的系列，span
    `all` 改 `title`：同樣是 marker。
