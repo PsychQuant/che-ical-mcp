@@ -1,36 +1,16 @@
 import Foundation
 
-/// #520: the two lookups the series listing and the #503 verdict did by scanning a list for every
-/// element of another, which made a daily series begun eight years ago take about six seconds to
-/// change (about 4,000 occurrences listed, each compared with every one before it, and every slot
-/// of the rule compared with every listed slot). Both keep the equality the scans had.
-
-/// What the series listing takes an occurrence once by: its calendar item identifier and its start,
-/// compared exactly (`==`, no tolerance), as `seriesOccurrences` compared them. An occurrence that
-/// overlaps two listing ranges is listed by both, with the same identifier and start.
-struct ListedOccurrenceKey: Hashable {
-    let calendarItemIdentifier: String
-    let start: Date?
-}
-
-/// The keys taken so far. `insert` answers whether the key is new, so a listing keeps the first
-/// occurrence with each key, in the order listed, in one pass.
-struct FirstSeen<Key: Hashable> {
-    private var seen = Set<Key>()
-
-    mutating func insert(_ key: Key) -> Bool {
-        seen.insert(key).inserted
-    }
-}
-
-/// Counts the date comparisons of the `InstantSet`s it is given to (the sort's and the lookups'), for
-/// the tests that show they do not grow with the square of the list. No production caller passes one.
+/// #520: counts the date comparisons of the `InstantSet`s it is given to (the sort's and the lookups'),
+/// for the tests that show they do not grow with the square of the list. No caller in the server
+/// passes one.
 final class ComparisonCounter {
     var count = 0
 }
 
-/// The instants of a list, to ask whether any of them is the same instant as another one, to the
+/// #520: the instants of a list, to ask whether any of them is the same instant as another one, to the
 /// second: what `list.contains { UndoPostState.sameInstant($0, query) }` answers, without the scan.
+/// The #503 verdict (`DeletedOccurrenceCheck.verdict`) made that scan for every slot of the rule and
+/// for every listed slot, which took seconds on a long series.
 ///
 /// The tolerance is not transitive (0.6 s apart twice is 1.2 s apart), so the instants are not
 /// rounded into a hash set: they are sorted, and a lookup finds the first one at or after the query
