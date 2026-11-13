@@ -278,10 +278,12 @@ enum SeriesExceptionsPlanner {
     /// occurrence's slot is not in `keptSlots`, so it is removed here and comes back as a one-off.
     /// Slots outside the window are left to the series' rule: they were never listed.
     /// Slots compare as instants, to the second (`UndoPostState.sameInstant`).
+    /// #527: the kept slots are asked through an `InstantSet` (the same comparison, without a scan
+    /// of them for every generated slot).
     static func surplusSlots(generated: [Date], exceptions: SeriesExceptions) -> [Date] {
-        generated.filter { slot in
-            SeriesExceptionsPlanner.inWindows(slot, exceptions.windows)
-                && !exceptions.keptSlots.contains { UndoPostState.sameInstant($0, slot) }
+        let kept = InstantSet(exceptions.keptSlots)
+        return generated.filter { slot in
+            SeriesExceptionsPlanner.inWindows(slot, exceptions.windows) && !kept.contains(slot)
         }
     }
 }
@@ -369,8 +371,14 @@ enum SeriesExceptionsRestorer {
     ) throws -> Outcome {
         // Nothing is removed or created unless the record and the recreated series describe the
         // same series: every recorded slot (kept and edited) is generated, and so is the series' own first slot.
+        // #527: the generated slots are asked through a set, and an occurrence is found by its slot
+        // through an index, instead of a scan of `generated` per slot. The comparison is
+        // `UndoPostState.sameInstant` as before, and the index answers with the first entry of
+        // `generated` at the slot, in its own order, as `first { }` did.
         let generatedSlots = generated.map(\.slot)
-        func isGenerated(_ slot: Date) -> Bool { generatedSlots.contains { UndoPostState.sameInstant($0, slot) } }
+        let generatedSet = InstantSet(generatedSlots)
+        let generatedIndex = InstantIndex(generatedSlots)
+        func isGenerated(_ slot: Date) -> Bool { generatedSet.contains(slot) }
         // #319: the window may start after the series' first occurrence (a series begun more than a
         // few years before the delete), where the listing cannot show it; it is required only inside.
         let firstSlotChecked = SeriesExceptionsPlanner.inWindows(seriesStart, exceptions.windows)
@@ -392,7 +400,7 @@ enum SeriesExceptionsRestorer {
         do {
             exclusionsApplied = try ExclusionExecutor.run(
                 dates: surplus,
-                resolve: { slot in generated.first { UndoPostState.sameInstant($0.slot, slot) }?.occurrence },
+                resolve: { slot in generatedIndex.firstPosition(sameInstantAs: slot).map { generated[$0].occurrence } },
                 remove: { occurrence in
                     do { try remove(occurrence) } catch { removeError = error; throw error }
                 },
@@ -431,9 +439,8 @@ enum SeriesExceptionsRestorer {
             }
         }
 
-        let stayedDeleted = surplus.filter { slot in
-            !exceptions.detached.contains { UndoPostState.sameInstant($0.slot, slot) }
-        }.count
+        let detachedSet = InstantSet(exceptions.detached.map(\.slot))
+        let stayedDeleted = surplus.filter { !detachedSet.contains($0) }.count
         return Outcome(stayedDeleted: stayedDeleted, oneOffs: created.count, firstOccurrenceKeptFromRule: firstKept)
     }
 }

@@ -103,11 +103,14 @@ enum SeriesExceptionsUndo {
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: restoredIDs.externalIdentifier)
         var generated: [(slot: Date, occurrence: Store.Event)] = []
         // Round 4: one listing per recorded window; an occurrence where they overlap is taken once.
+        // #527: "once" is decided by `DistinctInstants` (no slot taken before is the same instant, to
+        // the second), which answers what a scan of `generated` for every occurrence answered.
+        var taken = DistinctInstants()
         for window in exceptions.windows {
             for occurrence in store.events(in: window, inCalendarOf: restored)
             where UndoPostState.isOccurrence(store.identifiers(of: occurrence), of: seriesIDs) {
                 let slot = store.slot(of: occurrence)
-                if !generated.contains(where: { UndoPostState.sameInstant($0.slot, slot) }) { generated.append((slot, occurrence)) }
+                if taken.insert(slot) { generated.append((slot, occurrence)) }
             }
         }
         do {
