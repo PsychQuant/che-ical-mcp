@@ -257,6 +257,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
                            "answers `deleted`, and leaves the edited occurrence itself",
                            // Before verify round 3: the slot guard, the floating update text, #549 as a defect.
                            "whose recorded slot is not at the series' time of day is likewise found only by the day it starts on",
+                           "then says not to use span `future` through its identifier",
                            "there the refusal says that the write starts at the occurrence's original date, which this server does not read",
                            "for one that was moved earlier, that occurrence itself is deleted",
                            "(#548, cause not separated)"]),
@@ -273,6 +274,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
                                  "往前移的場次，兩天之間的那一場沒有被寫到",
                                  "回應 `deleted`，卻留下被修改的那個場次本身",
                                  "紀錄的時段不在系列那個時刻的被修改場次",
+                                 "還會說不要經它的 ID 用 span `future`",
                                  "訊息在那裡改說寫入從該場次原本的日期開始、這個 server 讀不到那個日期",
                                  "往前移過時，那個場次本身會被刪",
                                  "（#548，原因還沒分開）"]),
@@ -286,6 +288,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
                               "moved earlier, it did not reach the occurrences between the two days",
                               "the call answers `deleted`, and the edited occurrence itself stays, #549",
                               "a recorded slot that is not at the series' time of day is not read either",
+                              "says not to use span `future` through its identifier",
                               "it says that the write starts at the occurrence's original date, which this server does not read"]),
             (".claude/rules/mcp-binary-version-testing.md", ["## Release gate：系列識別碼加日期指到被單獨修改過的場次（#532、#534、#535）",
                                                              "這個呼叫會被 #532 的訊息拒絕",

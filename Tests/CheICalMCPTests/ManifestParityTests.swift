@@ -777,6 +777,7 @@ final class ManifestParityTests: XCTestCase {
         }
         let update = try descriptions(of: "update_event").declared
         once("with span 'this' pass it as event_id without occurrence_date, and with span 'future' the refusal says which way is left and, for an occurrence that was moved and whose original date is read, that a write through that identifier starts at that date; in a timed series with no time zone it says that the write starts at the original date, which this server does not read.", in: update, "update_event")
+        once("For an occurrence whose recorded slot is not at the series' time of day it says not to use span 'future' through that identifier: measured on iCloud, such a write moved the later occurrences to another day.", in: update, "update_event")
         once("When no occurrence is on that day, the error names the day as a date in the event's time zone (#535).", in: update, "update_event")
         let delete = try descriptions(of: "delete_event").declared
         once("with span 'future' a delete through it starts at that occurrence's original date, which for one that was moved later is before the day it starts and for one that was moved earlier is after it (that occurrence is deleted with the later ones, and the ones between the two days stay), and cannot be undone; in a timed series with no time zone that delete answers deleted and leaves the edited occurrence itself, a known defect (#549).", in: delete, "delete_event")

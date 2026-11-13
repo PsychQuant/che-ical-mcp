@@ -54,8 +54,12 @@ enum EditedOccurrenceAddress {
         /// is not read either when the whole series was moved to another time of day after the
         /// occurrence was edited, when the slot is in an hour a daylight-saving change skips, or
         /// when the series' start is not known.
-        func atTheSeriesTime(_ slot: Date) -> Bool {
-            guard let seriesZone, let seriesStart else { return false }
+        func atTheSeriesTime(_ slot: Date) -> Bool { sameTimeOfDay(slot) ?? false }
+        /// Whether a recorded slot is known to be at another time of day than the series: false when
+        /// the series' zone or start is not known, since nothing is known of the slot then.
+        func offTheSeriesTime(_ slot: Date) -> Bool { sameTimeOfDay(slot).map { !$0 } ?? false }
+        private func sameTimeOfDay(_ slot: Date) -> Bool? {
+            guard let seriesZone, let seriesStart else { return nil }
             let calendar = Calendar.gregorian(in: seriesZone)
             let time: Set<Calendar.Component> = [.hour, .minute, .second]
             return calendar.dateComponents(time, from: slot) == calendar.dateComponents(time, from: seriesStart)
@@ -96,6 +100,11 @@ enum EditedOccurrenceAddress {
         let originalDay: String?
         /// The occurrence's own time zone, in which a call through its identifier reads a date.
         var timeZone: TimeZone? = nil
+        /// In a timed series with a zone: a slot was recorded for it, and it is not at the series'
+        /// time of day (`Request.atTheSeriesTime`), so it was not read. A span `future` write
+        /// through the identifier of such an occurrence starts a new series at that slot (measured
+        /// on iCloud, 2026-11-14: the later occurrences moved to the next day).
+        var slotOffSeriesTime: Bool = false
     }
 
     /// The call whose lookup missed. The texts differ: what to pass, and what a span `future` call
@@ -138,19 +147,27 @@ enum EditedOccurrenceAddress {
             OccurrenceDay.startsOnRequestedDay(occurrenceStart: date, isAllDay: isAllDay, requested: request.requested, in: zone, host: host)
         }
         /// The slot the rule gave it; an all-day series' `/RID=` is a date, read in the host's zone.
-        /// nil where slots are not read: a timed series with no zone, and in a timed series a slot
-        /// that is not at the series' time of day.
-        func slot(of reading: Reading) -> Date? {
+        /// nil where slots are not read: a timed series with no zone.
+        func recordedSlot(of reading: Reading) -> Date? {
             guard request.readsSlots else { return nil }
-            let slot = UndoPostState.ruleSlot(eventIdentifier: reading.eventIdentifier, externalIdentifier: reading.externalIdentifier,
-                                              occurrenceDate: reading.occurrenceDate, isAllDay: request.seriesIsAllDay, zone: host)
+            return UndoPostState.ruleSlot(eventIdentifier: reading.eventIdentifier, externalIdentifier: reading.externalIdentifier,
+                                          occurrenceDate: reading.occurrenceDate, isAllDay: request.seriesIsAllDay, zone: host)
+        }
+        /// The slot that is read: in a timed series, only one at the series' time of day.
+        func slot(of reading: Reading) -> Date? {
+            let slot = recordedSlot(of: reading)
             guard !request.seriesIsAllDay else { return slot }
             return slot.flatMap { request.atTheSeriesTime($0) ? $0 : nil }
+        }
+        /// A slot was recorded and is at another time of day than the series (never for an all-day series).
+        func slotOffSeriesTime(_ reading: Reading) -> Bool {
+            guard !request.seriesIsAllDay, let slot = recordedSlot(of: reading) else { return false }
+            return request.offTheSeriesTime(slot)
         }
         func match(_ reading: Reading, identifier: String, start: Date, kind: Kind) -> Match {
             Match(identifier: identifier, start: start, isAllDay: reading.isAllDay, kind: kind,
                   originalDay: slot(of: reading).map { self.day($0, in: request.seriesIsAllDay ? host : zone) },
-                  timeZone: reading.timeZone)
+                  timeZone: reading.timeZone, slotOffSeriesTime: slotOffSeriesTime(reading))
         }
 
         var found: [Match] = []
@@ -332,6 +349,13 @@ enum EditedOccurrenceAddress {
         /// reached the occurrences after the original date, the one before the requested day among
         /// them, and the moved occurrence itself. Not measured for one edited in place or moved earlier.
         let unreadWriteStart = "It starts at that occurrence's original date, which this server does not read for a series with no time zone"
+        /// A span `future` write through the identifier of an occurrence whose recorded slot is not at
+        /// the series' time of day. Measured on iCloud (2026-11-14), in a series that got its zone
+        /// after its occurrences were edited: a title written through such an identifier changed that
+        /// occurrence and started a new series at the recorded slot, so the later occurrences moved
+        /// from Thursday to Friday. A delete through it removed that occurrence and the later ones,
+        /// which the delete text already says, and span `this` changed that occurrence only.
+        let offTimeWrite = "a span 'future' write through it starts a new series at that slot, which moved the later occurrences of the series to another day when it was measured on iCloud with a title."
         func name(_ match: Match) -> String? { echoed(match.identifier, seriesID: request.seriesID) }
 
         guard let match = matches.first else {
@@ -350,6 +374,8 @@ enum EditedOccurrenceAddress {
                 let pass = identifier.map { "Its identifier is \($0): pass it as event_id and leave occurrence_date out." }
                     ?? "Use the id list_events shows for it as event_id and leave occurrence_date out."
                 return "\(opening) \(pass) \(ending)"
+            case .update where match.slotOffSeriesTime:
+                return "\(opening) \(named) Do not use span 'future' through that identifier: that occurrence's recorded slot is not at this series' time of day (as when a series got its time zone after the occurrence was edited), and \(offTimeWrite) Instead, \(otherWayTail) \(ending)"
             case .update:
                 let start = request.readsSlots ? writeStart(match)
                     : " \(unreadWriteStart): if that date is earlier than \(requestedDay), occurrences before \(requestedDay) are written too. Measured on iCloud with a title, for an occurrence that was moved later: it reached the occurrences of the series after that occurrence's original date and that occurrence itself."
@@ -378,7 +404,8 @@ enum EditedOccurrenceAddress {
         }
 
         let items = matches.map { match -> String in
-            let origin = futureSpan && match.kind == .shownThatDay && moved(match) ? match.originalDay.map { ", original date \($0)" } ?? "" : ""
+            let origin = futureSpan && match.kind == .shownThatDay && moved(match) ? match.originalDay.map { ", original date \($0)" } ?? ""
+                : call == .update(futureSpan: true) && match.slotOffSeriesTime ? ", recorded slot not at the series' time of day" : ""
             let detail = match.kind == .shownThatDay ? "starts at \(startText(match))\(origin)" : "was on that day, now starts at \(startText(match))"
             return "\(name(match) ?? "one whose id list_events shows") (\(detail))"
         }.joined(separator: "; ")
@@ -390,7 +417,10 @@ enum EditedOccurrenceAddress {
             let reach = request.readsSlots
                 ? " It starts at that occurrence's original date, which for one that was moved is not the day it starts now: a title written that way reached the occurrences of the series from the original date on (measured on iCloud)."
                 : " \(unreadWriteStart): for one that was moved later, occurrences before the day it starts now are written too (measured on iCloud with a title, which reached that occurrence itself too)."
-            return "\(several). With span 'future' through one of those identifiers a call takes only some fields, and that call answers which.\(reach) \(otherWay) \(ending)"
+            let offTime = matches.contains(where: \.slotOffSeriesTime)
+                ? " Do not use span 'future' through one whose recorded slot is not at the series' time of day: such a write starts a new series at that slot, which moved the later occurrences of the series to another day when it was measured on iCloud with a title."
+                : ""
+            return "\(several). With span 'future' through one of those identifiers a call takes only some fields, and that call answers which.\(reach)\(offTime) \(otherWay) \(ending)"
         case .delete:
             if !request.readsSlots {
                 return "\(several). delete_event with span 'future' through one of those identifiers, where that call allows it, deletes the occurrences of the series after that occurrence's original date, which this server does not read for a series with no time zone: for one that was moved later, occurrences before the day it starts now are deleted too. \(leftBehind) That delete cannot be undone. \(ending)"
@@ -406,7 +436,10 @@ enum EditedOccurrenceAddress {
     /// refusal's ending and its sentence on what that way leaves out, all read from its constants:
     /// the route is not one for every field. Neither refusal sends the caller back to the series'
     /// identifier with the edited occurrence's day, so the two do not loop.
-    private static let otherWay = "For the rest: use span 'this' on that occurrence, and \(DetachedOccurrenceSpan.laterOccurrencesRoute). \(DetachedOccurrenceSpan.ifThatIdIsRefused) \(DetachedOccurrenceSpan.laterOccurrencesLimits)"
+    private static let otherWay = "For the rest: \(otherWayTail)"
+    /// The same way without its opening words: where the text says not to use span `future` through
+    /// the identifier at all, it is what to do instead, not "the rest".
+    private static let otherWayTail = "use span 'this' on that occurrence, and \(DetachedOccurrenceSpan.laterOccurrencesRoute). \(DetachedOccurrenceSpan.ifThatIdIsRefused) \(DetachedOccurrenceSpan.laterOccurrencesLimits)"
 }
 
 extension EditedOccurrenceAddress.Reading {

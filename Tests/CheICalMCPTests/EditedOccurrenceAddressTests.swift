@@ -48,6 +48,8 @@ final class EditedOccurrenceAddressTests: XCTestCase {
     /// The end of every span `future` update text: the route of the #416 refusal, its ending and
     /// what that way leaves out.
     private let route = "for the later ones the id list_events shows for the next occurrence that was not edited on its own, with its occurrence_date and span 'future'"
+    /// The same way without its opening words, as the text for a slot off the series' time uses it.
+    private var otherWayTail: String { String(otherWay.dropFirst("For the rest: ".count)) }
     private var otherWay: String {
         "For the rest: use span 'this' on that occurrence, and \(route). If that id is refused, this shape has no tested way yet. That way leaves out all_day, clear_recurrence and calendar_name, which do not stay within the later occurrences, and clear_timezone, which was not tried."
     }
@@ -680,11 +682,31 @@ final class EditedOccurrenceAddressTests: XCTestCase {
         // Tuesday, a day with no occurrence: read as an instant the slot is on it. Nothing is named.
         XCTAssertEqual(matches(day: [], listed: [edited], requested: tuesday, host: taipei, start: start), [])
         // Monday: matched by its start, with no original day, so no text reads it as moved.
-        let shown = Match(identifier: id, start: at("2026-12-21T20:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: nil, timeZone: taipei)
+        let shown = Match(identifier: id, start: at("2026-12-21T20:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: nil, timeZone: taipei,
+                          slotOffSeriesTime: true)
         XCTAssertEqual(matches(day: [edited], listed: [edited], requested: monday, host: taipei, start: start), [shown])
+        XCTAssertEqual(matches(day: [edited], listed: nil, requested: monday, host: taipei, start: start), [shown])
         let asked = request(monday, host: taipei, start: start)
+        // spec-example: edited-occurrence-addressing / Span future through a slot off the series' time
+        // The update text does not send the caller through that identifier with span future: measured
+        // on iCloud (2026-11-14), a title written that way started a new series at the recorded slot,
+        // and the later occurrences moved to the next day.
+        let offTime = "Do not use span 'future' through that identifier: that occurrence's recorded slot is not at this series' time of day (as when a series got its time zone after the occurrence was edited), and a span 'future' write through it starts a new series at that slot, which moved the later occurrences of the series to another day when it was measured on iCloud with a title."
         XCTAssertEqual(Address.reason(for: .update(futureSpan: true), matches: [shown], request: asked),
-                       "\(opening) Its identifier is \(id). With span 'future' through that identifier a call takes only some fields, and that call answers which. \(otherWay) Nothing was written.")
+                       "\(opening) Its identifier is \(id). \(offTime) Instead, \(otherWayTail) Nothing was written.")
+        // Span this, the delete and the move row do not carry it.
+        for call in [Address.Call.update(futureSpan: false), .delete(futureSpan: false), .delete(futureSpan: true), .moveRow] {
+            XCTAssertFalse(Address.reason(for: call, matches: [shown], request: asked).contains("Do not use span 'future'"), "\(call)")
+        }
+        // With several listed, the one it holds for is marked and the sentence follows.
+        let other = Match(identifier: dec14, start: at("2026-12-21T15:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: "2026-12-14", timeZone: taipei)
+        let several = Address.reason(for: .update(futureSpan: true), matches: [other, shown], request: asked)
+        XCTAssertTrue(several.contains("\(dec14) (starts at 2026-12-21T15:00:00+08:00, original date 2026-12-14); \(id) (starts at 2026-12-21T20:00:00+08:00, recorded slot not at the series' time of day)"), several)
+        XCTAssertTrue(several.contains("(measured on iCloud). Do not use span 'future' through one whose recorded slot is not at the series' time of day: such a write starts a new series at that slot, which moved the later occurrences of the series to another day when it was measured on iCloud with a title. For the rest:"), several)
+        XCTAssertFalse(Address.reason(for: .update(futureSpan: true), matches: [other, inPlace], request: request(monday)).contains("recorded slot"))
+        for call in [Address.Call.update(futureSpan: false), .delete(futureSpan: false), .delete(futureSpan: true), .moveRow] {
+            XCTAssertFalse(Address.reason(for: call, matches: [other, shown], request: asked).contains("recorded slot"), "\(call)")
+        }
         XCTAssertEqual(Address.reason(for: .delete(futureSpan: true), matches: [shown], request: asked),
                        "\(opening) Its identifier is \(id). delete_event with span 'future' through that identifier deletes the series from that occurrence's original date on, where that call allows it, and that delete cannot be undone. Nothing was deleted.")
 
@@ -700,6 +722,7 @@ final class EditedOccurrenceAddressTests: XCTestCase {
             XCTAssertEqual(found.map(\.identifier), expected, requested)
             XCTAssertEqual(found.map(\.kind), expected.map { _ in .shownThatDay }, requested)
             XCTAssertEqual(found.compactMap(\.originalDay), [], requested)
+            XCTAssertEqual(found.map(\.slotOffSeriesTime), expected.map { _ in true }, requested)
         }
     }
 
@@ -728,8 +751,23 @@ final class EditedOccurrenceAddressTests: XCTestCase {
         for start in [nil, "2026-12-07T21:00:00+08:00", "2026-12-07T20:01:00+08:00", "2026-12-07T20:00:01+08:00"] {
             XCTAssertEqual(matches(day: [], listed: [moved], requested: monday, host: taipei, start: start), [], start ?? "nil")
         }
-        // Such an occurrence is still matched by the day it starts on.
-        XCTAssertEqual(matches(day: [moved], listed: [moved], requested: "2026-12-23T00:00:00+08:00", host: taipei, start: "2026-12-07T21:00:00+08:00").map(\.originalDay), [nil])
+        // Such an occurrence is still matched by the day it starts on, and is marked: its slot is not
+        // at the series' time of day. With the series' start unknown nothing is said of the slot.
+        let wednesday = "2026-12-23T00:00:00+08:00"
+        XCTAssertEqual(matches(day: [moved], listed: [moved], requested: wednesday, host: taipei, start: "2026-12-07T21:00:00+08:00").map(\.originalDay), [nil])
+        XCTAssertEqual(matches(day: [moved], listed: [moved], requested: wednesday, host: taipei, start: "2026-12-07T21:00:00+08:00").map(\.slotOffSeriesTime), [true])
+        XCTAssertEqual(matches(day: [moved], listed: [moved], requested: wednesday, host: taipei, start: nil).map(\.slotOffSeriesTime), [false])
+        XCTAssertEqual(matches(day: [moved], listed: [moved], requested: wednesday, host: taipei, start: nil).map(\.originalDay), [nil])
+        XCTAssertEqual(matches(day: [moved], listed: [moved], requested: wednesday, host: taipei, start: "2026-12-07T20:00:00+08:00").map(\.slotOffSeriesTime), [false])
+        // A series with no time zone and an all-day series are never marked, and an all-day series'
+        // slot is read whatever time of day a start handed over with it has.
+        let date = own("2026-12-21T00:00:00Z")
+        let allDayMoved = reading(date, start: "2026-12-22T16:00:00Z", allDay: true, zone: nil)
+        let allDaySeries = Address.Request(seriesID: series, seriesIsAllDay: true, seriesZone: taipei, seriesStart: at("2026-12-07T10:00:00+08:00"),
+                                           requested: at("2026-12-20T16:00:00Z"), host: taipei)
+        XCTAssertEqual(Address.matches(onDay: [], listed: [allDayMoved], for: allDaySeries),
+                       [Match(identifier: date, start: at("2026-12-22T16:00:00Z"), isAllDay: true, kind: .originallyThatDay, originalDay: "2026-12-21")])
+        XCTAssertEqual(matches(day: [moved], listed: [moved], requested: wednesday, host: taipei, floating: true, start: "2026-12-07T21:00:00+08:00").map(\.slotOffSeriesTime), [false])
     }
 
     /// An edited occurrence whose all-day state is not its series' (Calendar.app can make one

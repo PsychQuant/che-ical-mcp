@@ -17,6 +17,7 @@ ASSUMPTION: 沒有任何 task 帶 [P]，雖然 parallel_tasks 開著：每個 ta
 - [ ] 2.4 往前移的場次的 span `future` 刪除訊息加上量到的後果（單一與多個）；沒有時區的系列的刪除訊息把 #549 寫成已知缺陷。驗證：`Moved earlier with span future` 與 `Delete in a series with no time zone` 兩個測試先失敗、後通過。
 - [ ] 2.5 測試：全天狀態與系列不同的被修改場次（`matches` 與 `presence`，兩個方向）；deny-list 拿掉在 Sources 裡不存在的四個拼法，並檢查每一項都出現；兩處示意用的斷言標明或拿掉。驗證：`swift test --filter EditedOccurrenceAddress` 通過。
 - [ ] 2.6 `Sources/CheICalMCP/Server.swift` 的三個工具說明與 `mcpb/manifest.json` 的摘要：大約一年、時段不在系列時刻的場次、更新訊息在沒有時區的系列說什麼、往前移的刪除、#549 是已知缺陷、沒有場次的日子回找不到；`Tests/CheICalMCPTests/ManifestParityTests.swift` 的片語跟著改。驗證：`swift test --filter ManifestParityTests` 通過。
+- [ ] 2.7 量到之後加的：有時區的系列裡，紀錄的時段不在系列時刻的場次，span `future` 更新訊息（單一與多個）說不要經它的識別碼用 span `future`，並寫出量到的結果（之後的場次移到另一天）；`Match` 帶這個旗標，帶標記 `spec-example: edited-occurrence-addressing / Span future through a slot off the series' time`。驗證：只加欄位時測試失敗、實作後通過。
 
 ## 3. 文件
 
