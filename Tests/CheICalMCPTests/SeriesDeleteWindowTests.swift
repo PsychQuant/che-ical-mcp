@@ -215,64 +215,78 @@ final class SeriesDeleteWindowTests: XCTestCase {
         XCTAssertEqual(SeriesExceptionsPlanner.seriesEnd(rules: [filtered], firstStart: now, calendar: calendar), .unknown)
     }
 
-    // MARK: - #527 (PR #531 verify r1): a series the tools can make whose record holds two overlapping windows
+    // MARK: - #527 (PR #531 verify r1, r2): which series the capture records two windows for
+
+    /// What `SeriesExceptionsUndo.capture` records at `now` for a series in an in-memory store: one
+    /// occurrence per slot (the first is the series' first occurrence), with the end the planner
+    /// reads from `rule`. Verify r2: through the capture itself, so its condition for the second
+    /// window is the one under test, not a copy of it.
+    private func captured(slots: [Date], rule: DetachedOccurrenceSpan.RuleExtent) throws
+        -> (exceptions: SeriesExceptions, end: SeriesExceptionsPlanner.SeriesEnd) {
+        let store = FakeSeriesExceptionsStore()
+        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots)
+        let end = SeriesExceptionsPlanner.seriesEnd(rules: [rule], firstStart: slots[0], calendar: calendar)
+        store.seriesEnd = end
+        return (try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now)), end)
+    }
+
+    private func weeklySlots(from first: Double, count: Int) -> [Date] { (0..<count).map { days(first + Double($0) * 7) } }
 
     /// The series of the overlap step in the #319/#321 release gate: weekly on one day, 300
-    /// occurrences, begun between about four and five and a half years before the delete. Its end
-    /// is a count's bound, 2,100 days after its first occurrence. That is more than 1,458, so the
-    /// window around the delete is not moved back to the first occurrence, and the capture records
-    /// the window from the first occurrence beside it (`SeriesExceptionsUndo.capture`: a count
-    /// whose `window.start > fromFirst.start`). The two windows overlap, and an occurrence two
-    /// years before the delete is inside both: on undo each window lists it, which is where
-    /// `DistinctInstants.insert` answers false (`SeriesExceptionsUndo.restore`).
-    func testAWeeklyCountBegunFourToFiveYearsBeforeTheDeleteRecordsTwoOverlappingWindows() throws {
+    /// occurrences, begun between about four and five and a half years before the delete (1,470 to
+    /// 2,000 days here). Its end is a count's bound, 2,100 days after its first occurrence. That is
+    /// more than 1,458, so the window around the delete is not moved back to the first occurrence,
+    /// and the capture records the window from the first occurrence beside it. The two windows
+    /// overlap, and an occurrence two years before the delete is inside both: on undo each window
+    /// lists it, which is where `DistinctInstants.insert` answers false (`SeriesExceptionsUndo.restore`).
+    func testAWeeklyCountBegunFourToFiveAndAHalfYearsBeforeTheDeleteRecordsTwoOverlappingWindows() throws {
         let rule = extent(.weekly, end: EKRecurrenceEnd(occurrenceCount: 300))
         for begun in [-1_470.0, -1_640, -1_830, -2_000] {
-            let first = days(begun)
-            let end = SeriesExceptionsPlanner.seriesEnd(rules: [rule], firstStart: first, calendar: calendar)
+            let (exceptions, end) = try captured(slots: weeklySlots(from: begun, count: 300), rule: rule)
             XCTAssertEqual(end, .endsBy(days(begun + 2_100)), "\(begun)")
-            XCTAssertTrue(end.isCount)
-            let around = SeriesExceptionsPlanner.deleteWindow(firstStart: first, end: end, deletedAt: now).window
-            let fromFirst = UndoPostState.seriesScanWindow(firstStart: first, ruleEnd: nil)
-            XCTAssertGreaterThan(around.start, fromFirst.start, "\(begun): the capture's condition for the second window")
-            let overlap = try XCTUnwrap(around.intersection(with: fromFirst), "\(begun)")
+            let fromFirst = UndoPostState.seriesScanWindow(firstStart: days(begun), ruleEnd: nil)
+            XCTAssertEqual(exceptions.extraWindows, [fromFirst], "\(begun): the window from the first occurrence is recorded too")
+            XCTAssertGreaterThan(exceptions.window.start, fromFirst.start, "\(begun)")
+            let overlap = try XCTUnwrap(exceptions.window.intersection(with: fromFirst), "\(begun)")
             XCTAssertGreaterThan(overlap.duration, 800 * day, "\(begun)")
             let twoYearsBefore = days(-730)
-            XCTAssertTrue(SeriesExceptionsPlanner.inWindow(twoYearsBefore, around), "\(begun)")
+            XCTAssertTrue(SeriesExceptionsPlanner.inWindow(twoYearsBefore, exceptions.window), "\(begun)")
             XCTAssertTrue(SeriesExceptionsPlanner.inWindow(twoYearsBefore, fromFirst), "\(begun)")
         }
         // The step's own series, begun 1,640 days before the delete: the windows and their overlap.
-        let first = days(-1_640)
-        let end = SeriesExceptionsPlanner.seriesEnd(rules: [rule], firstStart: first, calendar: calendar)
-        let around = SeriesExceptionsPlanner.deleteWindow(firstStart: first, end: end, deletedAt: now).window
-        let fromFirst = UndoPostState.seriesScanWindow(firstStart: first, ruleEnd: nil)
-        XCTAssertEqual(around, DateInterval(start: days(-1_094), duration: 1_460 * day))
-        XCTAssertEqual(fromFirst, DateInterval(start: days(-1_641), duration: 1_460 * day))
-        XCTAssertEqual(around.intersection(with: fromFirst), DateInterval(start: days(-1_094), end: days(-181)))
+        let (exceptions, _) = try captured(slots: weeklySlots(from: -1_640, count: 300), rule: rule)
+        XCTAssertEqual(exceptions.windows, [DateInterval(start: days(-1_094), duration: 1_460 * day),
+                                            DateInterval(start: days(-1_641), duration: 1_460 * day)])
+        XCTAssertEqual(exceptions.windows[0].intersection(with: exceptions.windows[1]), DateInterval(start: days(-1_094), end: days(-181)))
     }
 
-    /// The shapes of the gate's other steps record one window, so none of them reaches the overlap:
-    /// an open-ended series and one with an end date are not counts; a count begun within 1,093 days
-    /// of the delete, or whose last possible slot is within 1,458 days of its first occurrence (the
-    /// 450 occurrences on three weekdays of step 7: 1,057 days), gets the window from its first
-    /// occurrence as its only window.
-    func testTheOtherGateShapesRecordOneWindow() {
-        func recordsTwo(first: Double, _ end: SeriesExceptionsPlanner.SeriesEnd) -> Bool {
-            let around = SeriesExceptionsPlanner.deleteWindow(firstStart: days(first), end: end, deletedAt: now).window
-            return end.isCount && around.start > UndoPostState.seriesScanWindow(firstStart: days(first), ruleEnd: nil).start
-        }
-        XCTAssertFalse(recordsTwo(first: -2_190, .open), "open-ended, begun six years ago")
-        XCTAssertFalse(recordsTwo(first: -1_750, .endsAt(days(30))), "an end date")
-        let short = SeriesExceptionsPlanner.seriesEnd(rules: [extent(.weekly, end: EKRecurrenceEnd(occurrenceCount: 4))], firstStart: days(-3), calendar: calendar)
-        XCTAssertFalse(recordsTwo(first: -3, short), "a short count begun this week")
-        let monWedFri = DetachedOccurrenceSpan.RuleExtent(EKRecurrenceRule(
-            recurrenceWith: .weekly, interval: 1,
-            daysOfTheWeek: [EKRecurrenceDayOfWeek(.monday), EKRecurrenceDayOfWeek(.wednesday), EKRecurrenceDayOfWeek(.friday)],
-            daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil, setPositions: nil,
-            end: EKRecurrenceEnd(occurrenceCount: 450)))
-        let twelveYears = SeriesExceptionsPlanner.seriesEnd(rules: [monWedFri], firstStart: days(-4_380), calendar: calendar)
-        XCTAssertEqual(twelveYears, .endsBy(days(-4_380 + 1_057)))
-        XCTAssertFalse(recordsTwo(first: -4_380, twelveYears), "450 occurrences on three weekdays, begun twelve years ago")
+    /// The series of the gate's other steps that delete a whole series record one window, so none
+    /// of them reaches the overlap: an open-ended series and one with an end date are not counts
+    /// (their window around the delete does start after the first occurrence, so only "a count"
+    /// keeps the second window away); a count begun within 1,093 days of the delete, or whose last
+    /// possible slot is within 1,458 days of its first occurrence (the 450 occurrences on three
+    /// weekdays of step 7: 1,057 days), gets the window from its first occurrence as its only window.
+    func testTheOtherGateShapesRecordOneWindow() throws {
+        // Steps 1, 4, 5 and 9: open-ended, begun about six years before the delete.
+        let open = try captured(slots: weeklySlots(from: -2_190, count: 400), rule: extent(.weekly, end: nil))
+        XCTAssertEqual(open.end, .open)
+        XCTAssertEqual(open.exceptions.extraWindows, [], "open-ended, begun six years ago")
+        XCTAssertGreaterThan(open.exceptions.window.start, days(-2_190), "its one window starts after its first occurrence")
+        // Step 6: an end date, begun 1,750 days before the delete and ending 30 days after it.
+        let dated = try captured(slots: weeklySlots(from: -1_750, count: 255), rule: extent(.weekly, end: EKRecurrenceEnd(end: days(30))))
+        XCTAssertEqual(dated.end, .endsAt(days(30)))
+        XCTAssertEqual(dated.exceptions.extraWindows, [], "an end date")
+        XCTAssertGreaterThan(dated.exceptions.window.start, days(-1_750), "its one window starts after its first occurrence")
+        // Step 3: a short count begun this week.
+        let short = try captured(slots: weeklySlots(from: -3, count: 4), rule: extent(.weekly, end: EKRecurrenceEnd(occurrenceCount: 4)))
+        XCTAssertTrue(short.end.isCount)
+        XCTAssertEqual(short.exceptions.windows, [UndoPostState.seriesScanWindow(firstStart: days(-3), ruleEnd: nil)], "a short count begun this week")
+        // Step 7: 450 occurrences on three weekdays, begun twelve years before the delete.
+        let threeDays = (0..<150).flatMap { week in [0.0, 2, 4].map { self.days(-4_380 + Double(week) * 7 + $0) } }
+        let long = try captured(slots: threeDays, rule: weekly([.monday, .wednesday, .friday], count: 450))
+        XCTAssertEqual(long.end, .endsBy(days(-4_380 + 1_057)))
+        XCTAssertEqual(long.exceptions.windows, [UndoPostState.seriesScanWindow(firstStart: days(-4_380), ruleEnd: nil)],
+                       "450 occurrences on three weekdays, begun twelve years ago")
     }
 
     /// Several rules: open wins, then unknown, then a count's bound, then end dates.
