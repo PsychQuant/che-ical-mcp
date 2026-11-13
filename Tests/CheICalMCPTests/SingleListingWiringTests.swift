@@ -77,13 +77,16 @@ final class SingleListingWiringTests: XCTestCase {
         // The two readers are called nowhere else between the stretch and the save.
         XCTAssertEqual(count("deletedOccurrenceVerdict(", in: update), 1)
         XCTAssertEqual(count("wholeSeriesBaseline(", in: stretch), 1)
-        // Nothing that suspends, refreshes, writes or records is inside it.
+        // The stretch's own code does not suspend, write or record, and asks for no refresh of the
+        // store's view. One refresh does run while it is open: `seriesForCheck()`, called from it,
+        // refreshes the series object through an occurrence's own id. That it runs once and before
+        // the first listing is pinned in `testTheSeriesIsReadAndRefreshedOnceBeforeTheFirstListing`.
         for outside in ["await", "refreshIfNeeded", "markNeedsRefresh", "seriesUpdatePlan(", "eventStore.save(", "event.title = ",
                         ".refresh()"] {
             XCTAssertFalse(stretch.contains(outside), outside)
         }
         // The series is read (and, through an occurrence's own id, refreshed) by `seriesForCheck`,
-        // declared before the stretch; its first call is inside it, before anything is listed.
+        // declared before the stretch and called inside it only.
         let seriesForCheck = try XCTUnwrap(update.range(of: "func seriesForCheck() throws -> (EKEvent, String)? {"))
         let open = try XCTUnwrap(update.range(of: "try seriesListings.sharing {"))
         let plan = try XCTUnwrap(update.range(of: "let seriesPlan = seriesUpdatePlan("))
@@ -100,6 +103,46 @@ final class SingleListingWiringTests: XCTestCase {
             let range = try XCTUnwrap(update.range(of: declared), declared)
             XCTAssertLessThan(range.lowerBound, open.lowerBound, declared)
         }
+    }
+
+    /// PR #531 verify r1: what keeps a listing made inside the stretch good for both readers although
+    /// a refresh runs while the stretch is open. Through an occurrence's own id, `seriesForCheck()`
+    /// refreshes the series object, and its first call is inside the stretch. Each reader lists
+    /// inside the closure of its own `seriesForCheck().map`, so the series is read, and refreshed,
+    /// before the first listing; the result is cached, so the second reader's call returns it without
+    /// a second refresh between the two listings.
+    func testTheSeriesIsReadAndRefreshedOnceBeforeTheFirstListing() throws {
+        let manager = SourcePins.code(try SourcePins.source("EventKit/EventKitManager.swift"))
+        let update = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: manager))
+        let stretch = try XCTUnwrap(SourcePins.body(of: "try seriesListings.sharing {", in: update))
+        // Two calls in the stretch, one per reader, each opening the closure its reader lists in.
+        XCTAssertEqual(count("seriesForCheck()", in: stretch), 2, "one read of the series per reader")
+        XCTAssertEqual(count("try seriesForCheck().map {", in: stretch), 2, "each reader lists inside its read's closure")
+        let firstRead = try XCTUnwrap(stretch.range(of: "seriesForCheck()"))
+        for listing in ["wholeSeriesBaseline(", "deletedOccurrenceVerdict("] {
+            XCTAssertEqual(count(listing, in: stretch), 1, listing)
+            let range = try XCTUnwrap(stretch.range(of: listing), listing)
+            XCTAssertLessThan(firstRead.lowerBound, range.lowerBound, "the series is read before \(listing) lists")
+        }
+        XCTAssertEqual(count("let verdict: DeletedOccurrenceCheck.Verdict = try seriesForCheck().map {", in: stretch), 1)
+        let verdictRead = try XCTUnwrap(stretch.range(of: "let verdict: DeletedOccurrenceCheck.Verdict = try seriesForCheck().map {"))
+        let verdict = try XCTUnwrap(stretch.range(of: "deletedOccurrenceVerdict("))
+        XCTAssertLessThan(verdictRead.lowerBound, verdict.lowerBound, "the verdict lists inside its own read of the series")
+
+        // The read itself: a cached result is returned before anything else, the one refresh comes
+        // before the result is cached, and nothing else assigns the cache (so nothing clears it).
+        XCTAssertEqual(count("var checkSeries: (EKEvent, String)??", in: update), 1)
+        XCTAssertEqual(count("checkSeries = ", in: update), 1, "the cache is assigned where the series is read and cleared nowhere")
+        let read = try XCTUnwrap(SourcePins.body(of: "func seriesForCheck() throws -> (EKEvent, String)? {", in: update))
+        var order: [String.Index] = []
+        for step in ["if let cached = checkSeries { return cached }", "if addressesOwnOccurrence { _ = series?.refresh() }",
+                     "checkSeries = .some(found)", "return found"] {
+            XCTAssertEqual(count(step, in: read), 1, step)
+            order.append(try XCTUnwrap(read.range(of: step), step).lowerBound)
+        }
+        XCTAssertEqual(order, order.sorted(), "cached result, refresh, cache, return: in this order")
+        XCTAssertEqual(count(".refresh()", in: read), 1, "one refresh, on the path that is not cached")
+        XCTAssertEqual(count("return ", in: read), 2, "the cached result or the one just cached")
     }
 
     /// A stretch cannot suspend (its closure is not `async`), ends when the closure returns or
