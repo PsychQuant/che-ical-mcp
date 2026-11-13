@@ -467,17 +467,27 @@ final class UndoSlotComparisonEquivalenceTests: XCTestCase {
 
     func testNaNAndInfiniteSlotsGiveMainsAnswerFromSameSlotsAndSurplusSlots() {
         var generator = SeededGenerator(seed: 527_010)
-        var same = 0, different = 0, oddKept = 0, oddGenerated = 0
+        var plainSame = 0, oddLists = 0, oddAskedOfTheSet = 0, oddKept = 0, oddGenerated = 0
         for round in 0..<3_000 {
             let size = Int.random(in: 0...8, using: &generator)
             let plain = (0..<size).map { _ in slot(Int.random(in: 0..<8, using: &generator)).addingTimeInterval(jitter(inside: 25, outside: 0, &generator)) }
-            let a = chance(70, &generator) ? withOdd(plain, &generator) : plain
-            var b = chance(70, &generator) ? withOdd(plain, &generator) : plain
+            let aIsOdd = chance(70, &generator)
+            let a = aIsOdd ? withOdd(plain, &generator) : plain
+            let bIsOdd = chance(70, &generator)
+            var b = bIsOdd ? withOdd(plain, &generator) : plain
             if chance(40, &generator) { b.shuffle(using: &generator) }
             let main = SeriesUpdateUndo.sameSlotsOnMain(a, b)
             XCTAssertEqual(SeriesUpdateUndo.sameSlots(a, b), main, "round \(round): \(a) \(b)")
             XCTAssertEqual(SeriesUpdateUndo.sameSlots(b, a), SeriesUpdateUndo.sameSlotsOnMain(b, a), "round \(round), reversed")
-            if main { same += 1 } else { different += 1 }
+            if aIsOdd || bIsOdd {
+                // A NaN or an infinity is the same instant as nothing, itself included.
+                XCTAssertFalse(main, "round \(round): a list with an odd slot is the same slots as no list")
+                oddLists += 1
+                // Past the count check, the set is built from one list and asked for the other's slots.
+                if a.count == b.count { oddAskedOfTheSet += 1 }
+            } else if main {
+                plainSame += 1
+            }
 
             var input = restorerInput(&generator)
             let keptIsOdd = chance(40, &generator), generatedIsOdd = chance(70, &generator)
@@ -492,25 +502,31 @@ final class UndoSlotComparisonEquivalenceTests: XCTestCase {
             XCTAssertEqual(bits(SeriesExceptionsPlanner.surplusSlots(generated: slots, exceptions: input.exceptions)), bits(surplus), "round \(round)")
             XCTAssertTrue(surplus.allSatisfy { $0.timeIntervalSinceReferenceDate.isFinite }, "no odd slot is inside a window")
         }
-        // An odd slot on one side only, or a NaN or an infinity on both (never the same instant as
-        // itself), is a difference; the lists without any are the same.
-        XCTAssertGreaterThan(same, 100)
-        XCTAssertGreaterThan(different, 2_000)
-        XCTAssertGreaterThan(oddKept, 800)
-        XCTAssertGreaterThan(oddGenerated, 1_500)
+        XCTAssertGreaterThan(plainSame, 100, "lists without an odd slot that are the same slots")
+        XCTAssertGreaterThan(oddLists, 2_000, "rounds with an odd slot in a list, each asserted different above")
+        XCTAssertGreaterThan(oddAskedOfTheSet, 250, "of those, the rounds with lists of equal length, where the set is built and asked")
+        XCTAssertGreaterThan(oddKept, 800, "rounds where the kept set is built from a list that holds an odd slot")
+        // An odd generated slot never reaches the kept set: `inWindows` is false for it, so it is
+        // dropped before the lookup. This count shows only that such inputs were produced for the
+        // assertion above (no odd slot comes out as surplus), not that the set was asked for one.
+        XCTAssertGreaterThan(oddGenerated, 1_500, "inputs with an odd generated slot were produced")
     }
 
     func testNaNAndInfiniteSlotsGiveMainsAnswerFromTheRestorers() {
         var generator = SeededGenerator(seed: 527_011)
-        var applied = 0, notApplied = 0, removed = 0, oddOffered = 0, oddOfferedAndRemoved = 0
+        var threw = 0, oddGeneratedApplied = 0, oddGeneratedRemoved = 0, oddRecorded = 0, oddOffered = 0, oddOfferedAndRemoved = 0
         for round in 0..<3_000 {
             // The restorer: odd slots among the generated ones (with occurrences of their own), the
             // kept ones, the edited ones, or as the series' start. No write is made to fail.
+            // An odd series' start reaches no set (`inWindows` is false for it, so the start is not
+            // asked of the generated set, and the anchor test is a direct comparison): it varies the
+            // input and is credited with nothing below.
             var input = restorerInput(&generator)
             input.failRemoveCall = nil
             input.failCreateCall = nil
             var generated = input.generated
-            if chance(70, &generator) {
+            let generatedIsOdd = chance(70, &generator)
+            if generatedIsOdd {
                 for (offset, value) in withOdd([], &generator).enumerated() {
                     generated.insert((value, 1_000 + offset), at: Int.random(in: 0...generated.count, using: &generator))
                 }
@@ -518,16 +534,28 @@ final class UndoSlotComparisonEquivalenceTests: XCTestCase {
             input.generated = generated
             var kept = input.exceptions.keptSlots
             var detached = input.exceptions.detached
-            if chance(15, &generator) { kept = withOdd(kept, &generator) }
-            if chance(10, &generator) { detached.append(DetachedOccurrence(slot: odd.randomElement(using: &generator)!, snapshot: snapshot(title: "Odd"))) }
+            let keptIsOdd = chance(15, &generator), editedIsOdd = chance(10, &generator)
+            if keptIsOdd { kept = withOdd(kept, &generator) }
+            if editedIsOdd { detached.append(DetachedOccurrence(slot: odd.randomElement(using: &generator)!, snapshot: snapshot(title: "Odd"))) }
             input.exceptions = SeriesExceptions(window: input.exceptions.window, keptSlots: kept, detached: detached,
                                                 extraWindows: input.exceptions.extraWindows)
             if chance(10, &generator) { input.seriesStart = odd.randomElement(using: &generator)! }
             let main = run(input, onMain: true), current = run(input, onMain: false)
             XCTAssertEqual(current.answer, main.answer, "round \(round)")
             XCTAssertEqual(current.calls, main.calls, "round \(round)")
-            if main.answer.contains("notApplied: true") { notApplied += 1 } else { applied += 1 }
-            if main.calls.contains(where: { $0.hasPrefix("remove ") }) { removed += 1 }
+            let wasNotApplied = main.answer.contains("notApplied: true")
+            if main.answer.hasPrefix("threw") { threw += 1 }
+            if keptIsOdd || editedIsOdd {
+                // An odd recorded slot is never a generated one, so such a record is not applied.
+                // This asserts the answer only: another recorded slot, or the series' start, may
+                // fail the same check before the odd slot is asked of the generated set.
+                XCTAssertTrue(wasNotApplied, "round \(round): a record with an odd kept or edited slot is not applied")
+                oddRecorded += 1
+            }
+            // With odd slots among the generated ones, they are in the set and the index the restorer
+            // asks: a restore that went through, and one that resolved a removal through that index.
+            if generatedIsOdd, !wasNotApplied, !main.answer.hasPrefix("threw") { oddGeneratedApplied += 1 }
+            if generatedIsOdd, main.calls.contains(where: { $0.hasPrefix("remove ") }) { oddGeneratedRemoved += 1 }
 
             // The store-level restore: occurrences of the series listed at a finite start whose slot
             // (their occurrence date) is odd, so the growing set is offered it.
@@ -553,15 +581,18 @@ final class UndoSlotComparisonEquivalenceTests: XCTestCase {
         }
         XCTAssertGreaterThan(oddOffered, 1_800, "store runs where an occurrence with an odd slot is listed, so offered to the growing set")
         XCTAssertGreaterThan(oddOfferedAndRemoved, 800, "and the restore went on to remove")
-        XCTAssertEqual(applied + notApplied, 3_000)
-        XCTAssertGreaterThan(applied, 1_000, "applied \(applied), notApplied \(notApplied)")
-        XCTAssertGreaterThan(notApplied, 500, "an odd kept or edited slot is never a generated one")
-        XCTAssertGreaterThan(removed, 800, "removals resolved with odd slots in the index")
+        XCTAssertEqual(threw, 0, "no write is made to fail, so the restorer never throws")
+        XCTAssertGreaterThan(oddRecorded, 500, "rounds with an odd kept or edited slot, each asserted not applied above")
+        XCTAssertGreaterThan(oddGeneratedApplied, 700, "restores that went through with odd slots in the generated set")
+        XCTAssertGreaterThan(oddGeneratedRemoved, 500, "removals resolved through an index that holds odd generated slots")
     }
 
     func testNaNAndInfiniteSlotsGiveMainsAnswerFromTheDiffAndFollowOrKeep() {
         var generator = SeededGenerator(seed: 527_012)
-        var nonEmpty = 0, restorable = 0, marker = 0
+        var nonEmpty = 0, restorable = 0, marker = 0, oddListings = 0, oddFollowOrKeep = 0
+        func holdsOdd(_ listing: SeriesExceptions) -> Bool {
+            (listing.keptSlots + listing.detached.map(\.slot)).contains { !$0.timeIntervalSinceReferenceDate.isFinite }
+        }
         func withOddSlots(_ listing: SeriesExceptions, _ generator: inout SeededGenerator) -> SeriesExceptions {
             var detached = listing.detached
             if chance(50, &generator) {
@@ -587,16 +618,33 @@ final class UndoSlotComparisonEquivalenceTests: XCTestCase {
             XCTAssertEqual(key(SeriesUpdateUndo.diff(recorded: current, current: recorded)),
                            key(SeriesUpdateUndo.diffOnMain(recorded: current, current: recorded)), "round \(round), reversed")
             if !main.isEmpty { nonEmpty += 1 }
-            for (before, after) in [(recorded, current), (current, recorded), (recorded, recorded), (plainRecorded, plainRecorded)] {
+            // Listings over other windows are answered before any set is built, so those rounds
+            // are not counted. Over the same windows every slot of each side is asked of the other
+            // side's set, which never holds an odd one: it reads as deleted or added.
+            if holdsOdd(recorded) || holdsOdd(current), !main.otherWindows {
+                XCTAssertFalse(main.deleted.isEmpty && main.added.isEmpty,
+                               "round \(round): an odd slot is deleted or added, whatever the other listing holds")
+                oddListings += 1
+            }
+            for (index, (before, after)) in [(recorded, current), (current, recorded), (recorded, recorded), (plainRecorded, plainRecorded)].enumerated() {
                 let answer = SeriesUpdateUndo.occurrencesFollowOrKeepOnMain(before: before, after: after, old: old, written: ["notes": "New"], fields: ["notes"])
                 XCTAssertEqual(SeriesUpdateUndo.occurrencesFollowOrKeep(before: before, after: after, old: old, written: ["notes": "New"], fields: ["notes"]),
                                answer, "round \(round)")
                 if answer { restorable += 1 } else { marker += 1 }
+                // A listing with an odd slot beside itself is not restorable: its kept slots are not
+                // the same slots as themselves, or the edited occurrence at the odd slot is not found.
+                // This asserts the answer only; another entry may end the function first.
+                if index == 2, holdsOdd(recorded) {
+                    XCTAssertFalse(answer, "round \(round): a listing with an odd slot does not follow or keep, even beside itself")
+                    oddFollowOrKeep += 1
+                }
             }
         }
-        XCTAssertGreaterThan(nonEmpty, 2_000)
-        XCTAssertGreaterThan(restorable, 300, "the listings without an odd slot compared with themselves")
-        XCTAssertGreaterThan(marker, 6_000)
+        XCTAssertGreaterThan(nonEmpty, 2_000, "listings that differ, with or without an odd slot")
+        XCTAssertGreaterThan(oddListings, 2_000, "rounds with an odd slot in a listing over the same windows, each asserted deleted or added above")
+        XCTAssertGreaterThan(oddFollowOrKeep, 1_800, "listings with an odd slot beside themselves, each asserted not restorable above")
+        XCTAssertGreaterThan(restorable, 300, "restorable answers: the listings without an odd slot beside themselves")
+        XCTAssertGreaterThan(marker, 6_000, "answers that keep the marker, with or without an odd slot")
     }
 
     // MARK: - The update record (A4, A5, A7, A8)
