@@ -20,7 +20,6 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
 
     private func count(_ needle: String, in text: String) -> Int { text.components(separatedBy: needle).count - 1 }
 
-    private let lookup = "guard let occurrence = findOccurrence(identifier: identifier, on: date, in: zone) else {"
 
     /// The three write tools: the lookup's miss branch is the one place the search is asked, it
     /// throws what the search answers, and nothing is saved, removed or assigned before it.
@@ -35,9 +34,10 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
             let code = try body(of: site.declaration)
             XCTAssertEqual(count("findOccurrence(", in: code), 1, site.declaration)
             XCTAssertEqual(count("occurrenceMissError(", in: code), 1, site.declaration)
-            let miss = "\(lookup) throw occurrenceMissError(series: \(site.series), id: identifier, on: date, in: zone, call: \(site.call)) }"
+            // The lookup keeps its form (`OccurrenceDateZoneTests` pins the zone it searches in).
+            let lookup = "guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: \(site.series))) else {"
+            let miss = "\(lookup) throw occurrenceMissError(series: \(site.series), id: identifier, on: date, call: \(site.call)) }"
             let at = try XCTUnwrap(code.range(of: miss), "\(site.declaration): \(miss)")
-            XCTAssertTrue(code.contains("let zone = Self.occurrenceZone(of: \(site.series)) \(lookup)"), site.declaration)
             let before = String(code[..<at.lowerBound])
             for write in ["eventStore.save(", "eventStore.remove(", ".calendar = ", "event.title = ", "event.startDate = "] {
                 XCTAssertFalse(before.contains(write), "\(site.declaration): \(write) before the lookup")
@@ -50,7 +50,10 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
     /// The search runs first, its matches decide the answer, and neither it nor what it calls writes.
     func testTheMissErrorIsBuiltFromTheSearchAndWritesNothing() throws {
         let miss = try body(of: "func occurrenceMissError(")
+        // The day is read in the zone the lookup searched in.
+        let zone = try XCTUnwrap(miss.range(of: "let timeZone = Self.occurrenceZone(of: series)"))
         let search = try XCTUnwrap(miss.range(of: "let matches = editedOccurrences(ofSeries: series, id: id, on: date, in: timeZone)"))
+        XCTAssertLessThan(zone.lowerBound, search.lowerBound)
         let decide = try XCTUnwrap(miss.range(of: "switch EditedOccurrenceAddress.miss(for: call, matches: matches, identifier: id, requested: date, zone: timeZone ?? .current) {"))
         let notFound = try XCTUnwrap(miss.range(of: ".eventNotFound(identifier: detail)"))
         XCTAssertLessThan(search.lowerBound, decide.lowerBound)

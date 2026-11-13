@@ -1265,11 +1265,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // "all" = modify entire series via master event + .futureEvents
             event = masterEvent
         } else if let date = occurrenceDate {
-            let zone = Self.occurrenceZone(of: masterEvent)
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: zone) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent)) else {
                 // #532: an occurrence edited on its own is not under the series' identifier; the
                 // answer gives its identifier, or not found with the day as a date (#535).
-                throw occurrenceMissError(series: masterEvent, id: identifier, on: date, in: zone, call: .update(futureSpan: span == .futureEvents))
+                throw occurrenceMissError(series: masterEvent, id: identifier, on: date, call: .update(futureSpan: span == .futureEvents))
             }
             // Span future at the stand-in itself is the same whole-series save (verify round 3).
             if FirstRemainingOccurrence.refusesFutureUpdate(
@@ -1930,8 +1929,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// #532: the error for an occurrence lookup that missed. A refusal that gives the identifier of
     /// each occurrence edited on its own that belongs to the day, or the not-found answer as before
     /// (with the day as a date, #535). Both are trusted messages, so nothing is logged for them.
-    func occurrenceMissError(series: EKEvent, id: String, on date: Date, in timeZone: TimeZone?,
-                             call: EditedOccurrenceAddress.Call) -> EventKitError {
+    /// The day is taken in the zone the lookup searched in, `occurrenceZone(of:)` of the same object.
+    func occurrenceMissError(series: EKEvent, id: String, on date: Date, call: EditedOccurrenceAddress.Call) -> EventKitError {
+        let timeZone = Self.occurrenceZone(of: series)
         let matches = editedOccurrences(ofSeries: series, id: id, on: date, in: timeZone)
         switch EditedOccurrenceAddress.miss(for: call, matches: matches, identifier: id, requested: date, zone: timeZone ?? .current) {
         case .refusal(let reason):
@@ -1966,10 +1966,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // record is classified by are taken before the removal.
         let snapshots: DeletedEventSnapshots
         if hadRules, let date = occurrenceDate {
-            let zone = Self.occurrenceZone(of: masterEvent)
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: zone) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent)) else {
                 // #532, as in updateEvent.
-                throw occurrenceMissError(series: masterEvent, id: identifier, on: date, in: zone, call: .delete(futureSpan: span == .futureEvents))
+                throw occurrenceMissError(series: masterEvent, id: identifier, on: date, call: .delete(futureSpan: span == .futureEvents))
             }
             snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
                                               seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) })
@@ -2563,10 +2562,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var subject = master
         if isRecurring, span == .this, let date = occurrenceDate {
-            let zone = Self.occurrenceZone(of: master)
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: zone) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: master)) else {
                 // #532, as in updateEvent; with no edited occurrence, the answer is as before.
-                throw occurrenceMissError(series: master, id: identifier, on: date, in: zone, call: .moveRow)
+                throw occurrenceMissError(series: master, id: identifier, on: date, call: .moveRow)
             }
             subject = occurrence
         }
