@@ -30,6 +30,6 @@ ASSUMPTION: 沒有任何 task 帶 [P]，雖然 parallel_tasks 開著：每個 ta
 
 ## 4. 整套檢查
 
-- [ ] 4.1 mutation：每個新分支（`readsSlots`、列出範圍、自己的時區、衝突訊息的分支、識別碼的形狀與長度、共用常數）各拿掉一次，`swift test` 篩選後的測試要失敗；舊的表因為 Sources 改了而作廢，舊的分支重跑。驗證：每一列都是紅的。
-- [ ] 4.2 裝置：新 head 的 release build 用 Developer ID 簽章，只走 `--cli`，只在名稱含 `#532` 的拋棄式 iCloud 日曆上：第 8 到 11 格，以及更新、刪除、搬移、#534 重試各一格回歸；依 id 刪掉日曆，`probecount.py` 相隔一分鐘以上跑兩次，總數不變、`#532` 為 0。驗證：每格的答案與 release gate 寫的相同，量到的結果寫回 `.claude/rules/mcp-binary-version-testing.md` 與 `CHANGELOG.md`（寫出量的是哪一個 build）。
+- [x] 4.1 mutation：每個新分支（`readsSlots`、列出範圍、自己的時區、衝突訊息的分支、識別碼的形狀與長度、共用常數）各拿掉一次，`swift test` 篩選後的測試要失敗；舊的表因為 Sources 改了而作廢，舊的分支重跑。驗證：每一列都是紅的。
+- [x] 4.2 裝置：新 head 的 release build 用 Developer ID 簽章，只走 `--cli`，只在名稱含 `#532` 的拋棄式 iCloud 日曆上：第 8 到 11 格，以及更新、刪除、搬移、#534 重試各一格回歸；依 id 刪掉日曆，`probecount.py` 相隔一分鐘以上跑兩次，總數不變、`#532` 為 0。驗證：每格的答案與 release gate 寫的相同，量到的結果寫回 `.claude/rules/mcp-binary-version-testing.md` 與 `CHANGELOG.md`（寫出量的是哪一個 build）。
 - [ ] 4.3 整套測試在主機時區、`TZ=UTC`、`TZ=America/Los_Angeles` 各跑一次，都是 0 失敗；依（檔案、名稱）比對沒有測試函式被移除。驗證：三次的 `Executed N tests, with 0 failures` 與比對結果。
