@@ -161,7 +161,8 @@ struct InstantIndex {
 /// What this bounds is the date comparisons: a binary search and at most two `sameInstant` calls per
 /// instant offered, where the scan compared it with every instant kept. It does not bound the
 /// elements moved: `sorted` is an array, so taking an instant moves every kept instant after its
-/// position. Instants offered in ascending order are appended and move nothing; offered in
+/// position. Finite instants offered in strictly ascending order are appended and move nothing (a
+/// repeated infinity is taken again, before the one kept); offered in
 /// descending order each one moves all that were kept, n(n-1)/2 moves of one `Date` (8 bytes) for
 /// n instants, and no order moves more. The one caller offers the occurrences of at most two
 /// recorded windows of at most 1,460 days each, so about 2,920 slots of a daily series at most:

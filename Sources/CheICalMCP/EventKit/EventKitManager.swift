@@ -1661,12 +1661,22 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #527: the baseline and the verdict list the same series one after the other. Inside this
         // stretch a listing is made once per set of ranges, so where the verdict lists the ranges the
         // baseline listed (no horizon, a series begun less than about three years ago, or one the
-        // base ranges cover) it reads the baseline's listing. It lists again only over other ranges
-        // (#506's window around now). The stretch cannot suspend and ends before `seriesUpdatePlan`,
+        // base ranges cover) it reads the baseline's listing. Otherwise (#506: a horizon the base
+        // ranges end before, on a series they do not cover) it lists under a key of its own, the base
+        // window and the window around now merged and cut into one-query pieces
+        // (`DeletedOccurrenceCheck.listingRanges`), which lists the baseline's dates again with the
+        // rest. The stretch cannot suspend and ends before `seriesUpdatePlan`,
         // which lists after a refresh is requested, and before the first field is assigned.
-        // Only these two readers share: every other listing of the call is made on its own. The
-        // #509 check's is one of them: when it needs the first slot (`needsFirstSlot` above) it lists
-        // the ranges the baseline lists here, before the stretch, in addition to the listing kept here.
+        // Only these two readers share: every other listing of the call is made on its own. Those
+        // made through `seriesOccurrences` each list the series' base ranges, the ones the baseline
+        // lists when it runs, whatever is listed in the stretch. Before it: #428's where the series'
+        // id is answered through its first edited occurrence (`firstEditedOccurrenceID`, before the
+        // call made again through that occurrence's id), #416's through an occurrence's own id
+        // (`occurrenceNeighbours`), #442's for an all_day change (`allDayEditFacts`), and the #509
+        // check when it needs the first slot (`needsFirstSlot` above). After it: the first-slot proof
+        // of the #263 plan (`seriesUpdatePlan`). The #326 stand-in (`firstRemainingOccurrence`) is
+        // listed from the stored series object's start; through a stand-in the baseline reads its
+        // ranges from the stand-in occurrence, so those two need not be the same ranges.
         // The series is read by `seriesForCheck()`, whose first call is inside the stretch and comes
         // before the first listing: through an occurrence's own id it refreshes the series object
         // once (the result is cached in `checkSeries`), never between the two listings.
