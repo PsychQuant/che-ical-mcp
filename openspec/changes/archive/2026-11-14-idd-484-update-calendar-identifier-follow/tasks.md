@@ -27,8 +27,8 @@
 
 ## 5. 證明
 
-- [ ] 5.1 每個條件與每個呼叫都有效：Implementation Plan 的 mutation M-a 到 M-i 逐一套用、看到指定的測試變紅、再還原。驗證：PR body 的 mutation 表。
-- [ ] 5.2 其他行為沒有改變：全套 `swift test` 在 host 時區與 `TZ=UTC` 都是 0 failures，`main` 的測試名稱一個都沒少。驗證：兩次執行的摘要與移除檢查。
-- [ ] 5.3 真實 store 上識別碼沒變時不改寫：兩個 iCloud 拋棄式日曆上 create、`update_event` 帶 `calendar_name`、undo、undo。驗證：裝置執行結果 `id_changed: false`、回應沒有 new ID、事件被刪除。
-- [ ] 5.4 Google 帳號上紀錄會跟上：重跑 A、B、E、F、M1、M3、M4、M5 與對照組 D、G，對照計畫的「After」欄；另跑「span `future` 從第一場」那一格，必須不改寫。驗證：PR body 的裝置表。
-- [ ] 5.5 跨帳號（iCloud 與 Google，兩個方向）一次性事件換日曆與它的 undo 會跟上。驗證：PR body 的裝置表。
+- [x] 5.1 每個條件與每個呼叫都有效：Implementation Plan 的 mutation M-a 到 M-i 逐一套用、看到指定的測試變紅、再還原。驗證：PR body 的 mutation 表。
+- [x] 5.2 其他行為沒有改變：全套 `swift test` 在 host 時區與 `TZ=UTC` 都是 0 failures，`main` 的測試名稱一個都沒少。驗證：兩次執行的摘要與移除檢查。
+- [x] 5.3 真實 store 上識別碼沒變時不改寫：兩個 iCloud 拋棄式日曆上 create、`update_event` 帶 `calendar_name`、undo、undo。驗證：裝置執行結果 `id_changed: false`、回應沒有 new ID、事件被刪除。
+- [x] 5.4 Google 帳號上紀錄會跟上：重跑 A、B、E、F、M1、M3、M4、M5 與對照組 D、G，對照計畫的「After」欄；另跑「span `future` 從第一場」那一格，必須不改寫。驗證：PR body 的裝置表。
+- [x] 5.5 跨帳號（iCloud 與 Google，兩個方向）一次性事件換日曆與它的 undo 會跟上。驗證：PR body 的裝置表。
