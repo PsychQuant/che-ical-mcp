@@ -8,8 +8,13 @@ import Foundation
 /// and every `insert`). A set built without a counter reports to `probe` when a test has bound one,
 /// so a test can count the sets a function of the server builds inside itself (the undo paths) while
 /// no file of the server passes or names a counter. Nothing in the server binds it; it is read once
-/// per set built, not per comparison. `@unchecked Sendable` because a task-local value must be
-/// `Sendable`: a counter is only ever touched by the one test that made it.
+/// per set built, not per comparison. What is counted is date comparisons and calls: the elements
+/// an insertion into a sorted array moves (`DistinctInstants.insert`) are not.
+///
+/// `@unchecked Sendable` because a task-local value must be `Sendable`, while `count` and `lookups`
+/// are plain variables. The invariant it relies on: a counter is touched only by the one test that
+/// made it, on the thread that bound it, so nothing run inside a bound scope may start a task (a
+/// child task inherits the binding and would count from another thread).
 final class ComparisonCounter: @unchecked Sendable {
     var count = 0
     var lookups = 0
@@ -81,8 +86,15 @@ struct InstantSet {
 /// tolerance are one unbroken run around the query in sorted order: from the first element at or
 /// after the query onwards while `UndoPostState.sameInstant` holds, and from the one before it
 /// backwards while it holds. The walk sees every match and no other element but the two that end
-/// it; the smallest position among the matches is the first match in the list's order. With many
-/// elements within a second of one query the walk reads all of them, as the scan did; never more.
+/// it; the smallest position among the matches is the first match in the list's order.
+///
+/// The walk reads the whole run of matches plus those two elements, which can be more than the scan
+/// read: the scan stopped at its first match in the list's order, so where that match came early
+/// in the list (40 equal instants and one query: one comparison) the walk still reads all of the
+/// run. The answer is the same. A list of n elements all within a second of each of n queries
+/// costs n walks of n elements here, where the scan stopped at once. A rule gives at most one slot
+/// a day, so the lists the undo paths index are not expected to hold two elements within a second
+/// of each other, and a walk is then the match and the two elements that end it.
 struct InstantIndex {
     private let sorted: [(instant: Date, position: Int)]
     private let counter: ComparisonCounter?
@@ -145,6 +157,18 @@ struct InstantIndex {
 /// instants are kept sorted as they come, and a new one is compared with the first taken instant at
 /// or after it and the one before it (`InstantSet`'s two neighbours). A NaN instant is the same
 /// instant as nothing, so it is always new, and it is not kept (nothing can match it later either).
+///
+/// What this bounds is the date comparisons: a binary search and at most two `sameInstant` calls per
+/// instant offered, where the scan compared it with every instant kept. It does not bound the
+/// elements moved: `sorted` is an array, so taking an instant moves every kept instant after its
+/// position. Instants offered in ascending order are appended and move nothing; offered in
+/// descending order each one moves all that were kept, n(n-1)/2 moves of one `Date` (8 bytes) for
+/// n instants, and no order moves more. The one caller offers the occurrences of at most two
+/// recorded windows of at most 1,460 days each, so about 2,920 slots of a daily series at most:
+/// under 4.3 million moves in the worst order. The record lists the later window first
+/// (`SeriesExceptionsUndo.capture`), so when each window is listed in date order, every slot of
+/// the earlier window outside the overlap is inserted before the whole first block (at most about
+/// 1,460 x 1,460 moves) and the rest are appended.
 struct DistinctInstants {
     private var sorted: [Date] = []
     private let counter: ComparisonCounter?

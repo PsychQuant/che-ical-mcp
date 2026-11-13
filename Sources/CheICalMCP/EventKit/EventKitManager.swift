@@ -1664,6 +1664,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // base ranges cover) it reads the baseline's listing. It lists again only over other ranges
         // (#506's window around now). The stretch cannot suspend and ends before `seriesUpdatePlan`,
         // which lists after a refresh is requested, and before the first field is assigned.
+        // Only these two readers share: every other listing of the call is made on its own. The
+        // #509 check's is one of them: when it needs the first slot (`needsFirstSlot` above) it lists
+        // the ranges the baseline lists here, before the stretch, so such a call lists them twice.
+        // The series is read by `seriesForCheck()`, whose first call is inside the stretch and comes
+        // before the first listing: through an occurrence's own id it refreshes the series object
+        // once (the result is cached in `checkSeries`), never between the two listings.
         try seriesListings.sharing {
             if reach.isWholeSeries, datePlan.datesToWrite != nil {
                 let proof = try seriesForCheck().map { wholeSeriesBaseline(of: $0.0, id: $0.1, viaStandIn: viaStandInForCheck) }
