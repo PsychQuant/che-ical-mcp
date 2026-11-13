@@ -209,8 +209,12 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 ## Release gate：長期系列的整個系列刪除 undo 與重複防護（#319、#321）
 
 > **#527**：這條 undo 路徑裡的時段比對（`SeriesExceptionsUndo.restore`、`SeriesExceptionsRestorer.restore`、`SeriesExceptionsPlanner.surplusSlots`）
-> 改成不逐一掃描。這項改動沒有裝置上的證據（undo 有狀態，`--cli` 走不到），只有與前一版程式逐一比對的測試；本節的步驟就是它的裝置檢查，
-> 出含 #527 的版本之前要做，結果也記在 #527。
+> 改成不逐一掃描。這項改動沒有裝置上的證據（undo 有狀態，`--cli` 走不到），只有與前一版程式逐一比對的測試。本節第 1 到 9 步會走到
+> `SeriesExceptionsRestorer.restore` 與 `surplusSlots` 的比對，但走不到 `SeriesExceptionsUndo.restore` 裡唯一新增的分支：兩個紀錄視窗重疊處的
+> 場次只取一次（`DistinctInstants.insert` 回 false）。紀錄要有兩個視窗，系列必須是次數型、刪除在第一場之後超過 1093 天、而且最後可能的時段在
+> 第一場之後超過 1458 天（結束推算不出來的次數型系列只看前一個條件；`SeriesExceptionsUndo.capture`、`SeriesExceptionsPlanner.deleteWindow`）。第 1、4、5、9 步的系列沒有結束，第 6 步的有結束日，第 2、3、8 步的系列照步驟是剛建立的，
+> 第 7 步的 450 次一三五系列最後可能的時段在第一場之後 1057 天，所以都只記一個視窗（`SeriesDeleteWindowTests.testTheOtherGateShapesRecordOneWindow`）。
+> 第 10 步是為這個分支加的，**還沒做過**。出含 #527 的版本之前，第 1 到 10 步都要做，結果也記在 #527。
 
 #319 的視窗位置（`SeriesExceptionsPlanner.deleteWindow`）與 #321 的重複防護（系列識別碼與規則時段，
 `SeriesRecreations`）只有純函式、記憶體內 store 與原始碼結構的測試。依賴而沒量過的裝置行為：開始於
@@ -266,6 +270,17 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#319` 或
    「was not recreated in its original calendar: its series already holds its original slot there」，複本留在 B、沒有
    被查找或移除。變形：另建一個這樣的系列，搬移前先用 `--cli` 的 `update_event` span `this` 改那個場次的標題，其餘
    相同 → 最後的 `undo` 回應說「the copy the move made (id …) is the only version with that edit」。
+10. **兩個紀錄視窗重疊處的場次只取一次（#527，還沒做過）**：用 `--cli` 建一個開始於約四年半前、每週一次（只在一個星期幾）、`occurrence_count: 300` 的系列
+    （自己的標題，例如「#527 step 10」；它約一年多後結束）。這個形狀的紀錄有兩個視窗：刪除前 1094 天起的 1460 天，以及第一場前一天起的 1460 天，
+    兩者從刪除前約三年重疊到刪除前約半年（`SeriesDeleteWindowTests.testAWeeklyCountBegunFourToFiveYearsBeforeTheDeleteRecordsTwoOverlappingWindows`
+    算的是這個形狀；整條路徑在記憶體內的 store 上跑過，`SeriesExceptionsUndoTests.testAWeeklyCountBegunFourAndAHalfYearsAgoRestoresItsExceptionsInTheOverlapOnce`）。
+    用 `--cli` 刪掉約兩年前的一個場次（span `this`），再用 `--cli` 改它兩週後那個場次的標題（span `this`）；兩個寫入都不進 session 的 undo stack →
+    session：`delete_event` span `all`（系列 id）→ `undo`：回應說 1 個場次維持刪除、1 個編輯過的場次以一次性事件回來，並列出兩個視窗
+    （兩段「from … up to …」以「, and」相接）→ 用 `--cli` 的 `list_events` 讀回刪除前約三年到約半年（只列這個拋棄式日曆）：被刪的那天沒有場次，
+    被改的那天只有一個事件（一次性事件，改過的標題），其餘每週各一個場次、沒有重複。
+    - undo 以「could not remove the occurrence on …」拒絕（重建的系列被刪掉），或回應的「維持刪除」不是 1 個：重疊處的場次被兩個視窗各取了一次，
+      就是這個分支錯了，回報到 #527。
+    - 回應只列一個視窗：這個形狀在裝置上沒有記到兩個視窗（例如來源把次數規則讀成結束日），這一步不算數；記下 `list_events` 讀到的規則，回報到 #527。
 
 另外記錄、不算通過條件的：在 Google（或其他存檔後會換 id 的來源）上做第 4 步時，若重建系列存檔後 id 變了，
 第 4 步會寫出第二個事件（已知限制，CHANGELOG 的 Not covered）；有大量事件的拋棄式日曆時，做一次刪掉約 20 個
@@ -944,10 +959,11 @@ stateful，`--cli` 走不到（見上表），而跨帳號的搬移需要第二�
 4. 從 2021-11-01 起：`updated`，檢查到 2029-11-14（多列了現在前後的範圍）；從 2016-11-07 起：span `all` 以
    `horizonNotReached` 拒絕，從 2026-11-16 用 span `future`：`updated`，檢查到 2029-11-14。
 5. 從 2018-11-12 起的每日系列：這次呼叫 6.16 s；本週開始的每日系列 2.16 s（日曆裡只有這個系列，#520）。#520 之後（2026-11-13，release build、
-   Developer ID 簽章，各三次的中位數，每個數字是一次 `--cli` 整個 process 的時間；日曆建在預設來源，沒有讀回來源，推定是 iCloud）：同樣的兩個呼叫 0.32 s 與 0.21 s，當天的 `main` 是 5.81 s 與 2.07 s；除了跟著呼叫時鐘走的 `deleted_occurrences_checked_until`，回應與讀回相同。#527 之後（2026-11-13，iCloud，來源從拋棄式日曆讀回；
-   release build、Developer ID 簽章，兩輪各三次、`main` 與新 binary 交錯，寫的是兩輪各自的中位數）：#503 的 baseline 與刪除檢查讀同一段日期時只列一次。本週開始的系列
-   單獨一個日曆時 0.35、0.37 s 變成 0.27、0.25 s，同一個日曆另有六個每日系列時 0.88、1.03 s 變成 0.50、0.57 s；2018 年開始的系列兩次列的日期不同，仍列兩次，
-   0.43、0.51 s 對 0.43、0.49 s，另有六個系列時 1.12、1.22 s 對 1.11、1.15 s。24 對呼叫的回應除了 id 與跟著呼叫時鐘走的日期之外相同，八個時段的讀回相同。
+   Developer ID 簽章，各三次的中位數，每個數字是一次 `--cli` 整個 process 的時間；日曆建在預設來源，沒有讀回來源，推定是 iCloud）：同樣的兩個呼叫 0.32 s 與 0.21 s，當天的 `main` 是 5.81 s 與 2.07 s；除了跟著呼叫時鐘走的 `deleted_occurrences_checked_until`，回應與讀回相同。#527 之後，#503 的 baseline 與刪除檢查列同一段日期時共用一次列出；這次呼叫裡其他的列出照舊，其中 #509 的規則結束檢查需要系列第一個時段時，會在這兩者之前自己列一次同一段日期。
+   #527 是另一次量測（2026-11-13，iCloud，來源從拋棄式日曆讀回；另一批拋棄式日曆、當天另一個時間；release build、Developer ID 簽章，兩輪各三次、`main` 與新 binary 交錯，
+   寫的是兩輪各自的中位數）。兩次量測都沒有記錄機器負載，所以下面的數字只能彼此比較，不能和上一句 #520 的 0.32 s、0.21 s 比（這裡的「修改前」就是 #520 之後的 `main`）。本週開始的系列
+   單獨一個日曆時 0.35、0.37 s 變成 0.27、0.25 s，同一個日曆另有六個每日系列時 0.88、1.03 s 變成 0.50、0.57 s；2018 年開始的系列，兩者列的日期不同，仍各列一次，
+   修改前 0.43、0.51 s、修改後 0.43、0.49 s，另有六個系列時修改前 1.12、1.22 s、修改後 1.11、1.15 s。24 對呼叫的回應除了 id 與跟著呼叫時鐘走的日期之外相同，八個時段的讀回相同。
 
 **2026-11-12 第二次**（PR #521 的 `321e0a8` build，措辭修改之後、兩輪 verify 修正之前；Developer ID 簽章，`--cli`，拋棄式日曆
 `#506 gate`）。
