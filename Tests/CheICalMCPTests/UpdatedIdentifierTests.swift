@@ -141,8 +141,12 @@ final class UpdatedIdentifierTests: XCTestCase {
 
     func testTheCalendarRefusalComesBeforeTheFirstWrite() throws {
         let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift")))
-        let refusal = try XCTUnwrap(source.range(of: "if Self.refusesCalendarOnOccurrence( onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, applyToAll: applyToAll, changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false) { throw EventKitError.moveRefused(reason: Self.occurrenceCalendarReason) }"))
+        // #484: the calendar change is read once into `changesCalendar`, which this refusal reads; the
+        // read stands before the refusal, and the refusal before the first write.
+        let read = try XCTUnwrap(source.range(of: "let changesCalendar = newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false"))
+        let refusal = try XCTUnwrap(source.range(of: "if Self.refusesCalendarOnOccurrence( onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, applyToAll: applyToAll, changesCalendar: changesCalendar) { throw EventKitError.moveRefused(reason: Self.occurrenceCalendarReason) }"))
         let write = try XCTUnwrap(source.range(of: "if let t = title { event.title = t }"))
+        XCTAssertLessThan(read.lowerBound, refusal.lowerBound)
         XCTAssertLessThan(refusal.lowerBound, write.lowerBound)
     }
 
