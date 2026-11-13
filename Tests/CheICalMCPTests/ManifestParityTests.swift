@@ -773,10 +773,10 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertTrue(tool.summary.contains("gives its identifier"), "\(name): \(tool.summary)")
         }
         let update = try descriptions(of: "update_event").declared
-        once("with span 'this' pass it as event_id without occurrence_date, and with span 'future' the refusal says which way is left and where a write through that identifier starts.", in: update, "update_event")
+        once("with span 'this' pass it as event_id without occurrence_date, and with span 'future' the refusal says which way is left, and for an occurrence that was moved, where a write through that identifier starts.", in: update, "update_event")
         once("When no occurrence is on that day, the error names the day as a date in the event's time zone (#535).", in: update, "update_event")
         let delete = try descriptions(of: "delete_event").declared
-        once("with span 'future' a delete through it starts at that occurrence's original date, which for one that was moved later is before the day it starts, and cannot be undone.", in: delete, "delete_event")
+        once("with span 'future' a delete through it starts at that occurrence's original date, which for one that was moved later is before the day it starts, and cannot be undone; in a timed series with no time zone that delete left the edited occurrence itself when it was measured (#549).", in: delete, "delete_event")
         once("When no occurrence is on that day, the error names the day as a date in the event's time zone (#535).", in: delete, "delete_event")
         let move = try descriptions(of: "move_events_batch").declared
         once("to pass in event_ids with the day it starts, read in that occurrence's own time zone, as its occurrence_dates entry.", in: move, "move_events_batch")

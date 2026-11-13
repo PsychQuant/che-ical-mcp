@@ -156,7 +156,7 @@ final class EditedOccurrenceAddressTests: XCTestCase {
         let futureList = "\(dec14) (starts at 2026-12-21T15:00:00+08:00, original date 2026-12-14); \(dec21) (was on that day, now starts at 2026-12-23T08:00:00+08:00)"
         let futureSeveral = "More than one occurrence of this series that was edited on its own belongs to 2026-12-21: \(futureList). The series' identifier and a day do not address an occurrence edited on its own"
         XCTAssertEqual(text(.update(futureSpan: true), found),
-                       "\(futureSeveral). With span 'future' through one of those identifiers a call takes only some fields, and that call answers which. It starts at that occurrence's original date, not at the day it starts now: a title written that way reached the occurrences of the series from the original date on (measured on iCloud). \(otherWay) Nothing was written.")
+                       "\(futureSeveral). With span 'future' through one of those identifiers a call takes only some fields, and that call answers which. It starts at that occurrence's original date, which for one that was moved is not the day it starts now: a title written that way reached the occurrences of the series from the original date on (measured on iCloud). \(otherWay) Nothing was written.")
         XCTAssertEqual(text(.delete(futureSpan: true), found),
                        "\(futureSeveral). delete_event with span 'future' through one of those identifiers deletes the series from that occurrence's original date on, where that call allows it, so for one that was moved later the occurrences of the series from its original date up to the day it starts now are deleted too, and that delete cannot be undone. Nothing was deleted.")
     }
@@ -219,7 +219,7 @@ final class EditedOccurrenceAddressTests: XCTestCase {
         let rest = "\(takes) \(otherWay) Nothing was written."
         XCTAssertEqual(text(.update(futureSpan: true), [inPlace]), "\(opening) Its identifier is \(dec21). \(rest)")
         XCTAssertEqual(text(.update(futureSpan: true), [movedOff]),
-                       "The occurrence this series had on 2026-12-21 was edited on its own and now starts at 2026-12-23T08:00:00+08:00 (its original date is 2026-12-21), so the series' identifier and that day no longer address it. Its identifier is \(dec21). \(rest)")
+                       "The occurrence this series had on 2026-12-21 was edited on its own and now starts at 2026-12-23T08:00:00+08:00 (its original date is 2026-12-21), so the series' identifier and that day no longer address it. Its identifier is \(dec21). \(takes) It starts at that occurrence's original date, 2026-12-21, not at the day it starts now (measured on iCloud with a title). \(otherWay) Nothing was written.")
         XCTAssertEqual(text(.update(futureSpan: true), [movedOnto]),
                        "The occurrence of this series on 2026-12-21 was edited on its own (its original date is 2026-12-14), so the series' identifier and that day no longer address it. Its identifier is \(dec14). \(takes) It starts at that occurrence's original date, 2026-12-14, not at 2026-12-21: a title written that way reached the occurrences of the series from 2026-12-14 on (measured on iCloud). \(otherWay) Nothing was written.")
         // The route, its ending and its limits are the ones the refusal through an occurrence's own
@@ -504,17 +504,27 @@ final class EditedOccurrenceAddressTests: XCTestCase {
             for found in [[shown], [shown, Match(identifier: dec21, start: at("2026-12-26T21:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: nil)]] {
                 let reason = Address.reason(for: call, matches: found, request: asked)
                 XCTAssertFalse(reason.contains("original date is"), reason)
-                XCTAssertFalse(reason.contains("original date,"), reason)
+                XCTAssertNil(reason.range(of: #"original date, \d"#, options: .regularExpression), reason)
                 XCTAssertFalse(reason.contains("2026-12-24"), reason)
                 XCTAssertFalse(reason.contains("2026-12-25"), reason)
-                XCTAssertFalse(reason.contains("measured on iCloud"), reason)
+                XCTAssertFalse(reason.contains("a title written that way"), reason)
+                XCTAssertFalse(reason.contains("It starts at"), reason)
             }
         }
         XCTAssertEqual(Address.reason(for: .moveRow, matches: [shown], request: asked),
                        "The occurrence of this series on 2026-12-26 was edited on its own, so the series' identifier and that day no longer address it. Its identifier is \(id): pass it in event_ids, with its occurrence_dates entry set to 2026-12-26, the day it starts. Nothing was moved.")
-        // The span future delete still says where the cut is, gives no date, and says why.
+        // The span future delete still says where the cut is, gives no date, says why, and says what
+        // was measured in such a series (#549: the edited occurrence itself stayed).
+        // spec-example: edited-occurrence-addressing / Delete in a series with no time zone
+        let floatingDelete = "delete_event with span 'future' through that identifier, where that call allows it, deletes the occurrences of the series after that occurrence's original date, which this server does not read for a series with no time zone: if that date is earlier than 2026-12-26, occurrences before 2026-12-26 are deleted too. Measured on iCloud; in such a series that occurrence itself stayed (#549). That delete cannot be undone. Nothing was deleted."
         XCTAssertEqual(Address.reason(for: .delete(futureSpan: true), matches: [shown], request: asked),
-                       "The occurrence of this series on 2026-12-26 was edited on its own, so the series' identifier and that day no longer address it. Its identifier is \(id). delete_event with span 'future' through that identifier deletes the series from that occurrence's original date on, where that call allows it (this series has no time zone, and this server does not read that date for such a series; if it is earlier than 2026-12-26, the occurrences of the series from it up to 2026-12-26 are deleted too), and that delete cannot be undone. Nothing was deleted.")
+                       "The occurrence of this series on 2026-12-26 was edited on its own, so the series' identifier and that day no longer address it. Its identifier is \(id). \(floatingDelete)")
+        let two = [shown, Match(identifier: dec21, start: at("2026-12-26T21:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: nil)]
+        XCTAssertTrue(Address.reason(for: .delete(futureSpan: true), matches: two, request: asked)
+            .hasSuffix("The series' identifier and a day do not address an occurrence edited on its own. delete_event with span 'future' through one of those identifiers, where that call allows it, deletes the occurrences of the series after that occurrence's original date, which this server does not read for a series with no time zone: for one that was moved later, occurrences before the day it starts now are deleted too. Measured on iCloud; in such a series that occurrence itself stayed (#549). That delete cannot be undone. Nothing was deleted."))
+        // A series with a zone says none of that.
+        XCTAssertFalse(text(.delete(futureSpan: true), [inPlace]).contains("#549"))
+        XCTAssertFalse(text(.delete(futureSpan: true), [movedOnto, movedOff]).contains("#549"))
         XCTAssertEqual(Address.reason(for: .update(futureSpan: true), matches: [shown], request: asked),
                        "The occurrence of this series on 2026-12-26 was edited on its own, so the series' identifier and that day no longer address it. Its identifier is \(id). With span 'future' through that identifier a call takes only some fields, and that call answers which. \(otherWay) Nothing was written.")
         // An all-day series has no time zone either, and its slots are read.
@@ -570,17 +580,44 @@ final class EditedOccurrenceAddressTests: XCTestCase {
                        "\(opening) delete_event with span 'future' through that identifier deletes the series from that occurrence's original date, 2026-12-21, on, where that call allows it, so the occurrences of the series from 2026-12-21 up to 2026-12-29 are deleted too, and that delete cannot be undone. Nothing was deleted.")
         XCTAssertEqual(text(.update(futureSpan: true), [later], requested: asked),
                        "\(opening) With span 'future' through that identifier a call takes only some fields, and that call answers which. It starts at that occurrence's original date, 2026-12-21, not at 2026-12-29: a title written that way reached the occurrences of the series from 2026-12-21 on (measured on iCloud). \(otherWay) Nothing was written.")
-        // Moved earlier, or asked by its original day: nothing before the requested day is reached, so nothing is added.
-        let earlier = Match(identifier: dec21, start: at("2026-12-19T10:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: "2026-12-21")
-        for (found, requested) in [([earlier], "2026-12-19T00:00:00+08:00"), ([movedOff], "2026-12-21T00:00:00+08:00"), ([inPlace], "2026-12-21T00:00:00+08:00")] {
-            for call in [Address.Call.update(futureSpan: true), .delete(futureSpan: true)] {
-                let reason = text(call, found, requested: requested)
-                XCTAssertFalse(reason.contains("deleted too"), reason)
-                XCTAssertFalse(reason.contains("reached the occurrences"), reason)
-            }
+        // An occurrence edited in place says nothing of where a call starts.
+        for call in [Address.Call.update(futureSpan: true), .delete(futureSpan: true)] {
+            let reason = text(call, [inPlace])
+            XCTAssertFalse(reason.contains("deleted too"), reason)
+            XCTAssertFalse(reason.contains("It starts at"), reason)
         }
         // Span this says nothing of it.
         XCTAssertFalse(text(.delete(futureSpan: false), [later], requested: asked).contains("2026-12-21"))
+    }
+
+    // spec-example: edited-occurrence-addressing / Moved earlier with span future
+    func testASpanFutureUpdateThroughAMovedOccurrenceSaysWhereItStartsInBothDirections() {
+        // The slot of 2026-12-21, moved before the occurrence of 2026-12-14, to 2026-12-13.
+        let earlier = Match(identifier: dec21, start: at("2026-12-13T10:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: "2026-12-21")
+        let asked = "2026-12-13T00:00:00+08:00"
+        let opening = "The occurrence of this series on 2026-12-13 was edited on its own (its original date is 2026-12-21), so the series' identifier and that day no longer address it. Its identifier is \(dec21)."
+        let takes = "With span 'future' through that identifier a call takes only some fields, and that call answers which."
+        XCTAssertEqual(text(.update(futureSpan: true), [earlier], requested: asked),
+                       "\(opening) \(takes) It starts at that occurrence's original date, 2026-12-21, not at 2026-12-13: a title written that way did not reach the occurrences of the series between 2026-12-13 and 2026-12-21 (measured on iCloud). \(otherWay) Nothing was written.")
+        // The delete names the date and adds nothing: nothing before the requested day is deleted.
+        XCTAssertEqual(text(.delete(futureSpan: true), [earlier], requested: asked),
+                       "\(opening) delete_event with span 'future' through that identifier deletes the series from that occurrence's original date, 2026-12-21, on, where that call allows it, and that delete cannot be undone. Nothing was deleted.")
+        // Asked by its original day: the write starts on the day asked for, and the text says so.
+        XCTAssertTrue(text(.update(futureSpan: true), [movedOff])
+            .contains("\(takes) It starts at that occurrence's original date, 2026-12-21, not at the day it starts now (measured on iCloud with a title). For the rest:"))
+        // Every moved occurrence gets one such sentence, one that was not moved gets none, and so does
+        // one whose original date is not known.
+        let later = Match(identifier: dec21, start: at("2026-12-29T10:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: "2026-12-21")
+        let unknown = Match(identifier: dec21, start: at("2026-12-21T10:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: nil)
+        let cases: [(Match, String, Int)] = [(earlier, asked, 1), (later, "2026-12-29T00:00:00+08:00", 1), (movedOff, "2026-12-21T00:00:00+08:00", 1),
+                                             (movedOnto, "2026-12-21T00:00:00+08:00", 1), (inPlace, "2026-12-21T00:00:00+08:00", 0),
+                                             (unknown, "2026-12-21T00:00:00+08:00", 0)]
+        for (match, requested, count) in cases {
+            let reason = text(.update(futureSpan: true), [match], requested: requested)
+            XCTAssertEqual(reason.components(separatedBy: "It starts at that occurrence's original date").count - 1, count, reason)
+            // Span this never says it.
+            XCTAssertFalse(text(.update(futureSpan: false), [match], requested: requested).contains("It starts at"))
+        }
     }
 
     // spec-example: edited-occurrence-addressing / Own zone day in the move row

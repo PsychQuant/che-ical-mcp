@@ -276,6 +276,26 @@ enum EditedOccurrenceAddress {
         func earlierOrigin(_ match: Match) -> String? {
             match.kind == .shownThatDay ? match.originalDay.flatMap { $0 < requestedDay ? $0 : nil } : nil
         }
+        /// Where a span `future` write through the identifier of one moved occurrence starts, with
+        /// what was measured on iCloud (2026-11-13, a title each time): at its original date, not at
+        /// the day it starts now. Moved later, the write reached the occurrences from the original
+        /// date on, the one between the two days too; moved earlier, it did not reach the ones
+        /// between the two days. Nothing for an occurrence that was not moved, or whose original
+        /// date is not read.
+        func writeStart(_ match: Match) -> String {
+            guard moved(match), let original = match.originalDay else { return "" }
+            let start = " It starts at that occurrence's original date, \(original), not at "
+            if match.kind == .originallyThatDay {
+                return "\(start)the day it starts now (measured on iCloud with a title)."
+            }
+            return original < requestedDay
+                ? "\(start)\(requestedDay): a title written that way reached the occurrences of the series from \(original) on (measured on iCloud)."
+                : "\(start)\(requestedDay): a title written that way did not reach the occurrences of the series between \(requestedDay) and \(original) (measured on iCloud)."
+        }
+        /// #549, measured on iCloud (2026-11-13): in a timed series with no time zone, a span `future`
+        /// delete through the identifier of an edited occurrence deleted the later occurrences of
+        /// the series and left that occurrence itself, edited in place or moved.
+        let leftBehind = "Measured on iCloud; in such a series that occurrence itself stayed (#549)."
         func name(_ match: Match) -> String? { echoed(match.identifier, seriesID: request.seriesID) }
 
         guard let match = matches.first else {
@@ -295,17 +315,15 @@ enum EditedOccurrenceAddress {
                     ?? "Use the id list_events shows for it as event_id and leave occurrence_date out."
                 return "\(opening) \(pass) \(ending)"
             case .update:
-                // Measured on iCloud (2026-11-13): a title written with span future through the
-                // identifier of an occurrence moved past the next one reached that next one too.
-                let reach = earlierOrigin(match).map { " It starts at that occurrence's original date, \($0), not at \(requestedDay): a title written that way reached the occurrences of the series from \($0) on (measured on iCloud)." } ?? ""
-                return "\(opening) \(named) With span 'future' through that identifier a call takes only some fields, and that call answers which.\(reach) \(otherWay) \(ending)"
+                return "\(opening) \(named) With span 'future' through that identifier a call takes only some fields, and that call answers which.\(writeStart(match)) \(otherWay) \(ending)"
             case .delete:
+                if !request.readsSlots {
+                    return "\(opening) \(named) delete_event with span 'future' through that identifier, where that call allows it, deletes the occurrences of the series after that occurrence's original date, which this server does not read for a series with no time zone: if that date is earlier than \(requestedDay), occurrences before \(requestedDay) are deleted too. \(leftBehind) That delete cannot be undone. \(ending)"
+                }
                 let from: String
                 if let day = match.originalDay {
                     from = "original date, \(day), on, where that call allows it"
                         + (earlierOrigin(match).map { ", so the occurrences of the series from \($0) up to \(requestedDay) are deleted too" } ?? "")
-                } else if !request.readsSlots {
-                    from = "original date on, where that call allows it (this series has no time zone, and this server does not read that date for such a series; if it is earlier than \(requestedDay), the occurrences of the series from it up to \(requestedDay) are deleted too)"
                 } else {
                     from = "original date on, where that call allows it"
                 }
@@ -330,11 +348,13 @@ enum EditedOccurrenceAddress {
         case .update(futureSpan: false), .delete(futureSpan: false):
             return "\(several): pass the identifier of the one you mean as event_id and leave occurrence_date out. \(ending)"
         case .update:
-            let reach = request.readsSlots ? " It starts at that occurrence's original date, not at the day it starts now: a title written that way reached the occurrences of the series from the original date on (measured on iCloud)." : ""
+            let reach = request.readsSlots ? " It starts at that occurrence's original date, which for one that was moved is not the day it starts now: a title written that way reached the occurrences of the series from the original date on (measured on iCloud)." : ""
             return "\(several). With span 'future' through one of those identifiers a call takes only some fields, and that call answers which.\(reach) \(otherWay) \(ending)"
         case .delete:
-            let unread = request.readsSlots ? "" : " (this series has no time zone, and this server does not read that date for such a series)"
-            return "\(several). delete_event with span 'future' through one of those identifiers deletes the series from that occurrence's original date on\(unread), where that call allows it, so for one that was moved later the occurrences of the series from its original date up to the day it starts now are deleted too, and that delete cannot be undone. \(ending)"
+            if !request.readsSlots {
+                return "\(several). delete_event with span 'future' through one of those identifiers, where that call allows it, deletes the occurrences of the series after that occurrence's original date, which this server does not read for a series with no time zone: for one that was moved later, occurrences before the day it starts now are deleted too. \(leftBehind) That delete cannot be undone. \(ending)"
+            }
+            return "\(several). delete_event with span 'future' through one of those identifiers deletes the series from that occurrence's original date on, where that call allows it, so for one that was moved later the occurrences of the series from its original date up to the day it starts now are deleted too, and that delete cannot be undone. \(ending)"
         case .moveRow:
             return "\(several): pass the identifier of the one you mean in event_ids, with its occurrence_dates entry set to the day it starts now, read in that occurrence's own time zone. \(ending)"
         }
