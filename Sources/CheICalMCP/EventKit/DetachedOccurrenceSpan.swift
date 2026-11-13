@@ -76,7 +76,8 @@ import EventKit
 ///
 /// The reasons are fixed strings: no EventKit text, no user input.
 enum DetachedOccurrenceSpan {
-    private static let slotMarker = "/RID="
+    /// What an occurrence edited on its own carries after its series' identifier (iCloud; Google through EventKit).
+    static let slotMarker = "/RID="
 
     /// What a write that starts a new series from this occurrence would have to deal with.
     struct OwnValues: Equatable {
@@ -529,6 +530,9 @@ enum DetachedOccurrenceSpan {
     /// a calendar.
     private static let noTestedWay = "this shape has no tested way yet"
 
+    /// How `otherRoute` ends. Read by `EditedOccurrenceAddress` (#532) too, after the same route.
+    static let ifThatIdIsRefused = "If that id is refused, \(noTestedWay)."
+
     /// The way around every refusal of `update_event` below, as run on a device (before #478, which
     /// now refuses timezone and clear_timezone from an occurrence that has happened): with span `all` the
     /// series' id took `start_time`, `end_time`, `timezone`, `url`, alarms, `structured_location`,
@@ -540,9 +544,9 @@ enum DetachedOccurrenceSpan {
     /// was not run.
     private static func otherRoute(wholeSeries: Bool) -> String {
         if wholeSeries {
-            return "Use the id list_events shows for an occurrence that was not edited on its own, with span 'all'. Occurrences edited on their own keep what was edited, so they may need span 'this' after that. If that id is refused, \(noTestedWay)."
+            return "Use the id list_events shows for an occurrence that was not edited on its own, with span 'all'. Occurrences edited on their own keep what was edited, so they may need span 'this' after that. \(ifThatIdIsRefused)"
         }
-        return "Use span 'this' on this occurrence, and \(laterOccurrencesRoute). If that id is refused, \(noTestedWay)."
+        return "Use span 'this' on this occurrence, and \(laterOccurrencesRoute). \(ifThatIdIsRefused)"
     }
 
     /// The way to the occurrences after one that was edited on its own, with span `future`: part of
@@ -597,11 +601,16 @@ enum DetachedOccurrenceSpan {
     /// from an occurrence still to come.
     private static let startedZone = "On a series that has started, timezone and clear_timezone are refused from an occurrence that has happened (#478); timezone can change with span 'future' from an occurrence that has not happened yet, except where the series' first occurrence was edited on its own, or deleted with the first one left edited on its own: no identifier takes that route there yet."
 
+    /// What the way through the next unedited occurrence with span `future` (`laterOccurrencesRoute`)
+    /// leaves out. Read by `EditedOccurrenceAddress` (#532) too, so that refusal does not read as a
+    /// route for every field.
+    static let laterOccurrencesLimits = "That way leaves out all_day, clear_recurrence and calendar_name, which do not stay within the later occurrences, and clear_timezone, which was not tried."
+
     /// Everything `refusedUpdateFields` refuses.
     static func fieldsReason(wholeSeries: Bool, firstDeleted: Bool = false) -> String {
         let limits = wholeSeries
             ? "That id leaves out all_day, which brings an edited occurrence's original slot back as an extra occurrence, clear_timezone, which drops the last occurrence of a series with a count, and a calendar of another account, which was not tried; clear_recurrence there leaves one event at the series' first date, without the edited occurrences. For a calendar of the same account, move_events_batch with span 'all' moves the whole series."
-            : "That way leaves out all_day, clear_recurrence and calendar_name, which do not stay within the later occurrences, and clear_timezone, which was not tried."
+            : laterOccurrencesLimits
         let plain = firstDeleted ? "title, notes and location" : "title, notes, location and recurrence"
         return "\(opening(wholeSeries)) \(plain) can be written. \(measuredDateRows) Any other field or combination is refused, even one that changes nothing. Leave the others out. To write them: \(otherRoute(wholeSeries: wholeSeries)) \(limits) \(startedZone) Nothing was written."
     }

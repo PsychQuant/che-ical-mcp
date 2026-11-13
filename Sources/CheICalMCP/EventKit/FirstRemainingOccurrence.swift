@@ -252,10 +252,14 @@ extension EventKitManager {
                 FirstRemainingOccurrence.hasEditedOccurrence(candidates))
     }
 
-    /// #532: what `EditedOccurrenceAddress` reads of each listed occurrence of the series `stale`,
-    /// from the same listing as the checks above; nil when the series cannot be listed.
-    func seriesReadings(of stale: EKEvent, id: String) -> [EditedOccurrenceAddress.Reading]? {
-        seriesOccurrences(of: stale, id: id)?.0.map(EditedOccurrenceAddress.Reading.init)
+    /// #532: what `EditedOccurrenceAddress` reads of each occurrence of the series `stale` listed
+    /// over `range` (`EditedOccurrenceAddress.listingRange`: around the requested day), tied to the
+    /// series as the checks above tie them; nil when the series cannot be listed. Not the scan
+    /// window's ranges: those start at the series' first start and end four years later, so they
+    /// did not hold a day of this year in a series older than that (PR #545 verify). A listing kept
+    /// for other ranges is not read here: the ranges are part of `SeriesListingKey`.
+    func seriesReadings(of stale: EKEvent, id: String, over range: DateInterval) -> [EditedOccurrenceAddress.Reading]? {
+        seriesOccurrences(of: stale, id: id, ranges: [range])?.0.map(EditedOccurrenceAddress.Reading.init)
     }
 
     /// #442 (cluster verify r2, r3): whether the series has an occurrence edited on its own, and

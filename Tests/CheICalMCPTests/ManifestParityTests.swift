@@ -755,27 +755,31 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
-    /// PR #415 verify round 2: update_reminder says when `alarms_note` appears, in its description,
-    /// in its `alarms_minutes_offsets` parameter and in the manifest summary.
     /// #532, #534: the series' identifier and a day do not reach an occurrence edited on its own.
-    /// Both copies of the three write tools say so, and that the answer gives its identifier; the
-    /// create tools say when a retry with exclusions conflicts and what it does not detect.
+    /// Both copies of the three write tools say so, when the refusal applies (PR #545 verify: a plain
+    /// occurrence on the same day is resolved as before) and that the answer gives its identifier;
+    /// the create tools say when a retry with exclusions conflicts, by what an edited occurrence is
+    /// recognised, and what is not detected.
     func testTheWritesSayASeriesIdentifierAndADayDoNotReachAnEditedOccurrence() throws {
+        func once(_ phrase: String, in text: String, _ name: String, file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertEqual(text.components(separatedBy: phrase).count, 2, "\(name): \(phrase)", file: file, line: line)
+        }
         for name in ["update_event", "delete_event", "move_events_batch"] {
             let tool = try descriptions(of: name)
-            XCTAssertEqual(tool.declared.components(separatedBy: "reaches only an occurrence that was not edited on its own").count, 2, "\(name): \(tool.declared)")
-            XCTAssertEqual(tool.declared.components(separatedBy: "gives that occurrence's identifier (#532)").count, 2, "\(name): \(tool.declared)")
-            XCTAssertEqual(tool.summary.components(separatedBy: "does not reach an occurrence edited on its own").count, 2, "\(name): \(tool.summary)")
+            once("reaches only an occurrence that was not edited on its own, and one that starts on that day is resolved as before.", in: tool.declared, name)
+            once("When none does and an occurrence that was edited on its own belongs to that day (it starts on that day, or was on that day and now starts on another no more than a year away; in a timed series with no time zone only one that starts on that day is found)", in: tool.declared, name)
+            once("gives that occurrence's identifier (#532)", in: tool.declared, name)
+            once("does not reach an occurrence edited on its own: when no occurrence that was not edited on its own starts on that day,", in: tool.summary, name)
             XCTAssertTrue(tool.summary.contains("gives its identifier"), "\(name): \(tool.summary)")
         }
         let update = try descriptions(of: "update_event").declared
-        XCTAssertTrue(update.contains("with span 'this' pass it as event_id without occurrence_date, and with span 'future' the refusal says which way is left"), update)
-        XCTAssertTrue(update.contains("When no occurrence is on that day, the error names the day as a date in the event's time zone (#535)."), update)
+        once("with span 'this' pass it as event_id without occurrence_date, and with span 'future' the refusal says which way is left and where a write through that identifier starts.", in: update, "update_event")
+        once("When no occurrence is on that day, the error names the day as a date in the event's time zone (#535).", in: update, "update_event")
         let delete = try descriptions(of: "delete_event").declared
-        XCTAssertTrue(delete.contains("with span 'future' a delete through it starts at that occurrence's original date and cannot be undone"), delete)
-        XCTAssertTrue(delete.contains("When no occurrence is on that day, the error names the day as a date in the event's time zone (#535)."), delete)
+        once("with span 'future' a delete through it starts at that occurrence's original date, which for one that was moved later is before the day it starts, and cannot be undone.", in: delete, "delete_event")
+        once("When no occurrence is on that day, the error names the day as a date in the event's time zone (#535).", in: delete, "delete_event")
         let move = try descriptions(of: "move_events_batch").declared
-        XCTAssertTrue(move.contains("to pass in event_ids with the day it starts as its occurrence_dates entry"), move)
+        once("to pass in event_ids with the day it starts, read in that occurrence's own time zone, as its occurrence_dates entry.", in: move, "move_events_batch")
 
         func schemaDescriptions(of key: String, in value: Value) -> [String] {
             guard let object = value.objectValue else {
@@ -792,12 +796,15 @@ final class ManifestParityTests: XCTestCase {
             let found = Array(Set(schemaDescriptions(of: "excluded_occurrence_dates", in: schema)))
             XCTAssertEqual(found.count, 1, name)
             for text in found {
-                XCTAssertEqual(text.components(separatedBy: "an occurrence edited on its own that starts on an excluded date is a conflict").count, 2, "\(name): \(text)")
-                XCTAssertEqual(text.components(separatedBy: "one that was moved off that date is not detected").count, 2, "\(name): \(text)")
+                once("an occurrence edited on its own that starts on an excluded date is a conflict", in: text, name)
+                once("it is recognised by its identifier, the series' identifier followed by /RID= (as on iCloud).", in: text, name)
+                once("One that was moved off that date, or whose identifier has another shape, is not detected, and the retry answers skipped.", in: text, name)
             }
         }
     }
 
+    /// PR #415 verify round 2: update_reminder says when `alarms_note` appears, in its description,
+    /// in its `alarms_minutes_offsets` parameter and in the manifest summary.
     func testUpdateReminderDescribesTheLeftoverAlarmsNote() throws {
         let tool = try XCTUnwrap(CheICalMCPServer.defineTools().first { $0.name == "update_reminder" })
         let declared = tool.description ?? ""

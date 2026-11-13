@@ -81,7 +81,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 > **事件工具收到提醒事項的 ID（#260）**：`update_event`、`delete_event`、`copy_event`、`move_events_batch`、`delete_events_batch` 會回 `Event not found: <id>`（批次工具是該列的錯誤），不再讓 server 結束。沒有提醒事項權限時，EventKit 可能不會把它認成提醒事項，這時事件查詢的 Objective-C 例外會被接住，工具回報查詢失敗、事件可能還在（#288）。這是關掉種類檢查量到的，還沒有在提醒事項權限真的被拒絕的情況下跑過。種類檢查本身（`calendarItem(withIdentifier:)`）沒有包住，如果它在這種情況下 raise，process 仍可能結束（#293）。
 
-> **重複規則排除日期（#182）**：`create_event`（以及 `create_events_batch` 的每個項目）的 `recurrence` 支援 `excluded_occurrence_dates`，建立重複事件時直接略過指定日期 — 排除以 best-effort all-or-nothing 語意套用（任一步失敗以補償刪除移除整個新系列；補償刪除本身失敗會明確回報、絕不靜默；第一個場次不可排除），一次 `undo` 即可移除整個系列（含排除）。排除的日期是被移除的場次，不是被單獨修改的場次（2026-10-05 只在 iCloud 確認過，其他來源沒有檢查），所以不會擋下這次復原；建立之後被單獨修改過的場次則會（#236）。已知限制：冪等重試時，所請求的排除日期**已全數缺席**的重複週期系列會回報 `skipped`，但既有系列上多出的排除日期（不在本次請求中的）不會被偵測。這種重試裡，在排除日開始、被單獨修改過的場次算衝突，跟仍然存在的場次一樣（#534：原本回 `skipped`，因為這種場次有自己的 ID）；被移離排除日的場次不會被偵測。
+> **重複規則排除日期（#182）**：`create_event`（以及 `create_events_batch` 的每個項目）的 `recurrence` 支援 `excluded_occurrence_dates`，建立重複事件時直接略過指定日期 — 排除以 best-effort all-or-nothing 語意套用（任一步失敗以補償刪除移除整個新系列；補償刪除本身失敗會明確回報、絕不靜默；第一個場次不可排除），一次 `undo` 即可移除整個系列（含排除）。排除的日期是被移除的場次，不是被單獨修改的場次（2026-10-05 只在 iCloud 確認過，其他來源沒有檢查），所以不會擋下這次復原；建立之後被單獨修改過的場次則會（#236）。已知限制：冪等重試時，所請求的排除日期**已全數缺席**的重複週期系列會回報 `skipped`，但既有系列上多出的排除日期（不在本次請求中的）不會被偵測。這種重試裡，在排除日開始、被單獨修改過的場次算衝突，回的是它自己的錯誤訊息，說明有一個被單獨修改過的場次在那一天開始（#534：原本回 `skipped`，因為這種場次有自己的 ID）。判斷靠那個 ID：系列 ID 後面接 `/RID=`（iCloud 是這樣；Exchange 沒有量）；原地修改的與被移到那一天的都算。偵測不到、重試仍回 `skipped` 的有兩種：被移離排除日的場次，以及 ID 是別種形狀的被修改場次。
 
 </details>
 
@@ -184,14 +184,16 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 以上是在 iCloud 上實測的。上面更新與刪除整個系列的路徑都經由第一個場次，在那些形狀下系列 ID 也會走到它（#428）。Google 上 #320 量到 `/RID=` 與 `isDetached` 可靠，但這些拒絕沒有在 Google 上跑過。沒有 `/RID=` 的來源（Exchange 可能如此，尚未量測）無法從 ID 列出系列其餘場次，所以 span `all` 以及 `update_event` 的 span `future` 會被拒絕，被誤報為單獨改過場次的單一事件也一樣；請用 span `this`。在 iCloud 上，系列從開始起延伸超過約五年、場次落在掃描範圍外時，也會這樣拒絕，這時系列 ID 可以更新與刪除整個系列（以約七年前開始的系列實測）。
 
-**系列識別碼加上被單獨修改過的場次的日期（#532）：** `update_event`、`delete_event`（span `this` 或 `future` 帶 `occurrence_date`）與 `move_events_batch`（span `this` 帶日期）用系列 ID 加場次開始的那一天來找場次。單獨改過的場次有自己的 ID，這個查找找不到它，所以行事曆上那一天明明有場次，這些呼叫卻回 `Event not found`。現在查找落空時，會再找這個系列裡屬於那一天、被單獨修改過的場次：在那一天開始的，或原本的時段在那一天、現在改到別天開始的。找到一個時，呼叫被拒絕、什麼都不寫；訊息說明系列識別碼加那一天已經指不到它，並給出它的 ID（`list_events` 顯示的那一個）：
+**系列識別碼加上被單獨修改過的場次的日期（#532）：** `update_event`、`delete_event`（span `this` 或 `future` 帶 `occurrence_date`）與 `move_events_batch`（span `this` 帶日期）用系列 ID 加場次開始的那一天來找場次。單獨改過的場次有自己的 ID，這個查找找不到它，所以行事曆上那一天明明有場次，這些呼叫卻回 `Event not found`。沒被單獨修改過、在那一天開始的場次照舊找得到、照舊寫入。只有這個查找落空時，才會再找這個系列裡屬於那一天、被單獨修改過的場次：在那一天開始的，或原本的時段在那一天、現在改到別天開始的。找到一個時，呼叫被拒絕、什麼都不寫；訊息說明系列識別碼加那一天已經指不到它，並給出它的 ID（`list_events` 顯示的那一個）：
 
 - span `this`（`update_event`、`delete_event`）：把那個 ID 當成 `event_id`，不帶 `occurrence_date`。
-- `update_event` 的 span `future`：經那個 ID 的 span `future` 只接受部分欄位（上面 #416 的清單），那次呼叫會說是哪些；其餘的，訊息指向對該場次用 span `this`，之後的場次用下一個沒被單獨修改過的場次加 span `future`。
-- `delete_event` 的 span `future`：經那個 ID 的刪除從該場次原本的日期開始（訊息會寫出那一天），而且不能 undo。
-- `move_events_batch` 的一列：把那個 ID 放進 `event_ids`，`occurrence_dates` 的對應項填它開始的那一天；同一次呼叫的其他列照常執行。
+- `update_event` 的 span `future`：經那個 ID 的 span `future` 只接受部分欄位（上面 #416 的清單），那次呼叫會說是哪些；其餘的，訊息指向對該場次用 span `this`，之後的場次用下一個沒被單獨修改過的場次加 span `future`，並以那條路的限制結尾：它不含 `all_day`、`clear_recurrence`、`calendar_name` 與 `clear_timezone`，那個 id 也被拒絕時，這個形狀沒有測過的做法。經一個被往後移的場次的 ID 做 span `future` 的寫入，是從它原本的日期開始，不是從它現在開始的那一天：在 iCloud 上，這樣寫的標題也寫到了兩天之間的那一場。要求的日期是它現在開始的那一天時，訊息會寫出這一點。
+- `delete_event` 的 span `future`：經那個 ID 的刪除從該場次原本的日期開始（訊息會寫出那一天），而且不能 undo。場次被往後移過時，從原本的日期到它現在開始的那一天之間的場次也會被刪（iCloud 量過），訊息會寫出這一點。
+- `move_events_batch` 的一列：把那個 ID 放進 `event_ids`，`occurrence_dates` 的對應項填它開始的那一天。這一項是用場次自己的時區讀的，所以場次另有自己的時區時，那一天可能與系列時區的那一天不同；訊息會印出要填的日期。同一次呼叫的其他列照常執行。
 
-找到兩個以上時（一個被移到這一天、這一天原本的那個被移走），全部列出、不替呼叫端挑。仍在那一天開始、仍在系列 ID 底下的場次照舊找得到，即使另有被修改的場次移到同一天。ID 只有在全部由 ASCII 字母、數字與 `: / = - . _ @` 組成、長度不超過 200 時才寫進訊息；否則訊息改說用 `list_events` 顯示的 id。沒有被修改的場次屬於那一天、或系列列不出來時（這時被移離那一天的場次找不到），答案仍是找不到，訊息改用事件時區的日期：`Event not found: … (no occurrence on 2026-12-21)`，原本印的是 UTC 時刻（#535）。以上在 iCloud 量過；Google 也給被修改的場次自己的 ID（#320），Exchange 沒有量。
+找到兩個以上時（一個被移到這一天、這一天原本的那個被移走），全部列出、不替呼叫端挑。仍在那一天開始、仍在系列 ID 底下的場次照舊找得到，即使另有被修改的場次移到同一天。ID 只有在剛好是呼叫帶的系列 ID、後面接 `/RID=` 與數字（iCloud 上讀到的形狀），全部由 ASCII 字母、數字與 `: / = - . _ @` 組成、長度不超過 200 時才寫進訊息；否則訊息改說用 `list_events` 顯示的 id。
+
+沒有被修改的場次屬於那一天時，答案仍是找不到，訊息改用事件時區的日期：`Event not found: … (no occurrence on 2026-12-21)`，原本印的是 UTC 時刻（#535）；`move_events_batch` 的那一列仍回 `No occurrence of this event falls on occurrence_date.`。有三種情況這次的搜尋找不到，答案同樣是找不到：系列列不出來、而場次被移離那一天；場次被移到離要求的那一天超過一年（366 天），因為系列是以那一天為中心列出，不是從第一場開始；以及沒有時區的非全天系列裡，用原本的那一天來指的場次。這種系列裡被修改的場次只能用它開始的那一天找到，訊息也不寫原本的日期，因為它原本的時段目前讀不準（#539）；現在有時區、但場次被修改當時沒有時區的系列，照有時區的系列讀。只在 iCloud 量過：這次改動沒有在 Google 與 Exchange 上跑（經 EventKit 讀到的 Google 場次 ID 是同一種形狀，#320）。
 
 **帶時區偏移的全天日期（#372）：** 全天事件的日期是以這台 Mac 的時區讀取的整天。`start_time` 或 `end_time` 帶有其他偏移時會先轉成這台 Mac 的時區，可能落在另一天（在 `+08:00` 的 Mac 上，`2027-04-11T23:59:59+07:00` 是 04-12，事件因此多一天）。事件仍照這樣儲存；`create_event`、`create_events_batch` 的每一筆結果與 `update_event`（呼叫後是全天事件時，只看這次給的日期）會加上 `warnings` 清單，每一項列出欄位（`field`）、它在所寫偏移下的那一天（`written_day`）、請求的日期在這台 Mac 時區下會寫成的那一天（`host_day`；重複而被略過的建立不會寫入，訊息會說既有事件沒有改變）與說明（`message`）。比較的是日期，偏移不同但同一天、或沒有偏移的值都不會警告。全天日期請不帶偏移。
 
