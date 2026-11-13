@@ -1666,7 +1666,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // which lists after a refresh is requested, and before the first field is assigned.
         // Only these two readers share: every other listing of the call is made on its own. The
         // #509 check's is one of them: when it needs the first slot (`needsFirstSlot` above) it lists
-        // the ranges the baseline lists here, before the stretch, so such a call lists them twice.
+        // the ranges the baseline lists here, before the stretch, in addition to the listing kept here.
         // The series is read by `seriesForCheck()`, whose first call is inside the stretch and comes
         // before the first listing: through an occurrence's own id it refreshes the series object
         // once (the result is cached in `checkSeries`), never between the two listings.

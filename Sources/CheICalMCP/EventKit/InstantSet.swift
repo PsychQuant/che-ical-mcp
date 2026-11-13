@@ -168,7 +168,8 @@ struct InstantIndex {
 /// under 4.3 million moves in the worst order. The record lists the later window first
 /// (`SeriesExceptionsUndo.capture`), so when each window is listed in date order, every slot of
 /// the earlier window outside the overlap is inserted before the whole first block (at most about
-/// 1,460 x 1,460 moves) and the rest are appended.
+/// 1,460 x 1,460 moves); its slots inside the overlap are refused, and the first window's own
+/// slots were appended.
 struct DistinctInstants {
     private var sorted: [Date] = []
     private let counter: ComparisonCounter?
