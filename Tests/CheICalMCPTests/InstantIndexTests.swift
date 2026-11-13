@@ -259,8 +259,14 @@ final class InstantIndexTests: XCTestCase {
 
     /// 20,000 slots a day apart, each offered twice (as two overlapping windows list an occurrence
     /// twice) in shuffled order: every first offer is taken, every second one refused, in near
-    /// n log n comparisons. A scan of what was kept would make about 400 million.
-    func testTheGrowingSetDoesNotGrowWithTheSquareOfTheList() {
+    /// n log n date comparisons. A scan of what was kept would make about 400 million.
+    ///
+    /// Only comparisons and calls pass through the counter. The set keeps a sorted array, so taking
+    /// an instant also moves the kept instants after its position, and those moves are not counted
+    /// or bounded here: in this shuffled order they do grow with the square of the list (a quarter
+    /// of n squared on average, half in descending order, none in ascending order). The doc comment
+    /// of `DistinctInstants` gives the bound for the one caller; no timing is asserted.
+    func testTheGrowingSetsComparisonsDoNotGrowWithTheSquareOfTheList() {
         let count = 20_000
         var generator = SeededGenerator(seed: 21_527)
         let slots = (Array(0..<count) + Array(0..<count)).shuffled(using: &generator).map { date(Double($0) * 86_400) }

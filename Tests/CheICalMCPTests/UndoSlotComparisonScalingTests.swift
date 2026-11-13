@@ -8,6 +8,11 @@ import XCTest
 /// exact count of lookups, which falls when a comparison is made by a scan beside the sets (a scan
 /// does not pass through the counter), and a bound on the date comparisons far under the count a
 /// scan per slot makes. No timing is asserted.
+///
+/// What is bounded is comparisons and lookups. The elements `DistinctInstants.insert` moves when it
+/// takes an instant into its sorted array do not pass through the counter, and no test here bounds
+/// them: they are none for instants offered in ascending order and grow with the square of the list
+/// in other orders (the doc comment of `DistinctInstants` gives the bound for the restore).
 final class UndoSlotComparisonScalingTests: XCTestCase {
     private let day: TimeInterval = 86_400
     private let t0 = Date(timeIntervalSinceReferenceDate: 820_000_000)
@@ -78,6 +83,9 @@ final class UndoSlotComparisonScalingTests: XCTestCase {
 
     /// The store-level restore over two overlapping windows: every listed occurrence is offered to
     /// the growing set once per window that lists it, then the restorer runs on what was taken.
+    /// "Without a scan" is about comparisons: the lookups are counted exactly and the comparisons
+    /// bounded. The windows here are listed in date order, the earlier one first, so every instant
+    /// taken is appended; the element moves of another order are not measured by this test.
     func testTheStoreLevelRestoreTakesEachListedOccurrenceWithoutAScan() throws {
         let size = 6_000
         let store = FakeSeriesExceptionsStore()
