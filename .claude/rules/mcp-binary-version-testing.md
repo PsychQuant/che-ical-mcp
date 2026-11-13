@@ -208,6 +208,10 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 
 ## Release gate：長期系列的整個系列刪除 undo 與重複防護（#319、#321）
 
+> **#527**：這條 undo 路徑裡的時段比對（`SeriesExceptionsUndo.restore`、`SeriesExceptionsRestorer.restore`、`SeriesExceptionsPlanner.surplusSlots`）
+> 改成不逐一掃描。這項改動沒有裝置上的證據（undo 有狀態，`--cli` 走不到），只有與前一版程式逐一比對的測試；本節的步驟就是它的裝置檢查，
+> 出含 #527 的版本之前要做，結果也記在 #527。
+
 #319 的視窗位置（`SeriesExceptionsPlanner.deleteWindow`）與 #321 的重複防護（系列識別碼與規則時段，
 `SeriesRecreations`）只有純函式、記憶體內 store 與原始碼結構的測試。依賴而沒量過的裝置行為：開始於
 多年前的系列，刪除前後的場次能在一次查詢內列出且 `/RID=` 照舊；整個系列 undo 重建的系列，其場次讀回
@@ -940,7 +944,10 @@ stateful，`--cli` 走不到（見上表），而跨帳號的搬移需要第二�
 4. 從 2021-11-01 起：`updated`，檢查到 2029-11-14（多列了現在前後的範圍）；從 2016-11-07 起：span `all` 以
    `horizonNotReached` 拒絕，從 2026-11-16 用 span `future`：`updated`，檢查到 2029-11-14。
 5. 從 2018-11-12 起的每日系列：這次呼叫 6.16 s；本週開始的每日系列 2.16 s（日曆裡只有這個系列，#520）。#520 之後（2026-11-13，release build、
-   Developer ID 簽章，各三次的中位數，每個數字是一次 `--cli` 整個 process 的時間；日曆建在預設來源，沒有讀回來源，推定是 iCloud）：同樣的兩個呼叫 0.32 s 與 0.21 s，當天的 `main` 是 5.81 s 與 2.07 s；除了跟著呼叫時鐘走的 `deleted_occurrences_checked_until`，回應與讀回相同。
+   Developer ID 簽章，各三次的中位數，每個數字是一次 `--cli` 整個 process 的時間；日曆建在預設來源，沒有讀回來源，推定是 iCloud）：同樣的兩個呼叫 0.32 s 與 0.21 s，當天的 `main` 是 5.81 s 與 2.07 s；除了跟著呼叫時鐘走的 `deleted_occurrences_checked_until`，回應與讀回相同。#527 之後（2026-11-13，iCloud，來源從拋棄式日曆讀回；
+   release build、Developer ID 簽章，兩輪各三次、`main` 與新 binary 交錯，寫的是兩輪各自的中位數）：#503 的 baseline 與刪除檢查讀同一段日期時只列一次。本週開始的系列
+   單獨一個日曆時 0.35、0.37 s 變成 0.27、0.25 s，同一個日曆另有六個每日系列時 0.88、1.03 s 變成 0.50、0.57 s；2018 年開始的系列兩次列的日期不同，仍列兩次，
+   0.43、0.51 s 對 0.43、0.49 s，另有六個系列時 1.12、1.22 s 對 1.11、1.15 s。24 對呼叫的回應除了 id 與跟著呼叫時鐘走的日期之外相同，八個時段的讀回相同。
 
 **2026-11-12 第二次**（PR #521 的 `321e0a8` build，措辭修改之後、兩輪 verify 修正之前；Developer ID 簽章，`--cli`，拋棄式日曆
 `#506 gate`）。
@@ -1018,6 +1025,10 @@ binary，事件日曆與提醒事項清單都數）都是 0。
    規則無法展開拒絕，這一步就不算數。5 的次數計算是 #503 已量過的 `expectedSlots` 在列得完的次數系列上用的同一段。
 
 ## Release gate：循環事件整串修改的 undo（#263）
+
+> **#527**：這條 undo 的紀錄判定、復原前的比對與復原後的讀回（`SeriesUpdateUndo.occurrencesFollowOrKeep`、`sameSlots`、`diff`）
+> 改成不逐一掃描時段。這項改動沒有裝置上的證據（undo 有狀態，`--cli` 走不到），只有與前一版程式逐一比對的測試；本節的步驟就是它的裝置檢查，
+> 出含 #527 的版本之前要做，結果也記在 #527。
 
 #263 讓 iCloud 上 span `all` 的 `update_event`（經系列自己的 id、只寫 title、notes、location，系列有結束、整串在
 列出的四年之內）的 undo 能還原：復原前比對系列的 id、規則、帳號、欄位（#236）與單獨修改或刪除過的場次，全部和修改
