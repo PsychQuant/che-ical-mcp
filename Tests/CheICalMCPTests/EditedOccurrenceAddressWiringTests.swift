@@ -192,6 +192,8 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
         for constant in ["DetachedOccurrenceSpan.laterOccurrencesRoute", "DetachedOccurrenceSpan.ifThatIdIsRefused", "DetachedOccurrenceSpan.laterOccurrencesLimits"] {
             assertOnce(constant, in: address)
         }
+        // What is read of an event carries its own time zone (the move row prints its day there).
+        assertOnce("start: event.startDate, timeZone: event.timeZone)", in: SourceScan.collapsingWhitespace(address))
         // The new type writes nothing anywhere: no log line can carry an identifier.
         for write in ["FileHandle.standardError", "fputs(", "print(", "writeFailureLog(", "NSLog("] {
             XCTAssertFalse(address.contains(write), write)
