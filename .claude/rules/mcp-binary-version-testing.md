@@ -1181,4 +1181,16 @@ session MCP），只在名稱含 `#532` 的拋棄式日曆上做。每一格用�
 非 iCloud 來源（有 Google 或 Exchange 帳號時）：在該來源的拋棄式日曆做第 1 格的前半（三個拒絕與照訊息的 span `this`）。
 若回的仍是 `Event not found`，記下 `list_events` 顯示的 id 形狀回報：不是 `<系列 id>/RID=…` 的 id 只會從系列的列出被找到。
 
+2026-11-13 已在 iCloud 用 PR 分支上 build 的 release binary（Developer ID 簽章、`--cli`）做過第 1 到 7 格，每個拒絕之後都照訊息
+再打一次，結果如上述預期（全文在 #532 的 Implementation Complete）。量到而原本只是從原始碼讀到的：
+
+- 第 2 格被移動的場次：第 3 場移到第 4 場之後、或移到第 2 場之前，用它的 id 帶 span `future` 刪除，兩種都只剩第 1、2 場
+  （切點跟著原本的日期，不跟著顯示的日期），與訊息寫的相同。
+- 第 4 格：照 move 的訊息，`event_ids` 放被移動場次的 id、`occurrence_dates` 放它現在開始的那一天：`split`。
+- 第 7 格第一場被刪掉的系列：經 stand-in 列得出系列，回的是帶 id 的拒絕。全天系列在 `TZ=America/Los_Angeles` 下回同樣的拒絕，
+  前一天回找不到。
+- 2023 年起的每日系列（約 1460 場）上一次被拒絕的呼叫的耗時，見 #532 的紀錄。
+
+沒做：非 iCloud 來源；出版的 binary（出版前用出版的 binary 重做第 1、2、5 格）。
+
 結果記在 #532。結束後依 id 刪掉拋棄式日曆，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#532` 的都是 0。

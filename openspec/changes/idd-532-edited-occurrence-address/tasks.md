@@ -29,6 +29,6 @@ ASSUMPTION: 沒有任何 task 帶 [P]，雖然 parallel_tasks 開著：每個 ta
 
 ## 5. 整套檢查
 
-- [ ] 5.1 整套測試在 host 時區、`TZ=UTC`、`TZ=America/Los_Angeles` 都通過，`main` 上有的測試函式一個都沒少。驗證：三次 `swift test`，以及與 `main` 比對（檔案、測試名）。
-- [ ] 5.2 Implementation Plan 的 13 個 mutation 各至少讓一個測試變紅，之後還原。驗證：mutation、失敗的測試、結果的表。
-- [ ] 5.3 Implementation Plan 的裝置格用簽章過的 release build 經 `--cli` 在拋棄式日曆上跑，每個拒絕之後照訊息再打一次並記錄答案，日曆刪除後計數兩次。驗證：記錄下來的表。
+- [x] 5.1 整套測試在 host 時區、`TZ=UTC`、`TZ=America/Los_Angeles` 都通過，`main` 上有的測試函式一個都沒少。驗證：三次 `swift test`，以及與 `main` 比對（檔案、測試名）。
+- [x] 5.2 Implementation Plan 的 13 個 mutation 各至少讓一個測試變紅，之後還原。驗證：mutation、失敗的測試、結果的表。
+- [x] 5.3 Implementation Plan 的裝置格用簽章過的 release build 經 `--cli` 在拋棄式日曆上跑，每個拒絕之後照訊息再打一次並記錄答案，日曆刪除後計數兩次。驗證：記錄下來的表。
