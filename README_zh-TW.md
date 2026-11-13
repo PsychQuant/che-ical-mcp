@@ -189,7 +189,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 - span `this`（`update_event`、`delete_event`）：把那個 ID 當成 `event_id`，不帶 `occurrence_date`。
 - `update_event` 的 span `future`：經那個 ID 的 span `future` 只接受部分欄位（上面 #416 的清單），那次呼叫會說是哪些；其餘的，訊息指向對該場次用 span `this`，之後的場次用下一個沒被單獨修改過的場次加 span `future`，並以那條路的限制結尾：它不含 `all_day`、`clear_recurrence`、`calendar_name` 與 `clear_timezone`，那個 id 也被拒絕時，這個形狀沒有測過的做法。經一個被往後移的場次的 ID 做 span `future` 的寫入，是從它原本的日期開始，不是從它現在開始的那一天：在 iCloud 上，這樣寫的標題也寫到了兩天之間的那一場。要求的日期是它現在開始的那一天時，訊息會寫出這一點。
 - `delete_event` 的 span `future`：經那個 ID 的刪除從該場次原本的日期開始（訊息會寫出那一天），而且不能 undo。場次被往後移過時，從原本的日期到它現在開始的那一天之間的場次也會被刪（iCloud 量過），訊息會寫出這一點。
-- `move_events_batch` 的一列：把那個 ID 放進 `event_ids`，`occurrence_dates` 的對應項填它開始的那一天。這一項是用場次自己的時區讀的，所以場次另有自己的時區時，那一天可能與系列時區的那一天不同；訊息會印出要填的日期。同一次呼叫的其他列照常執行。
+- `move_events_batch` 的一列：把那個 ID 放進 `event_ids`，`occurrence_dates` 的對應項填它開始的那一天。這一項是用場次自己的時區讀的，所以場次另有自己的時區時，那一天可能與系列時區的那一天不同；訊息會印出要填的日期。在 iCloud 上，被修改的場次讀回的是系列的時區或它被設定的時區，不論寫入與讀取的 process 在哪個時區，印出的日期每次都被接受；在 Google 行事曆上，這種場次回報的時區在不同次執行之間不一樣（#548，原因還沒分開），這個拒絕訊息沒有在那裡跑過。同一次呼叫的其他列照常執行。
 
 找到兩個以上時（一個被移到這一天、這一天原本的那個被移走），全部列出、不替呼叫端挑。仍在那一天開始、仍在系列 ID 底下的場次照舊找得到，即使另有被修改的場次移到同一天。ID 只有在剛好是呼叫帶的系列 ID、後面接 `/RID=` 與數字（iCloud 上讀到的形狀），全部由 ASCII 字母、數字與 `: / = - . _ @` 組成、長度不超過 200 時才寫進訊息；否則訊息改說用 `list_events` 顯示的 id。
 

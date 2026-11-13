@@ -1236,8 +1236,16 @@ Implementation Complete）。第 8、9、11 格先在 `670a02b5` 的 build 上�
 - 第 11 格：`670a02b5` 的訊息寫系列時區的 12-21，照著做回找不到場次，改填 12-20 才 `split`；`022f2b92` 的訊息寫 12-20，照著做
   `split`。兩次搬過去的事件都保留 America/Los_Angeles。
 
+- 第 11 格的補充（#548 之後加量）：系列在 America/New_York（週一 20:00，臺北是週二），第 3 場原地改標題、第 4 場設成 Europe/London。
+  寫入的 process 在主機時區（Asia/Taipei）做一次、在 `TZ=America/Los_Angeles` 下再做一次（各用新的系列）；每次都由主機時區、
+  `TZ=America/Los_Angeles`、`TZ=UTC` 三種 process 各讀兩輪（剛改完、70 秒後）。12 次讀取乘以兩種寫入，結果都一樣：沒改過的
+  場次與原地修改的場次回報 America/New_York（系列的時區，不是主機的），設過時區的回報 Europe/London。搬移列的拒絕印出的日期
+  （原地修改的那場是系列時區的 12-21，設成倫敦的那場是 12-29 並加註）照著填，在主機時區與 `TZ=America/Los_Angeles` 的 process
+  下都 `split`，搬過去之後時區不變。這是 iCloud；Google 上這種場次回報的時區在不同次執行之間不一樣（#548，原因還沒分開）。
+
 沒做、沒量過（都不擋這一節的其他格）：
 
+- Google 上被修改場次回報的時區不穩定（#548）：搬移列印出的日期是照場次回報的時區算的，在那裡是否每次都被接受沒有量過。
 - 非 iCloud 來源（Google 與 Exchange 都沒有為這次改動跑過）。
 - 出版的 binary：出版前用出版的 binary 重做第 1、2、5 格與第 8 到 11 格。
 - 第 12 格（常駐 process）。
