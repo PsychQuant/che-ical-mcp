@@ -96,7 +96,9 @@ final class SingleListingWiringTests: XCTestCase {
         XCTAssertLessThan(end, plan.lowerBound, "the stretch ends before the #263 plan lists")
         XCTAssertLessThan(plan.lowerBound, first.lowerBound)
         XCTAssertEqual(count("seriesForCheck()", in: String(update[update.startIndex..<open.lowerBound])), 1,
-                       "declared before the stretch, called inside it only")
+                       "before the stretch: the declaration only")
+        XCTAssertEqual(count("seriesForCheck()", in: stretch), 2, "inside the stretch: one call per reader")
+        XCTAssertEqual(count("seriesForCheck()", in: update), 3, "and nowhere after it: the declaration and those two calls")
         // What the stretch assigns is declared before it, so the response and the texts read it after.
         for declared in ["var baseline = DeletedOccurrenceCheck.StoredBaseline.stored", "var provenSlot: Date? = event.startDate",
                          "var deletionsChecked: DeletionCheckHorizon?"] {
