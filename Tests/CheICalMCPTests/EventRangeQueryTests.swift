@@ -533,7 +533,8 @@ final class EventRangeQueryTests: XCTestCase {
     func testNoCallerRangePredicateIsBuiltOutsideTheAllowedFunctions() throws {
         let allowed: [String: Set<String>] = [
             "EventKit/EventRangeQuery.swift": ["events"],
-            "EventKit/EventKitManager.swift": ["findDuplicateEvent", "findOccurrence"],
+            // #532: `dayReadings` reads the one-day window `findOccurrence` enumerates, after it missed.
+            "EventKit/EventKitManager.swift": ["findDuplicateEvent", "findOccurrence", "dayReadings"],
             // #322: the delete-undo exceptions layer's two EventKit queries, moved here from
             // EventKitManager+SeriesExceptions.swift. `slotHolders` builds its range from one
             // occurrence; `events(in:inCalendarOf:)` takes one, and
