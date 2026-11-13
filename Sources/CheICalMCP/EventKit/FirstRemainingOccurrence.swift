@@ -252,6 +252,12 @@ extension EventKitManager {
                 FirstRemainingOccurrence.hasEditedOccurrence(candidates))
     }
 
+    /// #532: what `EditedOccurrenceAddress` reads of each listed occurrence of the series `stale`,
+    /// from the same listing as the checks above; nil when the series cannot be listed.
+    func seriesReadings(of stale: EKEvent, id: String) -> [EditedOccurrenceAddress.Reading]? {
+        seriesOccurrences(of: stale, id: id)?.0.map(EditedOccurrenceAddress.Reading.init)
+    }
+
     /// #442 (cluster verify r2, r3): whether the series has an occurrence edited on its own, and
     /// whether the scan cannot rule one out: the series could not be listed (`listed` false), or the
     /// scan does not cover it whole (`DetachedOccurrenceSpan.editedOccurrenceUnknown`).

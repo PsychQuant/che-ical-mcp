@@ -441,9 +441,11 @@ enum DetachedOccurrenceSpan {
     }
 
     /// An update resolved to an edited occurrence by `occurrence_date`, on a source where that
-    /// occurrence keeps the series' identifier. iCloud cannot get here (`findOccurrence` needs the
-    /// identifier, and an edited occurrence has its own), and no such source was measured: Exchange
-    /// may be one (#320). The save would be the same as through the occurrence's own id, so the
+    /// occurrence keeps the series' identifier. iCloud and Google cannot get here: `findOccurrence`
+    /// needs the identifier, and there an edited occurrence has its own (Google measured through
+    /// EventKit, #320), so that call is refused earlier with the occurrence's identifier (#532,
+    /// `EditedOccurrenceAddress`). No source that keeps the series' identifier was measured:
+    /// Exchange may be one. The save would be the same as through the occurrence's own id, so the
     /// same checks run. Whether it starts a new series is not known there, so it counts as doing
     /// so; `own` nil, nothing to compare with, counts as holding values of its own.
     static func resolvedOccurrenceRefusal(addressedByItsOwnId: Bool, resolvedIsDetached: Bool, futureSpan: Bool, fields: Set<String>,
@@ -540,8 +542,14 @@ enum DetachedOccurrenceSpan {
         if wholeSeries {
             return "Use the id list_events shows for an occurrence that was not edited on its own, with span 'all'. Occurrences edited on their own keep what was edited, so they may need span 'this' after that. If that id is refused, \(noTestedWay)."
         }
-        return "Use span 'this' on this occurrence, and for the later ones the id list_events shows for the next occurrence that was not edited on its own, with its occurrence_date and span 'future'. If that id is refused, \(noTestedWay)."
+        return "Use span 'this' on this occurrence, and \(laterOccurrencesRoute). If that id is refused, \(noTestedWay)."
     }
+
+    /// The way to the occurrences after one that was edited on its own, with span `future`: part of
+    /// `otherRoute(wholeSeries: false)`, and read by `EditedOccurrenceAddress` (#532) for the refusal
+    /// of a span `future` update that named the series' identifier and that occurrence's day, so the
+    /// two refusals name the same route and cannot come apart.
+    static let laterOccurrencesRoute = "for the later ones the id list_events shows for the next occurrence that was not edited on its own, with its occurrence_date and span 'future'"
 
     /// "This call reaches": the series' identifier can get here too (#428).
     private static func opening(_ wholeSeries: Bool) -> String {

@@ -615,7 +615,9 @@ end、notes、location、alarms。
    （「reported as one occurrence」），就是該來源把一次性事件回報成 detached，要回報；這個情況只有 span `this` 走得通；
 2. 每週 5 次的系列，單獨改第 3 場 → 用該場次的 id 帶 span `all` 的 `update_event` 與 `delete_event`：要被拒絕，
    系列不變。若沒被拒絕，就是該來源的 `isDetached` 沒有設，要回報。再用系列 id 加第 3 場的 `occurrence_date`、span `future`
-   寫 `start_time`：單獨改過的場次在該來源若沒有自己的 id，會被 `resolvedOccurrenceRefusal` 拒絕；
+   寫 `start_time`：在單獨改過的場次有自己的 id 的來源（iCloud 量過，Google 依 #320），這個呼叫會被 #532 的訊息拒絕，
+   訊息給出該場次的 id，什麼都不寫；`resolvedOccurrenceRefusal` 只會出現在單獨改過的場次沿用系列 id 的來源，
+   這種來源沒有量到（Exchange 沒量）；
 3. 新建一個系列，單獨改第 1 場的標題與備註、再把時間 +2h → 用第 1 場的 id：先 `delete_event` span `all`，要被拒絕；再
    `update_event` span `all` 只改 `location`：iCloud 上全部場次都有 `location`，每一場的 title、start、end、notes 都不變；
    最後 `delete_event` span `future`，整個系列刪除。該來源的 id 沒有 `/RID=` 時 span `all` 的 update 會被拒絕（列不出系列），
@@ -1140,3 +1142,43 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 
 結果記在 #263。結束後刪掉拋棄式日曆（非 iCloud 來源的那個也要手動刪），隔一分鐘以上 `list_calendars` 兩次，名稱含 `#263`
 的都是 0。
+
+## Release gate：系列識別碼加日期指到被單獨修改過的場次（#532、#534、#535）
+
+#532 讓 `update_event`、`delete_event`（span `this`／`future` 帶 `occurrence_date`）與 `move_events_batch`（span `this` 帶日期）
+在查找落空時，改找這個系列裡屬於那一天、被單獨修改過的場次，找到就拒絕並給出它的 id；#534 讓 `create_event` 的排除檢查把
+在排除日開始的這種場次算作仍然存在；#535 讓找不到的訊息印當地日期。判定與訊息（`EditedOccurrenceAddress`）有純函式測試，
+呼叫點只有原始碼釘選：當天的列舉、系列的列出與 EventKit 讀到的 id 合起來對不對，只能在裝置上看。拒絕不寫入、也不進 undo，
+是 stateless 的，所以**出 #532 的那個版本打 tag 之前**，用剛 build 的 binary 的 `--cli`（見上表；不用 AppleScript、不用
+session MCP），只在名稱含 `#532` 的拋棄式日曆上做。每一格用新的系列（每週、5 場、有 `end_date`）與自己的標題；每次被拒絕
+之後，用另一次 `--cli` 的 `list_events`（只列這個拋棄式日曆）讀回，逐場比對 title、start、end 與拒絕前相同；**每個拒絕之後
+照訊息寫的再打一次，記下答案**（span `this`：要成功；span `future`：逐欄記下是做了還是被 #416 拒絕，兩者都不算這次改動失敗，
+訊息承諾得比答案多才算）。
+
+1. **U（update）**：`--cli` 單獨改第 3 場的標題 → 用系列 id 加第 3 場的日期：span `this` 改 `notes`、span `future` 改 `title`、
+   span `future` 改 `start_time`：三個都被拒絕，訊息裡的 id 等於 `list_events` 顯示的那個，兩個 span `future` 的是 span
+   `future` 的訊息。照訊息：把那個 id 當 `event_id`、不帶日期、span `this` 改 `notes`：成功。span `future` 經那個 id 改
+   `title`（預期接受）、改 `start_time`（預期被 #416 拒絕），再照訊息的另一條路（對該場次 span `this`，以及系列 id 加下一個
+   沒改過的場次的日期、span `future`、`start_time`）。對照：系列 id 加沒改過的場次的日期照舊成功。
+2. **D（delete）**：同樣的系列，系列 id 加第 3 場的日期，span `this` 與 span `future`：都被拒絕，什麼都沒刪。新的系列上照
+   span `future` 的訊息，用那個 id 帶 span `future` 刪除：第 3 場與之後的不見、前兩場還在。再做兩個新系列：第 3 場移到第 4
+   場之後、第 3 場移到第 2 場之前，各用它的 id 帶 span `future` 刪除，記下剩下哪些場次；與訊息說的「從該場次原本的日期起」
+   不同就回報，訊息要改。
+3. **M（move）**：系列 id 加第 3 場的日期、span `this` 搬到另一個拋棄式日曆：該列被拒絕，什麼都沒搬，同一次呼叫的另一列
+   照常。照訊息：`event_ids` 放那個 id、`occurrence_dates` 放它開始的那一天：`split`。
+4. **T（被移到別天的場次）**：第 3 場移到兩天後 → 系列 id 加原本那一天、加現在那一天：兩個都被拒絕、給同一個 id，原本那
+   一天的訊息寫出現在的開始時間。照 move 的訊息（`occurrence_dates` 填現在開始的那一天）做一次並記下答案。
+5. **X（排除日，#534）**：系列（不帶排除）建好後單獨改第 3 場的標題 → 同標題同開始、`excluded_occurrence_dates` 為第 3 場
+   那一天的 `create_event`：回衝突錯誤，不回 `skipped`。對照：排除日是已刪掉的場次的日期：`skipped`。另兩格：把第 2 場移到
+   排除日上（衝突）；把排除日原本的場次移到別天（`skipped`，已知限制）。`create_events_batch`：兩個項目，其中一個是上面
+   會衝突的重試：該列失敗並帶衝突錯誤，另一列建立成功。
+6. **R（依日期範圍刪除）**：`delete_events_batch` 依日期範圍涵蓋被改過的場次：照舊刪除（這條路沒改）。
+7. **其他**：同一天有兩個被改過的場次（一個移來、原本的移走）：兩個都列出；一個沒改過的場次加一個被移到同一天的場次：照舊
+   解析到沒改過的那個；被刪掉的場次的日期：找不到，訊息是 `(no occurrence on <當地日期>)`（#535）；全天系列（再用
+   `TZ=America/Los_Angeles` 跑一次）；第一場被刪掉、之後的一場被改過的系列（記下答案；列不出來時是找不到）；一個好幾年的
+   每日系列上一次被拒絕的呼叫的耗時。
+
+非 iCloud 來源（有 Google 或 Exchange 帳號時）：在該來源的拋棄式日曆做第 1 格的前半（三個拒絕與照訊息的 span `this`）。
+若回的仍是 `Event not found`，記下 `list_events` 顯示的 id 形狀回報：不是 `<系列 id>/RID=…` 的 id 只會從系列的列出被找到。
+
+結果記在 #532。結束後依 id 刪掉拋棄式日曆，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#532` 的都是 0。
