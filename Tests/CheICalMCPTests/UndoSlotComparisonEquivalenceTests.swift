@@ -544,6 +544,49 @@ final class UndoSlotComparisonEquivalenceTests: XCTestCase {
         }
     }
 
+    private func exceptions(kept: [Int] = [], edited: [(Int, String)]) -> SeriesExceptions {
+        SeriesExceptions(window: DateInterval(start: slot(0).addingTimeInterval(-day), duration: 40 * day),
+                         keptSlots: kept.map { slot($0) },
+                         detached: edited.map { DetachedOccurrence(slot: slot($0.0), snapshot: snapshot(title: $0.1)) })
+    }
+
+    /// Each side's edited occurrence at a slot is looked up in that side's own list. The two lists
+    /// hold as many entries in every case here, so a lookup through the other list's positions
+    /// stays inside the list and reads another entry, or finds none.
+    func testTheDiffLooksEachEditedOccurrenceUpInItsOwnList() {
+        // The same two edited occurrences, listed in the other order: nothing differs.
+        let ordered = exceptions(edited: [(3, "Own"), (5, "Other")])
+        let reordered = exceptions(edited: [(5, "Other"), (3, "Own")])
+        XCTAssertTrue(SeriesUpdateUndo.diff(recorded: ordered, current: reordered).isEmpty)
+        XCTAssertTrue(SeriesUpdateUndo.diff(recorded: reordered, current: ordered).isEmpty)
+        // One of them edited again, in the other order: that slot only.
+        let editedAgain = exceptions(edited: [(5, "Edited again"), (3, "Own")])
+        XCTAssertEqual(SeriesUpdateUndo.diff(recorded: ordered, current: editedAgain).edited, [slot(5)])
+        // A plain occurrence that is edited on its own now, beside one that was edited and is plain
+        // now: both slots, and neither is deleted or added.
+        let before = exceptions(kept: [3], edited: [(5, "Own")])
+        let after = exceptions(kept: [5], edited: [(3, "Own")])
+        XCTAssertEqual(SeriesUpdateUndo.diff(recorded: before, current: after),
+                       SeriesUpdateUndo.ExceptionsDiff(deleted: [], added: [], edited: [slot(3), slot(5)]))
+        for (recorded, current) in [(ordered, reordered), (ordered, editedAgain), (before, after)] {
+            XCTAssertEqual(SeriesUpdateUndo.diff(recorded: recorded, current: current), SeriesUpdateUndo.diffOnMain(recorded: recorded, current: current))
+            XCTAssertEqual(SeriesUpdateUndo.diff(recorded: current, current: recorded), SeriesUpdateUndo.diffOnMain(recorded: current, current: recorded))
+        }
+    }
+
+    /// The lists of edited occurrences hold different numbers of entries: an occurrence edited on
+    /// its own where none was recorded, and the reverse.
+    func testTheDiffOfListsOfDifferentLengths() {
+        let plain = exceptions(kept: [3], edited: [])
+        let edited = exceptions(edited: [(3, "Own")])
+        XCTAssertEqual(SeriesUpdateUndo.diff(recorded: plain, current: edited),
+                       SeriesUpdateUndo.ExceptionsDiff(deleted: [], added: [], edited: [slot(3)]))
+        XCTAssertEqual(SeriesUpdateUndo.diff(recorded: edited, current: plain),
+                       SeriesUpdateUndo.ExceptionsDiff(deleted: [], added: [], edited: [slot(3)]))
+        XCTAssertEqual(SeriesUpdateUndo.diff(recorded: plain, current: edited), SeriesUpdateUndo.diffOnMain(recorded: plain, current: edited))
+        XCTAssertEqual(SeriesUpdateUndo.diff(recorded: edited, current: plain), SeriesUpdateUndo.diffOnMain(recorded: edited, current: plain))
+    }
+
     func testOccurrencesFollowOrKeepAnswersAsMain() {
         var generator = SeededGenerator(seed: 527_006)
         let window = DateInterval(start: slot(0).addingTimeInterval(-day), duration: 40 * day)
