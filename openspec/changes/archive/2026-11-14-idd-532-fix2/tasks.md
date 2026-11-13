@@ -13,7 +13,7 @@ ASSUMPTION: 沒有任何 task 帶 [P]，雖然 parallel_tasks 開著：每個 ta
 ## 2. 文件
 
 - [x] 2.1 `README.md`、`README_zh-TW.md`、`CHANGELOG.md` 寫出兩個方向的量測與 #549。驗證：文件釘選（每個片語剛好一次）通過。
-- [x] 2.2 `.claude/rules/mcp-binary-version-testing.md` 的 #532 一節：第 8、10 格的文字與新量到的結果；所有格在同一個 build 上重做之後，把「哪幾格在哪個 build」的分法拿掉，`CHANGELOG.md` 也只寫一個 build。驗證：文件釘選通過。
+- [x] 2.2 `.claude/rules/mcp-binary-version-testing.md` 的 #532 一節：第 8、10 格的文字與新量到的結果；所有格在同一個 build 上重做之後，把「哪幾格在哪個 build」的分法拿掉，`CHANGELOG.md` 也只寫一個 build。驗證：文件釘選通過。實際（2026-11-14 更正）：寫成同一個 build（`d4bdfebf`）的是第 1 到 11 格；第 11 格補充的時區讀取仍記為 `022f2b92` 的 build，沒有重做。
 
 ## 3. 整套檢查
 
