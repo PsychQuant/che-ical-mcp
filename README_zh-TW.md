@@ -163,7 +163,7 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **搬移事件（#226）：** 搬移是直接改事件所屬的日曆，循環規則、與會者等所有欄位都會保留。在同一個 iCloud 帳號內 ID 不變，在 Google 帳號內會改變，跨帳號也會改變，所以請看每筆結果的 `id_changed` 與 `new_event_id`（#435）。ID 改變時，該事件較舊的 undo 紀錄會跟著改，搬移的 undo 也會回報新的 ID。循環事件用 `span: this`（預設）只搬 `occurrence_dates` 指定的那一次，該次會變成單一事件；`span: all` 搬整個系列；循環事件沒給日期會被拒絕。原地搬移失敗時才改成複製再刪除原事件，但有循環規則或與會者的事件會被拒絕。每筆結果回報 `method`（`in_place` / `copied` / `split` / `unchanged`）與未保留的欄位 `not_carried_over`。
 
-**修改後的 ID（#268）：** `update_event` 與 `update_reminder` 回報的是儲存之後的 ID。ID 只在三種情況改變：`calendar_name` 指向另一個帳號的日曆或清單（事件部分依 #226 的實機結果；改單一場次時指定新的日曆會被拒絕，因為那會搬動整個系列）、`update_event` 從後面的場次以 `span: "future"` 切出新系列（回報新系列的 ID，用單獨改過的場次自己的 ID 時也一樣），以及首場被刪除後，用剩下的第一個場次（單獨改過）自己的 ID 搭配 span `all` 或 `future`（剩下的場次會得到新的 ID）。`id_changed` 說明它和你傳入的 ID 是否不同，只有改變時才會出現的 `previous_id` 是你傳入的 ID。只改單一場次（`occurrence_date`、span `this`）時，`id` 是系列的 ID，另附 `occurrence_id`，即那個場次自己的 ID。
+**修改後的 ID（#268）：** `update_event` 與 `update_reminder` 回報的是儲存之後的 ID。ID 只在四種情況改變：`calendar_name` 把事件搬到另一個日曆、而該來源會給它新的 ID，也就是另一個帳號的日曆或清單（事件部分依 #226 的實機結果），以及 Google 帳號內同帳號的另一個日曆（實測，#484；iCloud 帳號內 ID 不變；改單一場次時指定新的日曆會被拒絕，因為那會搬動整個系列）、`update_event` 從後面的場次以 `span: "future"` 切出新系列（回報新系列的 ID，用單獨改過的場次自己的 ID 時也一樣），首場被刪除後，用剩下的第一個場次（單獨改過）自己的 ID 搭配 span `all` 或 `future`（剩下的場次會得到新的 ID），以及用系列的 ID 搭配 span `all`、而系列的首場被單獨改過且仍在原本的時間開始，或首場被刪除且剩下的第一個場次被單獨改過（呼叫會改走那個場次的 ID，在那裡開始新系列時 `id` 會改變，#428）。換日曆讓事件得到新的 ID 時，該事件較舊的 undo 紀錄會跟到新的 ID；這種修改的 undo 會在回應結尾附上新的 ID，與搬移的 undo 相同（#435、#484）。`id_changed` 說明它和你傳入的 ID 是否不同，只有改變時才會出現的 `previous_id` 是你傳入的 ID。只改單一場次（`occurrence_date`、span `this`）時，`id` 是系列的 ID，另附 `occurrence_id`，即那個場次自己的 ID。
 
 **用場次自己的 ID 寫入（#416）：** 單獨改過的場次有自己的 ID（在 iCloud 上是系列 ID 後面接 `/RID=` 和一個數字）。透過這個 ID，span 的效果取決於場次的位置：
 

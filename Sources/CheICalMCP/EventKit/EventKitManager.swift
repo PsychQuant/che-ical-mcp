@@ -1306,6 +1306,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // calendar moves the whole series even with span this (device), so one of another account
         // is the cross-account move again; a change of the recurrence rules is series-level too.
         let newCalendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .event) }
+        // #484: read once, here, before any field is assigned (afterwards it is false for every call).
+        // The two refusals below and the rewrite of older undo records after the save read this value.
+        let changesCalendar = newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false
+        // #484: an occurrence's own identifier answers for one occurrence; a write through it is not
+        // a rename of the series, so older records are not moved to what the save gives.
+        let ownOccurrenceID = DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: masterEvent.isDetached)
         // Read before any field is assigned; also tells the response (#268) not to trust the series
         // object's identifier after the save.
         // The calendar the event is already in moves nothing, even when its account cannot be read
@@ -1332,7 +1338,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // the series' id plus occurrence_date and with the occurrence's own id.
         if Self.refusesCalendarOnOccurrence(
             onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span, applyToAll: applyToAll,
-            changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false) {
+            changesCalendar: changesCalendar) {
             throw EventKitError.moveRefused(reason: Self.occurrenceCalendarReason)
         }
         if Self.refusesRecurrenceChangeOnOccurrence(
@@ -1417,7 +1423,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         if let reason = SeriesRuleWrite.laterOccurrenceRefusal(
             fromLaterOccurrence: reach.isFromLaterOccurrence,
             changesAllDay: datePlan.isAllDay != event.isAllDay,
-            changesCalendar: newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false,
+            changesCalendar: changesCalendar,
             hasRecurrence: recurrenceRule != nil, occurrenceCount: recurrenceRule?.occurrenceCount,
             wholeSeriesCall: applyToAll,
             storedRuleUnwritable: SeriesRuleWrite.writableRule(seriesRules) == nil,
@@ -1827,6 +1833,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span)
         // #246: a calendar change across accounts changes the identifier, so the record keeps the
         // one the event has now (read here, after the save); #236: and the state the update left.
+        // #484: within a Google account, and across accounts, a calendar change gives the event a new
+        // identifier (measured). Older undo and redo records that name the event follow it, as after
+        // an in-place move (#435), but only when the save renamed the whole event
+        // (`EventUpdateRecord.identifierToFollow`): a split leaves the old identifier in use.
+        if let followed = EventUpdateRecord.identifierToFollow(
+            requestedID: identifier, identifierAfterSave: event.eventIdentifier, changedCalendar: changesCalendar,
+            wholeEvent: !hadRules || applyToAll, viaStandIn: resolved.viaStandIn, ownOccurrenceID: ownOccurrenceID) {
+            await CalendarUndoManager.shared.replaceEventIdentifier(identifier, with: followed)
+        }
         await CalendarUndoManager.shared.record(EventUpdateRecord.operation(
             requestedID: identifier, identifierAfterSave: event.eventIdentifier, oldSnapshot: oldSnapshot,
             recurringKind: recurringKind, seriesRecord: seriesRecord,
@@ -3337,7 +3352,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // #244 D2: refused, never attempted; the record is discarded (UnrecoverableUndoError).
             throw UndoOperation.followingOccurrencesDeleteRefusal(title: title)
 
-        case .updateEvent(_, let oldSnapshot, _):
+        case .updateEvent(let recordedID, let oldSnapshot, _):
             // Undo update = restore old values. Only updates of one-off events are recorded this
             // way; an update that touched a recurring event is a marker whose undo is refused
             // (#236, #262), and `verifiedEvent` refuses an event that repeats now. The snapshot
@@ -3360,7 +3375,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 throw error
             }
             markNeedsRefresh()
-            return "Undone: restored event '\(undoVisibleTitle(oldSnapshot.title))' to previous state"
+            // #484: restoring the calendar can give the event a new identifier again (Google, measured).
+            // Older records and the redo stack follow it, and the answer names it; without the rewrite
+            // the record under this one would still answer not found.
+            if let restoredID = event.eventIdentifier, CalendarUndoManager.identifierChanged(from: recordedID, to: restoredID) {
+                await CalendarUndoManager.shared.replaceEventIdentifier(recordedID, with: restoredID)
+                return EventUpdateRecord.updateUndoneText(title: oldSnapshot.title, newID: restoredID)
+            }
+            return EventUpdateRecord.updateUndoneText(title: oldSnapshot.title, newID: nil)
 
         case .updateRecurringEvent(_, let title, let kind):
             // #236: refused, never attempted; the record is discarded (UnrecoverableUndoError).

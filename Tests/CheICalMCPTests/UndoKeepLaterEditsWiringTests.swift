@@ -37,7 +37,14 @@ final class UndoKeepLaterEditsWiringTests: XCTestCase {
                          "old.applyRestoring(Set(plan.restored), to: event, calendar: calendar)",
                          "try eventStore.save(event, span: .thisEvent)",
                          "event.rollback()",
-                         "markNeedsRefresh()"], in: arm)
+                         "markNeedsRefresh()",
+                         // #484: after the save, older records follow a new identifier and the answer gives it.
+                         "if case .updateEvent(let recordedID, _, _) = operation, let restoredID = event.eventIdentifier,",
+                         "CalendarUndoManager.identifierChanged(from: recordedID, to: restoredID) {",
+                         "await CalendarUndoManager.shared.replaceEventIdentifier(recordedID, with: restoredID)",
+                         "newID = restoredID",
+                         "plan: plan, newID: newID)"], in: arm)
+        XCTAssertEqual(SourcePins.ranges(of: "CalendarUndoManager.shared.replaceEventIdentifier(", in: arm).count, 1)
         // Rounds 1-2: between the merge's check and its write every await is a fallback that returns
         // (the default undo runs its own check), so nothing suspends before the write.
         let check = try XCTUnwrap(arm.range(of: "verifiedHistoryTarget(of: operation, verb: .undo, keepingLaterEdits:"))
