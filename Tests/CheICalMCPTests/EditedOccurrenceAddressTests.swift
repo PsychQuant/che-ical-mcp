@@ -29,14 +29,18 @@ final class EditedOccurrenceAddressTests: XCTestCase {
     /// call site passes it), so the day is read in `host`.
     /// A reading's own zone is the series' (Taipei) unless a test says otherwise, as an occurrence of
     /// a series in a zone has; an all-day one and one of a series with no zone have none.
+    /// `start`: the series' first start. Its time of day in the series' zone is what a slot is held
+    /// against (PR #545 verify round 2); the series of these tests is at 10:00 in Taipei unless a
+    /// test says otherwise.
     private func request(_ requested: String, zone: TimeZone? = nil, host: TimeZone? = nil, allDay: Bool = false,
-                         floating: Bool = false) -> Address.Request {
+                         floating: Bool = false, start: String? = "2026-09-07T10:00:00+08:00") -> Address.Request {
         Address.Request(seriesID: series, seriesIsAllDay: allDay, seriesZone: floating ? nil : zone ?? taipei,
-                        requested: at(requested), host: host ?? losAngeles)
+                        seriesStart: start.map(at), requested: at(requested), host: host ?? losAngeles)
     }
     private func matches(day: [Reading], listed: [Reading]?, requested: String, zone: TimeZone? = nil,
-                         host: TimeZone? = nil, allDay: Bool = false, floating: Bool = false) -> [Match] {
-        Address.matches(onDay: day, listed: listed, for: request(requested, zone: zone, host: host, allDay: allDay, floating: floating))
+                         host: TimeZone? = nil, allDay: Bool = false, floating: Bool = false,
+                         start: String? = "2026-09-07T10:00:00+08:00") -> [Match] {
+        Address.matches(onDay: day, listed: listed, for: request(requested, zone: zone, host: host, allDay: allDay, floating: floating, start: start))
     }
     private func text(_ call: Address.Call, _ found: [Match], requested: String = "2026-12-21T00:00:00+08:00") -> String {
         Address.reason(for: call, matches: found, request: request(requested))
@@ -158,7 +162,7 @@ final class EditedOccurrenceAddressTests: XCTestCase {
         XCTAssertEqual(text(.update(futureSpan: true), found),
                        "\(futureSeveral). With span 'future' through one of those identifiers a call takes only some fields, and that call answers which. It starts at that occurrence's original date, which for one that was moved is not the day it starts now: a title written that way reached the occurrences of the series from the original date on (measured on iCloud). \(otherWay) Nothing was written.")
         XCTAssertEqual(text(.delete(futureSpan: true), found),
-                       "\(futureSeveral). delete_event with span 'future' through one of those identifiers deletes the series from that occurrence's original date on, where that call allows it, so for one that was moved later the occurrences of the series from its original date up to the day it starts now are deleted too, and that delete cannot be undone. Nothing was deleted.")
+                       "\(futureSeveral). delete_event with span 'future' through one of those identifiers deletes the series from that occurrence's original date on, where that call allows it, so for one that was moved later the occurrences of the series from its original date up to the day it starts now are deleted too, and for one that was moved earlier that occurrence itself is deleted and the occurrences between the day it starts now and its original date stay, and that delete cannot be undone. Nothing was deleted.")
     }
 
     /// The `/RID=` of an all-day occurrence is its date read as UTC, while the occurrence and the
@@ -180,7 +184,7 @@ final class EditedOccurrenceAddressTests: XCTestCase {
             XCTAssertEqual(matches(day: [moved], listed: nil, requested: startsAt, zone: host, host: host, allDay: true), [shown], host.identifier)
             // Its start and its day are printed in the host's zone.
             // An all-day series has no time zone: the request carries nil, and its slots are still read.
-            let allDaySeries = Address.Request(seriesID: series, seriesIsAllDay: true, seriesZone: nil, requested: at(requestedSlotDay), host: host)
+            let allDaySeries = Address.Request(seriesID: series, seriesIsAllDay: true, seriesZone: nil, seriesStart: nil, requested: at(requestedSlotDay), host: host)
             XCTAssertEqual(Address.matches(onDay: [], listed: [moved], for: allDaySeries), [expected], host.identifier)
             let row = Address.reason(for: .moveRow, matches: [expected], request: allDaySeries)
             XCTAssertTrue(row.contains("with its occurrence_dates entry set to 2028-05-10, the day it starts now."), row)
@@ -193,7 +197,8 @@ final class EditedOccurrenceAddressTests: XCTestCase {
         let id = own("2026-12-21T00:30:00+08:00")
         let early = reading(id, start: "2026-12-21T00:40:00+08:00")
         for host in [losAngeles, utc, taipei] {
-            let found = matches(day: [early], listed: [early], requested: "2026-12-21T00:00:00+08:00", zone: taipei, host: host)
+            // The series is at 00:30 in Taipei, so the slot is at the series' time of day and is read.
+            let found = matches(day: [early], listed: [early], requested: "2026-12-21T00:00:00+08:00", zone: taipei, host: host, start: "2026-09-07T00:30:00+08:00")
             XCTAssertEqual(found, [Match(identifier: id, start: at("2026-12-21T00:40:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: "2026-12-21", timeZone: taipei)],
                            host.identifier)
             XCTAssertEqual(matches(day: [early], listed: [early], requested: "2026-12-20T00:00:00+08:00", zone: taipei, host: host), [], host.identifier)
@@ -352,7 +357,6 @@ final class EditedOccurrenceAddressTests: XCTestCase {
 
     // spec-example: edited-occurrence-addressing / Local day in the not-found text
     func testTheNotFoundTextPrintsTheRequestedDayInTheZoneItWasReadIn() {
-        let requested = at("2026-12-20T16:00:00Z")
         let asked = "2026-12-20T16:00:00Z"
         XCTAssertEqual(Address.notFoundDetail(for: request(asked, zone: taipei)), "\(series) (no occurrence on 2026-12-21)")
         XCTAssertEqual(Address.notFoundDetail(for: request(asked, zone: utc)), "\(series) (no occurrence on 2026-12-20)")
@@ -367,7 +371,6 @@ final class EditedOccurrenceAddressTests: XCTestCase {
             XCTAssertEqual(Address.miss(for: call, matches: [], request: request(asked)),
                            .notFound(detail: "\(series) (no occurrence on 2026-12-21)"), "\(call)")
         }
-        XCTAssertEqual(requested, request(asked).requested)
         XCTAssertEqual(EventKitError.eventNotFound(identifier: Address.notFoundDetail(for: request(asked))).errorDescription,
                        "Event not found: \(series) (no occurrence on 2026-12-21)")
     }
@@ -486,8 +489,11 @@ final class EditedOccurrenceAddressTests: XCTestCase {
         XCTAssertEqual(floating(saturday), [shown])
         XCTAssertEqual(floating(saturday, day: [moved]), [shown])
         XCTAssertEqual(matches(day: [moved], listed: nil, requested: saturday, host: taipei, floating: true), [shown])
-        // The same readings of a series that has a zone: the slot is read (the control).
-        XCTAssertEqual(matches(day: [], listed: [moved], requested: friday, zone: taipei, host: taipei).map(\.kind), [.originallyThatDay])
+        // The same readings of a series that has a zone and is at that time of day there (04:00 in
+        // Taipei, where 20:00Z is the instant of a slot): the slot is read (the control). A series in
+        // Taipei at 20:00, which these digits are not an instant of, reads none (verify round 2).
+        XCTAssertEqual(matches(day: [], listed: [moved], requested: friday, zone: taipei, host: taipei, start: "2026-12-11T04:00:00+08:00").map(\.kind), [.originallyThatDay])
+        XCTAssertEqual(matches(day: [], listed: [moved], requested: friday, zone: taipei, host: taipei, start: "2026-12-10T20:00:00+08:00"), [])
         // On any host, and with the slot in `occurrenceDate` instead of the identifier.
         let other = Reading(eventIdentifier: "OTHER-1", externalIdentifier: nil, occurrenceDate: at("2026-12-24T20:00:00Z"), isDetached: true,
                             isAllDay: false, start: at("2026-12-26T20:00:00+08:00"))
@@ -498,7 +504,7 @@ final class EditedOccurrenceAddressTests: XCTestCase {
         }
 
         // No text built for it holds an original date, and it does not read as moved.
-        let asked = Address.Request(seriesID: series, seriesIsAllDay: false, seriesZone: nil, requested: at(saturday), host: taipei)
+        let asked = Address.Request(seriesID: series, seriesIsAllDay: false, seriesZone: nil, seriesStart: at("2026-12-10T20:00:00+08:00"), requested: at(saturday), host: taipei)
         XCTAssertFalse(asked.readsSlots)
         for call in everyCall {
             for found in [[shown], [shown, Match(identifier: dec21, start: at("2026-12-26T21:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: nil)]] {
@@ -508,27 +514,37 @@ final class EditedOccurrenceAddressTests: XCTestCase {
                 XCTAssertFalse(reason.contains("2026-12-24"), reason)
                 XCTAssertFalse(reason.contains("2026-12-25"), reason)
                 XCTAssertFalse(reason.contains("a title written that way"), reason)
-                XCTAssertFalse(reason.contains("It starts at"), reason)
+                // Only the span future update says where a write starts, in this series' own terms.
+                XCTAssertEqual(reason.components(separatedBy: "It starts at that occurrence's original date, which this server does not read for a series with no time zone").count - 1,
+                               call == .update(futureSpan: true) ? 1 : 0, reason)
+                XCTAssertEqual(reason.components(separatedBy: "It starts at").count - 1, call == .update(futureSpan: true) ? 1 : 0, reason)
             }
         }
         XCTAssertEqual(Address.reason(for: .moveRow, matches: [shown], request: asked),
                        "The occurrence of this series on 2026-12-26 was edited on its own, so the series' identifier and that day no longer address it. Its identifier is \(id): pass it in event_ids, with its occurrence_dates entry set to 2026-12-26, the day it starts. Nothing was moved.")
-        // The span future delete still says where the cut is, gives no date, says why, and says what
-        // was measured in such a series (#549: the edited occurrence itself stayed).
+        // The span future delete still says where the cut is, gives no date, says why, and names the
+        // known defect of such a series (#549: the call answers deleted, the edited occurrence stays).
         // spec-example: edited-occurrence-addressing / Delete in a series with no time zone
-        let floatingDelete = "delete_event with span 'future' through that identifier, where that call allows it, deletes the occurrences of the series after that occurrence's original date, which this server does not read for a series with no time zone: if that date is earlier than 2026-12-26, occurrences before 2026-12-26 are deleted too. Measured on iCloud; in such a series that occurrence itself stayed (#549). That delete cannot be undone. Nothing was deleted."
+        let floatingDelete = "delete_event with span 'future' through that identifier, where that call allows it, deletes the occurrences of the series after that occurrence's original date, which this server does not read for a series with no time zone: if that date is earlier than 2026-12-26, occurrences before 2026-12-26 are deleted too. Known defect #549, measured on iCloud: in such a series that call answers deleted while that occurrence itself stays. That delete cannot be undone. Nothing was deleted."
         XCTAssertEqual(Address.reason(for: .delete(futureSpan: true), matches: [shown], request: asked),
                        "The occurrence of this series on 2026-12-26 was edited on its own, so the series' identifier and that day no longer address it. Its identifier is \(id). \(floatingDelete)")
         let two = [shown, Match(identifier: dec21, start: at("2026-12-26T21:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: nil)]
         XCTAssertTrue(Address.reason(for: .delete(futureSpan: true), matches: two, request: asked)
-            .hasSuffix("The series' identifier and a day do not address an occurrence edited on its own. delete_event with span 'future' through one of those identifiers, where that call allows it, deletes the occurrences of the series after that occurrence's original date, which this server does not read for a series with no time zone: for one that was moved later, occurrences before the day it starts now are deleted too. Measured on iCloud; in such a series that occurrence itself stayed (#549). That delete cannot be undone. Nothing was deleted."))
+            .hasSuffix("The series' identifier and a day do not address an occurrence edited on its own. delete_event with span 'future' through one of those identifiers, where that call allows it, deletes the occurrences of the series after that occurrence's original date, which this server does not read for a series with no time zone: for one that was moved later, occurrences before the day it starts now are deleted too. Known defect #549, measured on iCloud: in such a series that call answers deleted while that occurrence itself stays. That delete cannot be undone. Nothing was deleted."))
         // A series with a zone says none of that.
         XCTAssertFalse(text(.delete(futureSpan: true), [inPlace]).contains("#549"))
         XCTAssertFalse(text(.delete(futureSpan: true), [movedOnto, movedOff]).contains("#549"))
+        // spec-example: edited-occurrence-addressing / Update in a series with no time zone
+        // The span future update says the same in its own terms, with what was measured (2026-11-14:
+        // a title through the identifier of an occurrence moved past the next one reached the
+        // occurrences after its original date, the one before the requested day and that occurrence
+        // itself among them).
         XCTAssertEqual(Address.reason(for: .update(futureSpan: true), matches: [shown], request: asked),
-                       "The occurrence of this series on 2026-12-26 was edited on its own, so the series' identifier and that day no longer address it. Its identifier is \(id). With span 'future' through that identifier a call takes only some fields, and that call answers which. \(otherWay) Nothing was written.")
+                       "The occurrence of this series on 2026-12-26 was edited on its own, so the series' identifier and that day no longer address it. Its identifier is \(id). With span 'future' through that identifier a call takes only some fields, and that call answers which. It starts at that occurrence's original date, which this server does not read for a series with no time zone: if that date is earlier than 2026-12-26, occurrences before 2026-12-26 are written too. Measured on iCloud with a title, for an occurrence that was moved later: it reached the occurrences of the series after that occurrence's original date and that occurrence itself. \(otherWay) Nothing was written.")
+        XCTAssertTrue(Address.reason(for: .update(futureSpan: true), matches: two, request: asked)
+            .hasSuffix("The series' identifier and a day do not address an occurrence edited on its own. With span 'future' through one of those identifiers a call takes only some fields, and that call answers which. It starts at that occurrence's original date, which this server does not read for a series with no time zone: for one that was moved later, occurrences before the day it starts now are written too (measured on iCloud with a title, which reached that occurrence itself too). \(otherWay) Nothing was written."))
         // An all-day series has no time zone either, and its slots are read.
-        XCTAssertTrue(Address.Request(seriesID: series, seriesIsAllDay: true, seriesZone: nil, requested: at(saturday), host: taipei).readsSlots)
+        XCTAssertTrue(Address.Request(seriesID: series, seriesIsAllDay: true, seriesZone: nil, seriesStart: nil, requested: at(saturday), host: taipei).readsSlots)
         XCTAssertTrue(request(saturday).readsSlots)
     }
 
@@ -555,8 +571,10 @@ final class EditedOccurrenceAddressTests: XCTestCase {
         // It does not depend on anything of the series but its zone: nothing else is in the request.
         XCTAssertEqual(Address.listingReach, 366 * day)
 
-        // A listing that does not hold the moved occurrence gives no match (the scan-window listing
-        // of a series older than about five years did not, PR #545 verify): the answer is not found.
+        // What follows illustrates the range and guards nothing of it (`matches` never sees the range;
+        // the equalities above, the wiring pins and gate cell 9 hold the listing): a listing that does
+        // not hold the moved occurrence gives no match, as the scan-window listing of a series older
+        // than about five years did not (PR #545 verify), and the answer is not found.
         let moved = reading(dec21, start: "2026-12-23T08:00:00+08:00")
         let old = reading(own("2021-01-04T10:00:00+08:00"), start: "2021-01-05T10:00:00+08:00")
         XCTAssertEqual(matches(day: [], listed: [old], requested: "2026-12-21T00:00:00+08:00"), [])
@@ -599,9 +617,15 @@ final class EditedOccurrenceAddressTests: XCTestCase {
         let takes = "With span 'future' through that identifier a call takes only some fields, and that call answers which."
         XCTAssertEqual(text(.update(futureSpan: true), [earlier], requested: asked),
                        "\(opening) \(takes) It starts at that occurrence's original date, 2026-12-21, not at 2026-12-13: a title written that way did not reach the occurrences of the series between 2026-12-13 and 2026-12-21 (measured on iCloud). \(otherWay) Nothing was written.")
-        // The delete names the date and adds nothing: nothing before the requested day is deleted.
+        // The delete names the date and what was measured: the occurrence itself, which starts before
+        // that date, is deleted, and the occurrences between the two days are not.
         XCTAssertEqual(text(.delete(futureSpan: true), [earlier], requested: asked),
-                       "\(opening) delete_event with span 'future' through that identifier deletes the series from that occurrence's original date, 2026-12-21, on, where that call allows it, and that delete cannot be undone. Nothing was deleted.")
+                       "\(opening) delete_event with span 'future' through that identifier deletes the series from that occurrence's original date, 2026-12-21, on, where that call allows it, so that occurrence itself is deleted and the occurrences of the series between 2026-12-13 and 2026-12-21 stay (measured on iCloud), and that delete cannot be undone. Nothing was deleted.")
+        // One asked by its original day, one edited in place and one moved later do not get that clause.
+        for (match, requested) in [(movedOff, "2026-12-21T00:00:00+08:00"), (inPlace, "2026-12-21T00:00:00+08:00"),
+                                   (Match(identifier: dec21, start: at("2026-12-29T10:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: "2026-12-21"), "2026-12-29T00:00:00+08:00")] {
+            XCTAssertFalse(text(.delete(futureSpan: true), [match], requested: requested).contains("stay"), requested)
+        }
         // Asked by its original day: the write starts on the day asked for, and the text says so.
         XCTAssertTrue(text(.update(futureSpan: true), [movedOff])
             .contains("\(takes) It starts at that occurrence's original date, 2026-12-21, not at the day it starts now (measured on iCloud with a title). For the rest:"))
@@ -640,5 +664,129 @@ final class EditedOccurrenceAddressTests: XCTestCase {
         let cut = Match(identifier: dec21, start: at("2026-12-21T08:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: "2026-12-21", timeZone: losAngeles)
         XCTAssertTrue(text(.delete(futureSpan: true), [cut]).contains("original date, 2026-12-21, on"))
         XCTAssertFalse(text(.delete(futureSpan: true), [cut]).contains("2026-12-20"))
+    }
+
+    // MARK: - PR #545 verify round 2
+
+    // spec-example: edited-occurrence-addressing / Slot at another time of day than the series
+    func testASlotThatIsNotAtTheSeriesTimeOfDayIsNotRead() {
+        // A series in Asia/Taipei, weekly, Mondays 20:00. It had no time zone when its occurrence of
+        // 2026-12-21 was edited in place, so that occurrence's `/RID=` is 20:00 read as UTC (#539):
+        // Tuesday 04:00 in Taipei. The store keeps those digits when the series gets a zone.
+        let id = own("2026-12-21T20:00:00Z")
+        let edited = reading(id, start: "2026-12-21T20:00:00+08:00")
+        let start = "2026-12-07T20:00:00+08:00"
+        let (monday, tuesday) = ("2026-12-21T00:00:00+08:00", "2026-12-22T00:00:00+08:00")
+        // Tuesday, a day with no occurrence: read as an instant the slot is on it. Nothing is named.
+        XCTAssertEqual(matches(day: [], listed: [edited], requested: tuesday, host: taipei, start: start), [])
+        // Monday: matched by its start, with no original day, so no text reads it as moved.
+        let shown = Match(identifier: id, start: at("2026-12-21T20:00:00+08:00"), isAllDay: false, kind: .shownThatDay, originalDay: nil, timeZone: taipei)
+        XCTAssertEqual(matches(day: [edited], listed: [edited], requested: monday, host: taipei, start: start), [shown])
+        let asked = request(monday, host: taipei, start: start)
+        XCTAssertEqual(Address.reason(for: .update(futureSpan: true), matches: [shown], request: asked),
+                       "\(opening) Its identifier is \(id). With span 'future' through that identifier a call takes only some fields, and that call answers which. \(otherWay) Nothing was written.")
+        XCTAssertEqual(Address.reason(for: .delete(futureSpan: true), matches: [shown], request: asked),
+                       "\(opening) Its identifier is \(id). delete_event with span 'future' through that identifier deletes the series from that occurrence's original date on, where that call allows it, and that delete cannot be undone. Nothing was deleted.")
+
+        // As measured on iCloud (2026-11-14): Thursdays 20:00, the 2026-12-17 occurrence edited in
+        // place (`/RID=819230400`) and the 2026-12-31 one moved to Saturday 2027-01-02
+        // (`/RID=820440000`) while the series had no zone; the digits were the same after it got one.
+        let inPlace = reading("\(series)/RID=819230400", start: "2026-12-17T20:00:00+08:00")
+        let moved = reading("\(series)/RID=820440000", start: "2027-01-02T20:00:00+08:00")
+        let thursdays = "2026-12-10T20:00:00+08:00"
+        for (requested, expected) in [("2026-12-18T00:00:00+08:00", [String]()), ("2027-01-01T00:00:00+08:00", []), ("2026-12-31T00:00:00+08:00", []),
+                                      ("2026-12-17T00:00:00+08:00", ["\(series)/RID=819230400"]), ("2027-01-02T00:00:00+08:00", ["\(series)/RID=820440000"])] {
+            let found = matches(day: [], listed: [inPlace, moved], requested: requested, host: taipei, start: thursdays)
+            XCTAssertEqual(found.map(\.identifier), expected, requested)
+            XCTAssertEqual(found.map(\.kind), expected.map { _ in .shownThatDay }, requested)
+            XCTAssertEqual(found.compactMap(\.originalDay), [], requested)
+        }
+    }
+
+    /// The other side of the guard: a slot at the series' time of day is read as before, in the
+    /// series' zone whatever this Mac's zone is, and across a daylight-saving change.
+    func testASlotAtTheSeriesTimeOfDayIsStillRead() {
+        // Taipei, Mondays 20:00: the slot of 2026-12-21 as an instant, moved two days later.
+        let id = own("2026-12-21T20:00:00+08:00")
+        let moved = reading(id, start: "2026-12-23T20:00:00+08:00")
+        let monday = "2026-12-21T00:00:00+08:00"
+        let expected = [Match(identifier: id, start: at("2026-12-23T20:00:00+08:00"), isAllDay: false, kind: .originallyThatDay, originalDay: "2026-12-21", timeZone: taipei)]
+        for host in [taipei, losAngeles, utc] {
+            XCTAssertEqual(matches(day: [], listed: [moved], requested: monday, host: host, start: "2026-12-07T20:00:00+08:00"), expected, host.identifier)
+        }
+        // Los Angeles, Mondays 09:00: the first start is in winter (17:00Z), the slot in summer
+        // (16:00Z). The same time of day there, another one in UTC and on a host in Taipei.
+        let summer = own("2027-07-12T09:00:00-07:00")
+        let later = reading(summer, start: "2027-07-14T09:00:00-07:00", zone: losAngeles)
+        for host in [taipei, losAngeles, utc] {
+            XCTAssertEqual(matches(day: [], listed: [later], requested: "2027-07-12T00:00:00-07:00", zone: losAngeles, host: host, start: "2026-12-07T09:00:00-08:00"),
+                           [Match(identifier: summer, start: at("2027-07-14T09:00:00-07:00"), isAllDay: false, kind: .originallyThatDay, originalDay: "2027-07-12", timeZone: losAngeles)],
+                           host.identifier)
+        }
+        // Not read: the series' start is not known, or the series is at another time of day now (the
+        // whole series was moved after the occurrence was edited, the stated limit), down to a second.
+        for start in [nil, "2026-12-07T21:00:00+08:00", "2026-12-07T20:01:00+08:00", "2026-12-07T20:00:01+08:00"] {
+            XCTAssertEqual(matches(day: [], listed: [moved], requested: monday, host: taipei, start: start), [], start ?? "nil")
+        }
+        // Such an occurrence is still matched by the day it starts on.
+        XCTAssertEqual(matches(day: [moved], listed: [moved], requested: "2026-12-23T00:00:00+08:00", host: taipei, start: "2026-12-07T21:00:00+08:00").map(\.originalDay), [nil])
+    }
+
+    /// An edited occurrence whose all-day state is not its series' (Calendar.app can make one
+    /// occurrence all-day). Whether it starts on the day follows the occurrence's own state: an
+    /// all-day one is a day of this Mac's zone. Where its slot lies, and the day its original date
+    /// is printed as, follow the series'.
+    func testAnEditedOccurrenceInAnotherAllDayStateThanItsSeries() {
+        // A timed series in Los Angeles, Wednesdays 09:00, on a host in Taipei. The occurrence of
+        // 2026-12-23 was made all-day in place: it is stored from host midnight, 2026-12-22T16:00Z,
+        // an instant inside 2026-12-22 in Los Angeles.
+        let id = own("2026-12-23T09:00:00-08:00")
+        let first = "2026-12-02T09:00:00-08:00"
+        let (tuesday, wednesday, thursday) = ("2026-12-22T08:00:00Z", "2026-12-23T08:00:00Z", "2026-12-24T08:00:00Z")
+        let inPlace = reading(id, start: "2026-12-22T16:00:00Z", allDay: true, zone: nil)
+        func found(_ day: [Reading], _ listed: [Reading]?, _ requested: String) -> [Match] {
+            matches(day: day, listed: listed, requested: requested, zone: losAngeles, host: taipei, start: first)
+        }
+        XCTAssertEqual(found([inPlace], [inPlace], tuesday), [], "an all-day occurrence of 12-23 is not on 12-22")
+        let shown = Match(identifier: id, start: at("2026-12-22T16:00:00Z"), isAllDay: true, kind: .shownThatDay, originalDay: "2026-12-23")
+        XCTAssertEqual(found([inPlace], [inPlace], wednesday), [shown])
+        XCTAssertEqual(found([inPlace], nil, wednesday), [shown])
+        XCTAssertEqual(found([], [inPlace], wednesday), [shown])
+        func present(_ requested: String) -> Address.Presence {
+            Address.presence(lookupHit: false, onDay: [inPlace], seriesID: series, requested: at(requested), zone: losAngeles, host: taipei)
+        }
+        XCTAssertEqual(present(tuesday), .absent)
+        XCTAssertEqual(present(wednesday), .editedOccurrenceStarts)
+
+        // The same occurrence made all-day on Saturday 2026-12-26 (host midnight, 2026-12-25T16:00Z):
+        // its slot is still Wednesday 09:00 in Los Angeles, found by that day and not by the next.
+        let movedOff = reading(id, start: "2026-12-25T16:00:00Z", allDay: true, zone: nil)
+        let original = Match(identifier: id, start: at("2026-12-25T16:00:00Z"), isAllDay: true, kind: .originallyThatDay, originalDay: "2026-12-23")
+        XCTAssertEqual(found([], [movedOff], wednesday), [original])
+        XCTAssertEqual(found([], [movedOff], thursday), [])
+        XCTAssertEqual(found([], [movedOff], "2026-12-25T08:00:00Z"), [], "Friday in Los Angeles holds its start instant, not its day")
+        XCTAssertEqual(found([movedOff], [movedOff], "2026-12-26T08:00:00Z").map(\.kind), [.shownThatDay])
+        // Its start and its day are printed as a day of this Mac's zone, with no note on a zone.
+        let asked = request(wednesday, zone: losAngeles, host: taipei, start: first)
+        XCTAssertEqual(Address.reason(for: .moveRow, matches: [original], request: asked),
+                       "The occurrence this series had on 2026-12-23 was edited on its own and now starts at 2026-12-26T00:00:00+08:00, so the series' identifier and that day no longer address it. Its identifier is \(id): pass it in event_ids, with its occurrence_dates entry set to 2026-12-26, the day it starts now. Nothing was moved.")
+        // An all-day match that carries a zone is still read as a day of this Mac's zone.
+        let zoned = Match(identifier: id, start: at("2026-12-25T16:00:00Z"), isAllDay: true, kind: .originallyThatDay, originalDay: "2026-12-23", timeZone: losAngeles)
+        XCTAssertTrue(Address.reason(for: .moveRow, matches: [zoned], request: asked).contains("set to 2026-12-26, the day it starts now."))
+
+        // The reverse: an all-day series on a host in Los Angeles, whose occurrence of 2026-12-22
+        // (`/RID=` is that date read as UTC) was made timed and moved to the evening of the 23rd.
+        let day = own("2026-12-22T00:00:00Z")
+        let timed = reading(day, start: "2026-12-23T19:00:00-08:00", allDay: false, zone: losAngeles)
+        func allDaySeries(_ day: [Reading], _ listed: [Reading]?, _ requested: String) -> [Match] {
+            matches(day: day, listed: listed, requested: requested, host: losAngeles, allDay: true, floating: true, start: nil)
+        }
+        XCTAssertEqual(allDaySeries([], [timed], "2026-12-22T08:00:00Z"),
+                       [Match(identifier: day, start: at("2026-12-23T19:00:00-08:00"), isAllDay: false, kind: .originallyThatDay, originalDay: "2026-12-22", timeZone: losAngeles)])
+        XCTAssertEqual(allDaySeries([], [timed], "2026-12-21T08:00:00Z"), [], "read as an instant its slot is on the 21st in Los Angeles")
+        XCTAssertEqual(allDaySeries([timed], [timed], "2026-12-23T08:00:00Z").map(\.kind), [.shownThatDay])
+        XCTAssertEqual(allDaySeries([timed], [timed], "2026-12-24T08:00:00Z"), [])
+        XCTAssertEqual(Address.presence(lookupHit: false, onDay: [timed], seriesID: series, requested: at("2026-12-23T08:00:00Z"), zone: nil, host: losAngeles), .editedOccurrenceStarts)
+        XCTAssertEqual(Address.presence(lookupHit: false, onDay: [timed], seriesID: series, requested: at("2026-12-24T08:00:00Z"), zone: nil, host: losAngeles), .absent)
     }
 }

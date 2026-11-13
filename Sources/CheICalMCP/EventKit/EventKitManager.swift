@@ -1945,7 +1945,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// the search reads no slot of a floating one (`EditedOccurrenceAddress.Request.readsSlots`).
     func occurrenceMissError(series: EKEvent, id: String, on date: Date, call: EditedOccurrenceAddress.Call) -> EventKitError {
         let request = EditedOccurrenceAddress.Request(seriesID: id, seriesIsAllDay: series.isAllDay,
-                                                      seriesZone: Self.occurrenceZone(of: series), requested: date)
+                                                      seriesZone: Self.occurrenceZone(of: series), seriesStart: series.startDate, requested: date)
         switch EditedOccurrenceAddress.miss(for: call, matches: editedOccurrences(ofSeries: series, for: request), request: request) {
         case .refusal(let reason):
             return call == .moveRow ? .moveRefused(reason: reason) : .occurrenceAddressRefused(reason: reason)

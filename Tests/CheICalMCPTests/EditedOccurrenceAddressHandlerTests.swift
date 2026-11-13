@@ -23,6 +23,7 @@ private func reason(_ call: EditedOccurrenceAddress.Call) -> String {
     let match = EditedOccurrenceAddress.Match(identifier: occurrenceID, start: instant("2026-12-21T10:00:00+08:00"), isAllDay: false,
                                               kind: .shownThatDay, originalDay: "2026-12-21")
     let request = EditedOccurrenceAddress.Request(seriesID: "6F2A:9B1C", seriesIsAllDay: false, seriesZone: taipei,
+                                                  seriesStart: instant("2026-12-07T10:00:00+08:00"),
                                                   requested: instant("2026-12-21T00:00:00+08:00"), host: taipei)
     return EditedOccurrenceAddress.reason(for: call, matches: [match], request: request)
 }

@@ -27,11 +27,14 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
     }
 
     /// Every spelling a write, a history record or a log line has in the two files the search lives in.
-    private let writes = ["eventStore.save(", "eventStore.remove(", "eventStore.commit(", "eventStore.saveCalendar(", "eventStore.removeCalendar(",
-                          "eventStore.reset(", ".save(", ".remove(", ".commit(", "CalendarUndoManager", ".record(", "saveNewReminder(",
+    /// Each is spelled somewhere in Sources (checked below), so none of them guards nothing. A store
+    /// commit or reset is covered by `.commit(` and by no entry: `reset(` is not called on a store in
+    /// Sources, and neither `NSLog(` nor `fputs(` is used there.
+    private let writes = ["eventStore.save(", "eventStore.remove(", "eventStore.saveCalendar(", "eventStore.removeCalendar(",
+                          ".save(", ".remove(", ".commit(", "CalendarUndoManager", ".record(", "saveNewReminder(",
                           "saveExistingReminder(", "saveExistingCalendar(", "saveForHistory(", "saveUnchecked(", "saveCopy(", "removeMoveCopy(",
                           "removeExistingReminder(", "removeExistingCalendar(", "commitReminderRemoval(", "recordUnreadUpdate(", "removeAlarm(",
-                          ".calendar = ", ".title = ", ".startDate = ", ".endDate = ", "FileHandle.standardError", "fputs(", "print(", "NSLog(",
+                          ".calendar = ", ".title = ", ".startDate = ", ".endDate = ", "FileHandle.standardError", "print(",
                           "writeFailureLog("]
 
 
@@ -67,7 +70,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
         // What was asked is built once, from the object the lookup searched with, and the zone goes
         // in as it is: a default in its place would hide a series with no time zone, whose slots are
         // not read (PR #545 verify).
-        let asked = "let request = EditedOccurrenceAddress.Request(seriesID: id, seriesIsAllDay: series.isAllDay, seriesZone: Self.occurrenceZone(of: series), requested: date)"
+        let asked = "let request = EditedOccurrenceAddress.Request(seriesID: id, seriesIsAllDay: series.isAllDay, seriesZone: Self.occurrenceZone(of: series), seriesStart: series.startDate, requested: date)"
         let decide = "switch EditedOccurrenceAddress.miss(for: call, matches: editedOccurrences(ofSeries: series, for: request), request: request) {"
         assertOnce(asked, in: miss)
         assertOnce(decide, in: miss)
@@ -122,11 +125,11 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
                 XCTAssertFalse(code.contains(write), "\(name): \(write)")
             }
         }
-        // The deny-list is live: each store write, the history record and the log helper are spelled
-        // somewhere in the manager, so a spelling that matched nothing would show here.
-        let manager = SourceScan.strippingComments(try manager())
-        for spelled in ["eventStore.save(", "eventStore.remove(", "CalendarUndoManager", ".record(", "saveForHistory(", "saveUnchecked("] {
-            XCTAssertTrue(manager.contains(spelled), spelled)
+        // The deny-list is live: every entry of it is spelled somewhere in Sources (comments
+        // stripped), so an entry that matches nothing shows here (PR #545 verify round 2: four did).
+        let sources = try SourceScan.swiftFiles().map { SourceScan.strippingComments(try String(contentsOf: $0, encoding: .utf8)) }.joined(separator: "\n")
+        for spelled in writes {
+            XCTAssertTrue(sources.contains(spelled), "matches nothing in Sources: \(spelled)")
         }
     }
 
@@ -243,7 +246,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
                            "(no occurrence on 2026-12-21)",
                            // PR #545 verify round 1: when the refusal applies, and the limits.
                            "An occurrence that was not edited on its own and starts on the day is resolved and written to as before.",
-                           "more than a year (366 days) away from the day asked for",
+                           "more than about a year away from the day asked for",
                            "in a timed series with no time zone, an occurrence asked for by its original day",
                            "That entry is read in the occurrence's own time zone",
                            "whose identifier has another shape",
@@ -251,30 +254,39 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
                            "`No occurrence of this event falls on occurrence_date.`",
                            // Before verify round 2: both directions of a moved occurrence, and #549.
                            "for one that was moved earlier it did not reach the occurrence between them",
-                           "left the edited occurrence itself, although it answered `deleted` (#549)",
+                           "answers `deleted`, and leaves the edited occurrence itself",
+                           // Before verify round 3: the slot guard, the floating update text, #549 as a defect.
+                           "whose recorded slot is not at the series' time of day is likewise found only by the day it starts on",
+                           "there the refusal says that the write starts at the occurrence's original date, which this server does not read",
+                           "for one that was moved earlier, that occurrence itself is deleted",
                            "(#548, cause not separated)"]),
             ("README_zh-TW.md", ["系列識別碼加那一天已經指不到它",
                                  "在排除日開始、被單獨修改過的場次算衝突",
                                  "(no occurrence on 2026-12-21)",
                                  "沒被單獨修改過、在那一天開始的場次照舊找得到、照舊寫入。",
-                                 "超過一年（366 天）",
+                                 "超過大約一年",
                                  "沒有時區的非全天系列裡",
                                  "這一項是用場次自己的時區讀的",
                                  "ID 是別種形狀的被修改場次",
                                  "這次改動沒有在 Google 與 Exchange 上跑",
                                  "`No occurrence of this event falls on occurrence_date.`",
                                  "往前移的場次，兩天之間的那一場沒有被寫到",
-                                 "留下被修改的那個場次本身，回應卻是 `deleted`（#549）",
+                                 "回應 `deleted`，卻留下被修改的那個場次本身",
+                                 "紀錄的時段不在系列那個時刻的被修改場次",
+                                 "訊息在那裡改說寫入從該場次原本的日期開始、這個 server 讀不到那個日期",
+                                 "往前移過時，那個場次本身會被刪",
                                  "（#548，原因還沒分開）"]),
             ("CHANGELOG.md", ["A series' identifier and a day no longer answer not found for an occurrence edited on its own",
                               "an excluded date that still holds an occurrence edited on its own is a conflict",
                               "The not-found answer of `update_event` and `delete_event` prints the requested day, not a UTC instant",
-                              "the occurrence was moved more than 366 days away from the requested day",
+                              "the occurrence was moved more than about a year away from the requested day",
                               "its `/RID=` is wall time read as UTC and is not read as a slot here",
                               "answer a conflict error of its own",
                               "Google and Exchange were not run for this change",
                               "moved earlier, it did not reach the occurrences between the two days",
-                              "the later occurrences were deleted and the edited occurrence itself stayed, #549"]),
+                              "the call answers `deleted`, and the edited occurrence itself stays, #549",
+                              "a recorded slot that is not at the series' time of day is not read either",
+                              "it says that the write starts at the occurrence's original date, which this server does not read"]),
             (".claude/rules/mcp-binary-version-testing.md", ["## Release gate：系列識別碼加日期指到被單獨修改過的場次（#532、#534、#535）",
                                                              "這個呼叫會被 #532 的訊息拒絕",
                                                              "8. **F（沒有時區的系列，PR #545 verify r1）**",
@@ -282,6 +294,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
                                                              "10. **R3（被往後移的場次與 span `future`，PR #545 verify r1）**",
                                                              "11. **Z（有自己時區的場次，PR #545 verify r1）**",
                                                              "12. **常駐 process（session MCP；這一格沒有做過，出版前要做）**",
+                                                             "13. **G（場次被修改之後才有時區的系列，PR #545 verify r2）**",
                                                              "那個代表場次被單獨改成另一種全天狀態"]),
         ]
         for pin in pins {

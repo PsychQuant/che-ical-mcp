@@ -767,16 +767,19 @@ final class ManifestParityTests: XCTestCase {
         for name in ["update_event", "delete_event", "move_events_batch"] {
             let tool = try descriptions(of: name)
             once("reaches only an occurrence that was not edited on its own, and one that starts on that day is resolved as before.", in: tool.declared, name)
-            once("When none does and an occurrence that was edited on its own belongs to that day (it starts on that day, or was on that day and now starts on another no more than a year away; in a timed series with no time zone only one that starts on that day is found)", in: tool.declared, name)
+            once("When none does and an occurrence that was edited on its own belongs to that day (it starts on that day, or was on that day and now starts on another no more than about a year away; in a timed series with no time zone, and for an occurrence whose recorded slot is not at the series' time of day, only one that starts on that day is found)", in: tool.declared, name)
             once("gives that occurrence's identifier (#532)", in: tool.declared, name)
-            once("does not reach an occurrence edited on its own: when no occurrence that was not edited on its own starts on that day,", in: tool.summary, name)
+            // PR #545 verify round 2: the refusal needs an edited occurrence that belongs to the day; a day
+            // with no occurrence is not refused.
+            once("does not reach an occurrence edited on its own: when no occurrence that was not edited on its own starts on that day and one edited on its own belongs to it,", in: tool.summary, name)
+            once(name == "move_events_batch" ? "(for a day with no occurrence the row's error says so)" : "(a day with no occurrence answers not found)", in: tool.summary, name)
             XCTAssertTrue(tool.summary.contains("gives its identifier"), "\(name): \(tool.summary)")
         }
         let update = try descriptions(of: "update_event").declared
-        once("with span 'this' pass it as event_id without occurrence_date, and with span 'future' the refusal says which way is left, and for an occurrence that was moved, where a write through that identifier starts.", in: update, "update_event")
+        once("with span 'this' pass it as event_id without occurrence_date, and with span 'future' the refusal says which way is left and, for an occurrence that was moved and whose original date is read, that a write through that identifier starts at that date; in a timed series with no time zone it says that the write starts at the original date, which this server does not read.", in: update, "update_event")
         once("When no occurrence is on that day, the error names the day as a date in the event's time zone (#535).", in: update, "update_event")
         let delete = try descriptions(of: "delete_event").declared
-        once("with span 'future' a delete through it starts at that occurrence's original date, which for one that was moved later is before the day it starts, and cannot be undone; in a timed series with no time zone that delete left the edited occurrence itself when it was measured (#549).", in: delete, "delete_event")
+        once("with span 'future' a delete through it starts at that occurrence's original date, which for one that was moved later is before the day it starts and for one that was moved earlier is after it (that occurrence is deleted with the later ones, and the ones between the two days stay), and cannot be undone; in a timed series with no time zone that delete answers deleted and leaves the edited occurrence itself, a known defect (#549).", in: delete, "delete_event")
         once("When no occurrence is on that day, the error names the day as a date in the event's time zone (#535).", in: delete, "delete_event")
         let move = try descriptions(of: "move_events_batch").declared
         once("to pass in event_ids with the day it starts, read in that occurrence's own time zone, as its occurrence_dates entry.", in: move, "move_events_batch")
