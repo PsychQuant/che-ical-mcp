@@ -817,6 +817,55 @@ final class SeriesExceptionsUndoTests: XCTestCase {
                        "the early deletions stay deleted (the first occurrence is the series' anchor)")
     }
 
+    // MARK: - #527 (PR #531 verify r1): the overlap of two recorded windows, from a series the tools can make
+
+    /// The series of the overlap step in the #319/#321 release gate, start to end: weekly, 300
+    /// occurrences, begun 1,640 days before the delete, with the end the planner reads from that
+    /// rule. One occurrence two years before the delete was deleted on its own and the one two
+    /// weeks after it edited on its own; both are inside both recorded windows. Undo lists the
+    /// recreated series once per window, so every occurrence of the overlap is listed twice; each
+    /// is taken once, so each of the two is removed once, and the edited one comes back once.
+    func testAWeeklyCountBegunFourAndAHalfYearsAgoRestoresItsExceptionsInTheOverlapOnce() throws {
+        let now = s0
+        let first = now.addingTimeInterval(-1_640 * day)
+        let all = (0..<300).map { first.addingTimeInterval(Double($0) * 7 * day) }
+        let deleted = all[130], edited = all[132]
+        XCTAssertEqual(deleted, now.addingTimeInterval(-730 * day))
+        let store = FakeSeriesExceptionsStore()
+        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: all.filter { $0 != deleted })
+        let own = try XCTUnwrap(occurrences.first { $0.start == edited })
+        let rid = "/RID=\(Int(edited.timeIntervalSinceReferenceDate))"
+        own.id = "S" + rid
+        own.external = "X-S" + rid
+        own.detached = true
+        own.title = "Standup moved"
+        let rule = DetachedOccurrenceSpan.RuleExtent(EKRecurrenceRule(recurrenceWith: .weekly, interval: 1, end: EKRecurrenceEnd(occurrenceCount: 300)))
+        store.seriesEnd = SeriesExceptionsPlanner.seriesEnd(rules: [rule], firstStart: first,
+                                                            calendar: Calendar.gregorian(in: TimeZone(identifier: "Asia/Taipei")!))
+
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
+
+        XCTAssertEqual(exceptions.windows, [around(now), fromFirst(now, -1_640)])
+        let overlap = try XCTUnwrap(exceptions.windows[0].intersection(with: exceptions.windows[1]))
+        XCTAssertTrue(overlap.contains(deleted) && overlap.contains(edited))
+        XCTAssertEqual(exceptions.detached.map(\.slot), [edited])
+        XCTAssertFalse(exceptions.keptSlots.contains(deleted))
+
+        let restoreStore = FakeSeriesExceptionsStore()
+        restoreStore.seriesSlots = all
+        let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: first).withExceptions(exceptions)
+        let (_, outcome) = try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: snapshot.calendarIdentifier, in: restoreStore)
+
+        XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 1)))
+        XCTAssertEqual(restoreStore.log.filter { $0 == "list" }.count, 2, "one listing per recorded window")
+        let listedTwice = all.filter { overlap.contains($0) }.count
+        XCTAssertGreaterThan(listedTwice, 100, "the occurrences inside both windows")
+        XCTAssertEqual(restoreStore.log.filter { $0.hasPrefix("remove") }.sorted(), [slotLog(deleted), slotLog(edited)].sorted(),
+                       "each removed once, although both windows list it")
+        XCTAssertEqual(restoreStore.starts(of: "E1"), all.filter { $0 != deleted && $0 != edited })
+        XCTAssertEqual(restoreStore.events.filter { $0.title == "Standup moved" }.map(\.start), [edited], "back once, as a one-off")
+    }
+
     /// A store that lacks a count's early history keeps the window from its first occurrence too:
     /// its missing occurrences count as deleted, the same as before #319.
     func testAStoreMissingTheEarlyHistoryKeepsTheWindowFromTheFirstOccurrence() throws {
