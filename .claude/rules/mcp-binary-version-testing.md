@@ -209,11 +209,12 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
 ## Release gate：長期系列的整個系列刪除 undo 與重複防護（#319、#321）
 
 > **#527**：這條 undo 路徑裡的時段比對（`SeriesExceptionsUndo.restore`、`SeriesExceptionsRestorer.restore`、`SeriesExceptionsPlanner.surplusSlots`）
-> 改成不逐一掃描。這項改動沒有裝置上的證據（undo 有狀態，`--cli` 走不到），只有與前一版程式逐一比對的測試。本節第 1 到 9 步會走到
-> `SeriesExceptionsRestorer.restore` 與 `surplusSlots` 的比對，但走不到 `SeriesExceptionsUndo.restore` 裡唯一新增的分支：兩個紀錄視窗重疊處的
+> 改成不逐一掃描。這項改動沒有裝置上的證據（undo 有狀態，`--cli` 走不到），只有與前一版程式逐一比對的測試。本節第 1、3、4、5、6、7、9 步
+> 有整個系列的刪除與它的 undo，會走到這三處的比對。第 2、8 步沒有整個系列的刪除（第 2 步是單一場次的刪除與 undo，第 8 步是 split move 的 undo），
+> 不擷取視窗，也走不到這三處。會走到的那七步都走不到 `SeriesExceptionsUndo.restore` 裡唯一新增的分支：兩個紀錄視窗重疊處的
 > 場次只取一次（`DistinctInstants.insert` 回 false）。紀錄要有兩個視窗，系列必須是次數型、刪除在第一場之後超過 1093 天、而且最後可能的時段在
-> 第一場之後超過 1458 天（結束推算不出來的次數型系列只看前一個條件；`SeriesExceptionsUndo.capture`、`SeriesExceptionsPlanner.deleteWindow`）。第 1、4、5、9 步的系列沒有結束，第 6 步的有結束日，第 2、3、8 步的系列照步驟是剛建立的，
-> 第 7 步的 450 次一三五系列最後可能的時段在第一場之後 1057 天，所以都只記一個視窗（`SeriesDeleteWindowTests.testTheOtherGateShapesRecordOneWindow`）。
+> 第一場之後超過 1458 天（結束推算不出來的次數型系列只看前一個條件；`SeriesExceptionsUndo.capture`、`SeriesExceptionsPlanner.deleteWindow`）。第 1、4、5、9 步的系列沒有結束，第 6 步的有結束日，第 3 步的次數型系列是剛建立的，
+> 第 7 步的 450 次一三五系列最後可能的時段在第一場之後 1057 天，所以都只記一個視窗（`SeriesDeleteWindowTests.testTheOtherGateShapesRecordOneWindow` 對這四種形狀呼叫 `capture`）。
 > 第 10 步是為這個分支加的，**還沒做過**。出含 #527 的版本之前，第 1 到 10 步都要做，結果也記在 #527。
 
 #319 的視窗位置（`SeriesExceptionsPlanner.deleteWindow`）與 #321 的重複防護（系列識別碼與規則時段，
@@ -270,17 +271,36 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#319` 或
    「was not recreated in its original calendar: its series already holds its original slot there」，複本留在 B、沒有
    被查找或移除。變形：另建一個這樣的系列，搬移前先用 `--cli` 的 `update_event` span `this` 改那個場次的標題，其餘
    相同 → 最後的 `undo` 回應說「the copy the move made (id …) is the only version with that edit」。
-10. **兩個紀錄視窗重疊處的場次只取一次（#527，還沒做過）**：用 `--cli` 建一個開始於約四年半前、每週一次（只在一個星期幾）、`occurrence_count: 300` 的系列
+10. **兩個紀錄視窗重疊處的場次只取一次（#527，還沒做過）**：
+    **先記錄是哪個 binary。** #527 不改變任何回應，沒有欄位或文字分得出它，所以這一步在 #319 之後的任何 binary 上都會通過；〈鐵律〉的行為探測
+    只能確認 session 是 #319／#321 之後的版本。要把結果記在 #527 名下，先記下 `~/bin/CheICalMCP --version` 與 `cat ~/bin/.CheICalMCP.version`
+    （〈Wrapper failure-cache 坑〉一節的兩個指令），確認是含 #527 的版本；再確認 session 的 server process 是在這個檔案換上之後才啟動的
+    （同一節：換完檔案後，已在跑的 process 仍是舊 binary）：用 `pgrep -fl CheICalMCP` 找出路徑在 `~/bin` 的那個 process，它的啟動時間
+    （`ps -o lstart= -p <pid>`）要晚於 `~/bin/CheICalMCP` 的修改時間。對不上就重啟後重做；沒有這兩項紀錄的結果不記在 #527 名下。
+    **步驟。** 用 `--cli` 建一個開始於約四年半前、每週一次（只在一個星期幾）、`occurrence_count: 300` 的系列
     （自己的標題，例如「#527 step 10」；它約一年多後結束）。這個形狀的紀錄有兩個視窗：刪除前 1094 天起的 1460 天，以及第一場前一天起的 1460 天，
-    兩者從刪除前約三年重疊到刪除前約半年（`SeriesDeleteWindowTests.testAWeeklyCountBegunFourToFiveYearsBeforeTheDeleteRecordsTwoOverlappingWindows`
-    算的是這個形狀；整條路徑在記憶體內的 store 上跑過，`SeriesExceptionsUndoTests.testAWeeklyCountBegunFourAndAHalfYearsAgoRestoresItsExceptionsInTheOverlapOnce`）。
+    兩者從刪除前約三年重疊到刪除前約半年（`SeriesDeleteWindowTests.testAWeeklyCountBegunFourToFiveAndAHalfYearsBeforeTheDeleteRecordsTwoOverlappingWindows`
+    對這個形狀呼叫 `capture`；整條路徑在記憶體內的 store 上跑過，`SeriesExceptionsUndoTests.testAWeeklyCountBegunFourAndAHalfYearsAgoRestoresItsExceptionsInTheOverlapOnce`）。
     用 `--cli` 刪掉約兩年前的一個場次（span `this`），再用 `--cli` 改它兩週後那個場次的標題（span `this`）；兩個寫入都不進 session 的 undo stack →
+    session 的 `list_events`（只列這個拋棄式日曆，範圍含那兩天）先確認 session 看得到這兩個寫入：被刪的那天沒有場次，被改的那個場次是新標題
+    （看不到就停下來，這一步不算數：跨 process 的寫入沒傳到長駐 process 的 store，見本節第 5 步與 #287、#511 的同一個檢查）→
     session：`delete_event` span `all`（系列 id）→ `undo`：回應說 1 個場次維持刪除、1 個編輯過的場次以一次性事件回來，並列出兩個視窗
     （兩段「from … up to …」以「, and」相接）→ 用 `--cli` 的 `list_events` 讀回刪除前約三年到約半年（只列這個拋棄式日曆）：被刪的那天沒有場次，
     被改的那天只有一個事件（一次性事件，改過的標題），其餘每週各一個場次、沒有重複。
-    - undo 以「could not remove the occurrence on …」拒絕（重建的系列被刪掉），或回應的「維持刪除」不是 1 個：重疊處的場次被兩個視窗各取了一次，
-      就是這個分支錯了，回報到 #527。
-    - 回應只列一個視窗：這個形狀在裝置上沒有記到兩個視窗（例如來源把次數規則讀成結束日），這一步不算數；記下 `list_events` 讀到的規則，回報到 #527。
+    **非預期的結果各自代表什麼**（從 `SeriesExceptionsUndo.restore`、`surplusSlots`、`ExclusionExecutor.run` 與 `SeriesExceptionsRestorer.restore` 追的）：
+    - **重疊處的場次被取了兩次**（這個分支錯了）只有兩種結果：`undo` 以「could not remove the occurrence on …」拒絕（同一個場次的第二次移除失敗，
+      重建的系列被刪掉，紀錄留著可以重試），或回應說 2 個場次維持刪除（第二次移除沒有報錯）。兩種情況下「以一次性事件回來」都還是 1 個。
+    - 「could not remove」也可能是 EventKit 自己的刪除失敗，訊息括號裡的代碼（`eventkit_error_N` 之類）分不出是哪一種。先照訊息重試一次 `undo`：
+      重試通過就是暫時的失敗，記下來，不歸到這個分支。重試仍被拒絕，而且兩次訊息裡的日期都是被刪或被改的那兩天之一（都在重疊區），才回報到 #527，
+      附上兩次的訊息；日期是別的日子時，記下來回報，不判定。
+    - **維持刪除是 0 個，或一次性事件是 0 個**：重複取用不會讓數字變少，所以不歸到這個分支。前面那次 session 的 `list_events` 沒做、或做了但
+      看不到 `--cli` 的寫入時，就是 session 的 `delete_event` 擷取例外時沒有看到那個刪除或修改，這一步不算數。那次檢查通過了卻仍出現 0 個，
+      原因不明：記下完整回應與那次 `list_events` 的結果回報，不判定。
+    - **「Restored from the series rules alone」**有兩種，都不是重複取用造成的（重複取用只讓重建系列的清單多出重複項，不會讓紀錄的時段找不到）。
+      後面接「because its exceptions were not checked when it was deleted」：刪除時沒有擷取到例外。後面接「the recorded exceptions did not match the
+      occurrences of the recreated series」：紀錄的某個時段在 undo 當下列出的重建系列裡找不到。兩種都記下完整訊息回報，不判定。
+    - **其他數字**（例如維持刪除 3 個以上，或一次性事件 2 個）：記下來回報，不判定。
+    - **回應只列一個視窗**：這個形狀在裝置上沒有記到兩個視窗（例如來源把次數規則讀成結束日），這一步不算數；記下 `list_events` 讀到的規則，回報到 #527。
 
 另外記錄、不算通過條件的：在 Google（或其他存檔後會換 id 的來源）上做第 4 步時，若重建系列存檔後 id 變了，
 第 4 步會寫出第二個事件（已知限制，CHANGELOG 的 Not covered）；有大量事件的拋棄式日曆時，做一次刪掉約 20 個
@@ -959,7 +979,7 @@ stateful，`--cli` 走不到（見上表），而跨帳號的搬移需要第二�
 4. 從 2021-11-01 起：`updated`，檢查到 2029-11-14（多列了現在前後的範圍）；從 2016-11-07 起：span `all` 以
    `horizonNotReached` 拒絕，從 2026-11-16 用 span `future`：`updated`，檢查到 2029-11-14。
 5. 從 2018-11-12 起的每日系列：這次呼叫 6.16 s；本週開始的每日系列 2.16 s（日曆裡只有這個系列，#520）。#520 之後（2026-11-13，release build、
-   Developer ID 簽章，各三次的中位數，每個數字是一次 `--cli` 整個 process 的時間；日曆建在預設來源，沒有讀回來源，推定是 iCloud）：同樣的兩個呼叫 0.32 s 與 0.21 s，當天的 `main` 是 5.81 s 與 2.07 s；除了跟著呼叫時鐘走的 `deleted_occurrences_checked_until`，回應與讀回相同。#527 之後，#503 的 baseline 與刪除檢查列同一段日期時共用一次列出；這次呼叫裡其他的列出照舊，其中 #509 的規則結束檢查需要系列第一個時段時，會在這兩者之前自己列一次同一段日期。
+   Developer ID 簽章，各三次的中位數，每個數字是一次 `--cli` 整個 process 的時間；日曆建在預設來源，沒有讀回來源，推定是 iCloud）：同樣的兩個呼叫 0.32 s 與 0.21 s，當天的 `main` 是 5.81 s 與 2.07 s；除了跟著呼叫時鐘走的 `deleted_occurrences_checked_until`，回應與讀回相同。#527 之後，#503 的 baseline 與刪除檢查列同一段日期時共用一次列出；這次呼叫裡其他的列出照舊，其中好幾個會在自己的檢查執行時再列一次同一段日期，包括 #509 的規則結束檢查需要系列第一個時段的時候（把它也共用是 #533）。
    #527 是另一次量測（2026-11-13，iCloud，來源從拋棄式日曆讀回；另一批拋棄式日曆、當天另一個時間；release build、Developer ID 簽章，兩輪各三次、`main` 與新 binary 交錯，
    寫的是兩輪各自的中位數）。兩次量測都沒有記錄機器負載，所以下面的數字只能彼此比較，不能和上一句 #520 的 0.32 s、0.21 s 比（這裡的「修改前」就是 #520 之後的 `main`）。本週開始的系列
    單獨一個日曆時 0.35、0.37 s 變成 0.27、0.25 s，同一個日曆另有六個每日系列時 0.88、1.03 s 變成 0.50、0.57 s；2018 年開始的系列，兩者列的日期不同，仍各列一次，
