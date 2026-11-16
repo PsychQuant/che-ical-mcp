@@ -12,7 +12,7 @@
 
 ## 3. 三個呼叫點
 
-- [x] 3.1 `update_event` 在事件的第一個欄位被指派之前讀一次 `changesCalendar`，原本各自計算同一個式子的兩個拒絕改讀它。驗證：新檔 `EventUpdateFollowWiringTests` 的位置 pin（宣告在第一個指派之前、字串只出現一次），既有的拒絕測試維持綠。
+- [x] 3.1 `update_event` 在事件的第一個欄位被指派之前讀一次 `changesCalendar`，原本各自計算同一個式子的兩個拒絕改讀它。驗證：新檔 `EventUpdateFollowWiringTests` 的位置 pin（宣告在第一個指派之前、字串只出現一次）。既有的拒絕測試都是綠的，但其中一個改寫了：`UpdatedIdentifierTests.testTheCalendarRefusalComesBeforeTheFirstWrite` 原本釘住寫在拒絕裡的式子，改成釘住 `let changesCalendar` 的宣告與讀它的拒絕（commit `f75c75e6`；verify 第 1 輪後更正本句，原文寫「維持綠」）。
 - [x] 3.2 `update_event` 存檔之後、推入自己的紀錄之前，以 `changedCalendar: changesCalendar`、`wholeEvent: !hadRules || applyToAll`、`viaStandIn: resolved.viaStandIn` 與存檔前讀到的「是否為場次自己的識別碼」呼叫 `identifierToFollow`，有回傳時呼叫 `CalendarUndoManager.shared.replaceEventIdentifier`。驗證：`EventUpdateFollowWiringTests` 的順序與引數 pin。
 - [x] 3.3 分裂不跟隨：決定存哪個物件的三個分支維持現狀（事件不重複與 span `all` 存解析到的物件，其餘存 `occurrence_date` 找到的場次）。驗證：`EventUpdateFollowWiringTests` 的 pin，標記 `spec-example: undo-history-discard / the saved object is picked in three branches`。
 - [x] 3.4 一次性事件的 update-undo 在存檔後比對紀錄的識別碼與事件的識別碼，不同時改寫較舊的紀錄，並經 `updateUndoneText` 回應。驗證：`EventUpdateFollowWiringTests` 的順序 pin（存檔、比對、改寫、回應）。
@@ -21,8 +21,8 @@
 
 ## 4. 公開文字與文件
 
-- [x] 4.1 `Server.swift` 裡 `update_event`、它的 `calendar_name` 參數與 `undo` 的描述，以及 `mcpb/manifest.json` 裡 `update_event` 與 `undo` 的摘要，寫明同帳號的另一個日曆也可能給出新識別碼（在 Google 帳號內量到）、較舊的 undo entry 會跟上、這種 update 或 move 的 undo 可能以新 ID 結尾；「in four cases only」保留。驗證：`ManifestParityTests` 的新斷言（每個新句子在兩份都有，沒有角括號與 ampersand）。
-- [x] 4.2 [P] `README.md` 與 `README_zh-TW.md` 的日曆那一種情況與描述一致、次數寫四種，`CHANGELOG.md` 有對應條目。驗證：三個檔案對照描述逐句讀過。
+- [x] 4.1 `Server.swift` 裡 `update_event`、它的 `calendar_name` 參數與 `undo` 的描述，以及 `mcpb/manifest.json` 裡 `update_event` 與 `undo` 的摘要，寫明同帳號的另一個日曆也可能給出新識別碼（在 Google 帳號內量到）、較舊的 undo entry 會跟上、這種 update 或 move 的 undo 可能以新 ID 結尾；「in four cases only」保留。驗證：`ManifestParityTests.testTheCalendarChangeSurfacesNameTheNewIdentifierWithinAnAccount` 在 `update_event` 描述、`calendar_name` 參數、`undo` 描述與兩份 manifest 摘要各釘住該處自己的句子、每句恰好一次（各處的措辭不同，不是同一句在兩份都有）；沒有角括號與 ampersand 由既有的 `testServedToolTextHasNoXMLMetacharacters` 檢查。（verify 第 1 輪後更正本句，原文寫成新斷言檢查同一句在兩份都有、並檢查角括號與 ampersand。）
+- [x] 4.2 [P] `README.md` 與 `README_zh-TW.md` 的日曆那一種情況與描述一致、次數寫四種，`CHANGELOG.md` 有對應條目。驗證：三個檔案對照描述逐句讀過。（verify 第 1 輪指出 README 那一句仍比描述寬：沒有限定整個事件，也沒有寫 #551；該輪已更正 README 與 CHANGELOG。）
 - [x] 4.3 [P] `.claude/rules/mcp-binary-version-testing.md` 的 release gate (j) 有三個順序（move、換日曆、換日曆後丟棄紀錄）。驗證：rule 檔對照下面的裝置格讀過。
 
 ## 5. 證明

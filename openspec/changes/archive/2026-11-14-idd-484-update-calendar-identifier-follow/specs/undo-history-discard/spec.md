@@ -2,7 +2,7 @@
 
 ### Requirement: Records follow an identifier this server's calendar change gave
 
-When a write of this server moves an event to another calendar and the store gives the event a new identifier, the server SHALL move every undo and redo record that names the event by its old identifier to the new one, so that an older record still finds the event. A removed identifier held by a delete record SHALL NOT be touched. The identifier comparison SHALL treat a series identifier and an occurrence identifier of that same series as the same identifier, and SHALL treat an empty identifier as no change.
+Only the writes of this server listed here SHALL move records: an in-place move of `move_events_batch` and the undo of that move; `update_event` when all five conditions below hold; and the undo of an `update_event` on a one-off event, with or without `keep_later_edits`. When one of these writes moves an event to another calendar and the store gives the event a new identifier, the server SHALL move every undo and redo record that names the event by its old identifier to the new one, so that an older record still finds the event. Any other write that gives an event a new identifier SHALL NOT move records. One such write is `update_event` with span `future` from the series' first occurrence and `calendar_name`: it fails condition 2, so no record follows, although within a Google account it moved the whole series under a new identifier and the undo of the series' creation then answered not found (#551). A removed identifier held by a delete record SHALL NOT be touched. The identifier comparison SHALL treat a series identifier and an occurrence identifier of that same series as the same identifier, and SHALL treat an empty identifier as no change.
 
 For `update_event` the server SHALL rewrite only when all of the following hold, and SHALL NOT rewrite for a new identifier that has any other cause:
 
@@ -51,7 +51,7 @@ The undo of an `update_event` on a one-off event, with or without `keep_later_ed
 
 #### Scenario: A split is not followed
 
-- **WHEN** `update_event` with span `future` starts a new series from an occurrence, or a write goes through an occurrence's own identifier or the stand-in
+- **WHEN** `update_event` with span `future` starts a new series from an occurrence or, from the series' first occurrence with `calendar_name`, moves the whole series (#551), or a write goes through an occurrence's own identifier or the stand-in
 - **THEN** no record is rewritten, whatever identifier the save returns
 
 ##### Example: the saved object is picked in three branches

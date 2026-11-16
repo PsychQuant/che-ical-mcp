@@ -1,6 +1,6 @@
 ## Problem
 
-在 Google 帳號上，`update_event` 帶 `calendar_name` 把事件換到同帳號的另一個日曆時，事件會拿到新的識別碼（PsychQuant/che-ical-mcp#484，2026-11-13 量測：一次性事件 4 次都換、整個系列 1 次；跨帳號則在任何來源都會換，#226）。undo history 以識別碼指認事件，較舊的紀錄仍指著舊識別碼，所以：
+在 Google 帳號上，`update_event` 帶 `calendar_name` 把事件換到同帳號的另一個日曆時，事件會拿到新的識別碼（PsychQuant/che-ical-mcp#484，2026-11-13 量測：一次性事件 4 次都換、整個系列 1 次；跨帳號也會換，#226，跨帳號量過的是 iCloud 與 Google 兩個方向）。undo history 以識別碼指認事件，較舊的紀錄仍指著舊識別碼，所以：
 
 - 換日曆之後，較舊的 create／update 紀錄再 undo 會回「not found under its recorded identifier」，紀錄留在最上面，底下的紀錄全部被擋住。
 - 那次換日曆的 undo 把事件搬回原日曆時又換一次識別碼，回應沒有回報新識別碼，較舊的紀錄同樣失聯。帶 `keep_later_edits` 的 undo 也一樣。
@@ -18,14 +18,13 @@
 - 整個系列只需要正向那一步：系列換日曆的 undo 是 marker，什麼都不寫。
 - 工具描述、manifest 摘要、README、CHANGELOG 與 release gate 的 (j) 一併更新。
 
-ASSUMPTION: proposal 與 `tasks.md` 照本 repo 的 Spectra locale 用繁體中文，spec 照規定用英文；貼到公開 issue 的 Spec tasks 留言與 Implementation Complete 的 checklist 以英文逐項對應 `tasks.md` 的編號。
 
 ## Non-Goals
 
 - 提醒事項（`update_reminder` 跨帳號換清單）：#536。
 - #321 slot guard 讀的系列識別碼：#537。
 - delete 的 undo 重建出新識別碼：#538。
-- 系列分裂、或剩下的部分拿到新識別碼時不跟隨（協調者 2026-11-13 的預設，與 #377 一致）。
+- 系列分裂、或剩下的部分拿到新識別碼時不跟隨（與 #377 一致）。
 - changed-after 拒絕訊息把變更歸給另一個 app 或伺服器的措辭：#540。
 - `undo` 回應不新增結構化欄位；新識別碼只在 `message` 裡，與 move 的 undo 相同。
 - 不採用「每次存檔後統一比對識別碼」的通用 hook：它必須分辨改名與分裂，而且要改動所有既有事件的存檔點。
@@ -43,5 +42,5 @@ ASSUMPTION: proposal 與 `tasks.md` 照本 repo 的 Spectra locale 用繁體中�
 
 - Affected specs: `undo-history-discard`（新增一條 requirement）
 - Affected code:
-  - Modified: `Sources/CheICalMCP/EventKit/EventUpdateRecord.swift`, `Sources/CheICalMCP/EventKit/EventKitManager.swift`, `Sources/CheICalMCP/EventKit/EventKitManager+KeepLaterEdits.swift`, `Sources/CheICalMCP/EventKit/UndoKeepLaterEdits.swift`, `Sources/CheICalMCP/Server.swift`, `mcpb/manifest.json`, `README.md`, `README_zh-TW.md`, `CHANGELOG.md`, `.claude/rules/mcp-binary-version-testing.md`, `Tests/CheICalMCPTests/EventUpdateRecordTests.swift`, `Tests/CheICalMCPTests/EventMoveUndoTests.swift`, `Tests/CheICalMCPTests/UndoKeepLaterEditsTests.swift`, `Tests/CheICalMCPTests/UndoKeepLaterEditsWiringTests.swift`, `Tests/CheICalMCPTests/ManifestParityTests.swift`
+  - Modified: `Sources/CheICalMCP/EventKit/EventUpdateRecord.swift`, `Sources/CheICalMCP/EventKit/EventKitManager.swift`, `Sources/CheICalMCP/EventKit/EventKitManager+KeepLaterEdits.swift`, `Sources/CheICalMCP/EventKit/UndoKeepLaterEdits.swift`, `Sources/CheICalMCP/Server.swift`, `mcpb/manifest.json`, `README.md`, `README_zh-TW.md`, `CHANGELOG.md`, `.claude/rules/mcp-binary-version-testing.md`, `Tests/CheICalMCPTests/EventUpdateRecordTests.swift`, `Tests/CheICalMCPTests/EventMoveUndoTests.swift`, `Tests/CheICalMCPTests/UndoKeepLaterEditsTests.swift`, `Tests/CheICalMCPTests/UndoKeepLaterEditsWiringTests.swift`, `Tests/CheICalMCPTests/ManifestParityTests.swift`, `Sources/CheICalMCP/UpdatedIdentifier.swift`（doc comment）, `Tests/CheICalMCPTests/UpdatedIdentifierTests.swift`（verify 第 1 輪後補上這兩個檔案）
   - New: `Tests/CheICalMCPTests/EventUpdateFollowWiringTests.swift`
