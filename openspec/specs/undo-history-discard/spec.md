@@ -197,7 +197,7 @@ The undo of an `update_event` on a one-off event, with or without `keep_later_ed
 
 #### Scenario: A split is not followed
 
-- **WHEN** `update_event` with span `future` starts a new series from an occurrence or, from the series' first occurrence with `calendar_name`, moves the whole series (#551), or a write goes through an occurrence's own identifier or the stand-in
+- **WHEN** `update_event` with span `future` starts a new series from an occurrence or, from the series' first occurrence with `calendar_name`, moves the whole series (#551), or an `update_event` write goes through an occurrence's own identifier or the stand-in
 - **THEN** no record is rewritten, whatever identifier the save returns
 
 ##### Example: the saved object is picked in three branches
