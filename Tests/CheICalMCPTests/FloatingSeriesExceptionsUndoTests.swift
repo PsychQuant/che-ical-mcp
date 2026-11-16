@@ -69,6 +69,7 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
     /// F1: six weekly occurrences at 10:00 local; the third retitled and the fourth moved an hour,
     /// both while the series had no zone. Undo brings both back as one-off events (before #539: from
     /// the rules alone, both edits lost), in every host zone.
+    // spec-example: undo-history-discard / a floating edit comes back
     func testFloatingEditsComeBackInEveryHostZone() throws {
         for zone in zones {
             let slots = weekly(from: date(2027, 2, 11, 10, in: zone), count: 6)
@@ -191,6 +192,7 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
     /// MA: the third occurrence, edited floating, is deleted through its own identifier; then the whole
     /// series; undo of the series, then undo of the occurrence. With the series restored with its
     /// exceptions the third slot stays empty and the second undo writes one one-off: one event there.
+    // spec-example: undo-history-discard / MA writes one event
     func testTheChainOfMAWritesNoDuplicate() throws {
         for zone in zones {
             let slots = weekly(from: date(2027, 2, 11, 5, in: zone), count: 6)

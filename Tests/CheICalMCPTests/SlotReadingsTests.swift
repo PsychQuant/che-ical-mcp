@@ -21,6 +21,7 @@ final class SlotReadingsTests: XCTestCase {
     /// Cell F1 of #539: the occurrence of 2027-02-25 10:00 in Taipei, edited while the series had no
     /// zone, reads `/RID=` of 2027-02-25T10:00:00Z. Its instant reading is 10:00Z, its wall-clock
     /// reading 10:00 in Taipei (02:00Z), the slot.
+    // spec-example: undo-history-discard / the two readings of an identifier
     func testATimedRIDHasAnInstantAndAWallClockReading() throws {
         let digits = date(2027, 2, 25, 10, in: utc)
         let readings = try XCTUnwrap(SlotReadings.of(eventIdentifier: rid(digits), externalIdentifier: nil, occurrenceDate: nil,

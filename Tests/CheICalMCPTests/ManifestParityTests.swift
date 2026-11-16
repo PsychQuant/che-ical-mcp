@@ -673,6 +673,26 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(summary.contains("not by title"), summary)
     }
 
+    /// #539: the three surfaces that describe the undo of a whole-series delete, and the undo of an
+    /// occurrence's delete, say how an occurrence edited while its timed series had no time zone is
+    /// read: each once per description, and in the manifest summary of undo.
+    func testUndoSurfacesSayHowAnOccurrenceEditedWithoutATimeZoneIsRead() throws {
+        let placed = "#539: an occurrence edited while its timed series had no time zone carries its original time as wall-clock time, and is placed on the slot of the recreated series that one reading of that time gives, as wall-clock time or as an instant"
+        let guarded = "#539: both readings of that slot are compared, so an occurrence edited while its series had no time zone is matched too"
+        let declared = CheICalMCPServer.defineTools()
+        for name in ["delete_event", "delete_events_batch", "undo"] {
+            let description = declared.first { $0.name == name }?.description ?? ""
+            XCTAssertEqual(description.components(separatedBy: placed).count - 1, 1, "defineTools() \(name): \(description)")
+            XCTAssertEqual(description.components(separatedBy: guarded).count - 1, 1, "defineTools() \(name): \(description)")
+        }
+        let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
+        let summary = (manifest?["tools"] as? [[String: Any]] ?? []).first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
+        for phrase in ["(#539: an occurrence edited while its timed series had no time zone is placed by either reading of its original time, as wall-clock time or as an instant)",
+                       "either reading of that slot for a series with no time zone, #539, not by title"] {
+            XCTAssertEqual(summary.components(separatedBy: phrase).count - 1, 1, "mcpb/manifest.json undo: \(phrase)")
+        }
+    }
+
     /// #285: undo of a whole-series delete recreates the series from its rules and restores its
     /// exceptions inside the scan window: an occurrence deleted on its own earlier stays deleted,
     /// one edited on its own comes back as a separate one-off event, and exceptions outside the

@@ -1305,3 +1305,34 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 結果記在 #532。結束後依 id 刪掉拋棄式日曆，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#532` 的都是 0；**至少一小時後再查
 一次**：iCloud 曾把刪掉的拋棄式日曆空著帶回來（#416 一節記過 2026-11-05 的一次，新的 id、空的；2026-11-16 又出現一個空的 `#532 L`），
 有的話依 id 再刪一次並記下來。計數只代表計數的那一刻。
+
+## Release gate：沒有時區的系列，修改過的場次在 undo 裡的讀法（#539）
+
+#539 讓整個系列刪除的 undo（`SeriesExceptionsPlanner.placeDetached`）與單一場次刪除的 undo 的檢查（`OccurrenceSlotGuard.isHeld`）
+把修改過的場次的 `/RID=` 讀成兩種時間（`SlotReadings`：牆上時間與時刻），採用落在系列場次上的那一種。純函式、記憶體內 store 與
+三個主機時區都有測試；裝置上只在**單一 stdio process**（不是 session MCP）做過，所以**出 #539 的那個版本打 tag 之前**，在重啟後的
+session MCP 上（行為探測確認是新 binary 之後）重做下面幾格，只用名稱含 `#539` 的拋棄式 iCloud 日曆。系列都是每週 6 場、第一場在
+未來、帶 `timezone: Asia/Taipei` 與 `end_date` 建立；修改與 `clear_timezone` 用 `--cli` 做（不進 session 的 undo stack），刪除與 undo
+在 session 上做，讀回用 `--cli`：
+
+1. **F1**：`clear_timezone`（span `all`）→ 第 3 場改標題、第 4 場延後一小時（span `this`）→ session：`delete_event` span `all` → `undo`：
+   `2 occurrence(s) edited on their own came back`，讀回與刪除前相同。
+2. **D2**：`clear_timezone` → 第 3 場改標題、第 5 場刪除 → 刪除、undo：`1 … stayed deleted, 1 … came back`。
+3. **R2**：第 3 場在有時區時改標題 → `clear_timezone` → 第 4 場改標題 → 刪除、undo：兩個都回來。
+4. **MA**：`clear_timezone` → 第 3、5 場改標題 → session：用第 3 場自己的 id 刪除（span `this`）→ 刪整個系列 → `undo` → `undo`：第二次回
+   `restored the deleted occurrence … as a one-off event`，讀回那個時間只有一個事件（+0 與 +30 秒）。
+5. **Z1**（對照，系列保有時區）：只做第 1 步的兩個修改 → 刪除、undo：兩個都回來。
+6. **D1**（對照）：`clear_timezone` → 第 3 場刪除 → 刪除、undo：`1 … stayed deleted`。
+7. **L1、U1**：同 F1，server 分別以 `TZ=America/Los_Angeles`、`TZ=UTC` 執行（session MCP 做不到，這兩格在 stdio process 上做即可）。
+
+2026-11-16 已在 iCloud 用 `83d2418a` 的簽章 release build、每格一個 stdio process 做過第 1 到 7 步，結果都如上。**沒做、出版前要補或
+記成未量**：
+
+- 主機時區的夏令時間切換日修改的場次（`TZ=America/Los_Angeles`，2027-03-14 02:30 與 2027-11-07 01:30）：記下 undo 是還原還是從規則
+  重建（純函式的判斷是放不上去時什麼都不還原；Foundation 把不存在或出現兩次的牆上時間放在哪一個時刻沒有量）。
+- `delete_events_batch` span `all` 刪除這種系列再 undo。
+- split move（`move_events_batch` span `this`）在這種系列上的 undo（#466 走同一個檢查，沒有量）。
+- #321 gate 第 3、4 步在保有時區的系列上（#321 起一直欠著）。
+- iCloud 以外的來源。
+
+結果記在 #539。結束後刪掉拋棄式日曆，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#539` 的都是 0。
