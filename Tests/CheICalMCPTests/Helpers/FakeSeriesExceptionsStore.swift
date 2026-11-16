@@ -64,6 +64,8 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     /// what production throws (`EventSnapshot.resolveCalendar` over no matching calendar, #269).
     var missingCalendars: Set<String> = []
     private var nextID = 1
+    /// #539: the host zone `slotHolders` reads a `/RID=`'s wall-clock reading in.
+    var zone: TimeZone = .current
 
     /// A series already in the store: one occurrence per slot, sharing `id`.
     @discardableResult
@@ -76,6 +78,9 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     }
 
     func add(_ event: Event) { events.append(event) }
+
+    /// #539: takes `event` out of the store, as a delete does (no log entry).
+    func drop(_ event: Event) { events.removeAll { $0 === event } }
 
     func identifiers(of event: Event) -> UndoPostState.OccurrenceIDs {
         UndoPostState.OccurrenceIDs(eventIdentifier: event.id, externalIdentifier: event.external)
@@ -177,7 +182,7 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
             .filter { $0.calendar == calendar && $0.start >= range.start && $0.start < range.end }
             .compactMap { OccurrenceSlotGuard.holder(eventIdentifier: $0.id, externalIdentifier: $0.external,
                                                      occurrenceDate: $0.occurrenceDate, isAllDay: false, startDate: $0.start,
-                                                     hasRecurrenceRules: $0.hasRules, isDetached: $0.detached) }
+                                                     hasRecurrenceRules: $0.hasRules, isDetached: $0.detached, zone: zone) }
     }
 
     /// #321: what `noteRecreation` was told, in order.

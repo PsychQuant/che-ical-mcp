@@ -611,9 +611,13 @@ final class EventRangeQueryTests: XCTestCase {
             "SeriesExceptionsStoreSource.swift: range: DateInterval,",
         ], "the requirement and the EventKit adapter only")
         XCTAssertEqual(calls.sorted(), [
+            "SeriesExceptionsUndo.swift: margin,",
             "SeriesExceptionsUndo.swift: range,",
             "SeriesExceptionsUndo.swift: window,",
-        ], "a listing range of a recorded window, or a recorded window (PR #494 round 4: one per window)")
+        ], "a listing range of a recorded window, a recorded window (PR #494 round 4: one per window), or a margin of 14 hours beside one (#539)")
+        // #539: the margins are `placementMargins`, 14 hours on each side of a recorded window.
+        let undoCode = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/SeriesExceptionsUndo.swift"), encoding: .utf8))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"for margin in SeriesExceptionsPlanner\.placementMargins\(for: exceptions\.windows\) \{\s*for occurrence in store\.events\(in: margin, inCalendarOf: restored\)"#, in: undoCode).count, 1)
         let undo = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/SeriesExceptionsUndo.swift"), encoding: .utf8))
         let capture = try XCTUnwrap(SourcePins.body(of: "static func capture<", in: undo))
         let observed = try XCTUnwrap(SourcePins.body(of: "private static func observedOccurrences<", in: undo))

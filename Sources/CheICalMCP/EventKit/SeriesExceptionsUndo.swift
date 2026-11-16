@@ -12,7 +12,9 @@ enum SeriesExceptionsUndo {
     /// around `now`, #319), split into those that stay and those edited on their own. Nil when they
     /// cannot be listed (no identifier or calendar, or no occurrence of the series found inside the
     /// window), so the record says so instead of claiming there were none.
-    static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store, now: Date = Date()) -> SeriesExceptions? {
+    /// #539: `zone` is the zone an edited occurrence's wall-clock reading is taken in (`SlotReadings`).
+    static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store, now: Date = Date(),
+                                                            zone: TimeZone = .current) -> SeriesExceptions? {
         let ids = store.identifiers(of: series)
         guard let id = ids.eventIdentifier, !id.isEmpty, store.hasCalendar(series) else { return nil }
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: ids.externalIdentifier)
@@ -37,14 +39,14 @@ enum SeriesExceptionsUndo {
             // that history (rounds 5-6 dropped it when its early part listed nothing, which brought a
             // user's early deletions back from the rules).
             let windows = [window, fromFirst]
-            guard var exceptions = SeriesExceptionsPlanner.capture(both, of: seriesIDs, windows: windows) else { return nil }
+            guard var exceptions = SeriesExceptionsPlanner.capture(both, of: seriesIDs, windows: windows, zone: zone) else { return nil }
             exceptions.seriesStartsBeforeWindow = false
             exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
             exceptions.seriesMayContinueAfterWindow = placed.seriesMayContinueAfter
             return exceptions
         }
         let observed = observedOccurrences(of: series, ids: seriesIDs, over: SeriesExceptionsPlanner.listingRanges(for: window), in: store)
-        guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window) else { return nil }
+        guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window, zone: zone) else { return nil }
         exceptions.seriesStartsBeforeWindow = placed.seriesStartsBefore
         exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
         exceptions.seriesMayContinueAfterWindow = placed.seriesMayContinueAfter
@@ -113,9 +115,20 @@ enum SeriesExceptionsUndo {
                 if taken.insert(slot) { generated.append((slot, occurrence)) }
             }
         }
+        // #539: the margins around the windows, listed only when a record has a reading outside every
+        // window, so such a record can be placed on a slot there (and dropped) instead of not placed.
+        var marginSlots: [Date] = []
+        if SeriesExceptionsPlanner.needsMargins(exceptions) {
+            for margin in SeriesExceptionsPlanner.placementMargins(for: exceptions.windows) {
+                for occurrence in store.events(in: margin, inCalendarOf: restored)
+                where UndoPostState.isOccurrence(store.identifiers(of: occurrence), of: seriesIDs) {
+                    marginSlots.append(store.slot(of: occurrence))
+                }
+            }
+        }
         do {
             return try SeriesExceptionsRestorer.restore(
-                exceptions: exceptions, seriesStart: store.startDate(of: restored), generated: generated,
+                exceptions: exceptions, seriesStart: store.startDate(of: restored), generated: generated, marginSlots: marginSlots,
                 remove: { try store.remove($0, span: .thisEvent) },
                 createOneOff: { detached in
                     let oneOff = store.makeEvent()
