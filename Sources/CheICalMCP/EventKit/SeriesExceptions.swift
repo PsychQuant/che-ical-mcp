@@ -374,6 +374,18 @@ enum SeriesExceptionsPlanner {
         return exceptions.detached.filter { $0.readings.place(among: set) == nil }.count
     }
 
+    /// #539 (device cell DS1, iCloud, 2026-11-17): whether a placed record of two readings ends before
+    /// it starts. A floating occurrence whose wall-clock times fall across a daylight-saving gap of the
+    /// reading zone (02:30 to 03:00 on 2027-03-14 at America/Los_Angeles) was listed from 03:30 to 03:00:
+    /// both readings put it on its slot, and its one-off failed to save (EKErrorDatesInverted), so the
+    /// undo rolled back and restored nothing. Such a record stops the restore instead (fail closed: the
+    /// series comes back from its rules, as before #539, when the record was not placed). Read after
+    /// `placeDetached`, which drops a record placed outside every window, so only one the restore would
+    /// write counts; a record of one reading is not checked, as it was not before #539.
+    static func endsBeforeItStarts(_ placed: SeriesExceptions) -> Bool {
+        placed.detached.contains { $0.readings.wallClock != nil && $0.snapshot.endDate < $0.snapshot.startDate }
+    }
+
     /// The slots of the recreated series (`generated`) that undo must remove: inside the window
     /// and not the slot of an occurrence that existed and was not edited on its own. A detached
     /// occurrence's slot is not in `keptSlots`, so it is removed here and comes back as a one-off.
@@ -442,6 +454,9 @@ enum SeriesExceptionsRestorer {
         /// slot the series does not generate, or no slot at the series' own start), so none was
         /// applied and the series stands as the rules made it (round 2, B).
         var notApplied: Bool = false
+        /// #539 (device cell DS1): with `notApplied`, why: a placed record of two readings ends before
+        /// it starts as this process reads it, so no one-off can be saved for it.
+        var endsBeforeStart: Bool = false
     }
 
     /// The sanitized code of a failed write (#398): `eventkit_error_<N>`, `error_<domain>_<N>` for
@@ -485,6 +500,10 @@ enum SeriesExceptionsRestorer {
         // #539: each record placed on its slot first; one that cannot be placed applies nothing.
         guard let exceptions = SeriesExceptionsPlanner.placeDetached(recorded, among: generatedSlots + marginSlots) else {
             return Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true)
+        }
+        // #539: fail closed for a placed record no one-off can be saved for.
+        if SeriesExceptionsPlanner.endsBeforeItStarts(exceptions) {
+            return Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true)
         }
         let generatedSet = InstantSet(generatedSlots)
         let generatedIndex = InstantIndex(generatedSlots)

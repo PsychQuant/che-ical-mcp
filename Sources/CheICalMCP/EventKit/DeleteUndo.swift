@@ -317,6 +317,9 @@ extension UndoOperation {
     /// limit is stated because an exception outside it was never listed. #319: by its instants, with
     /// the side(s) on which the series has occurrences outside it, when the record holds them.
     static func seriesExceptionsRestoredNote(_ outcome: SeriesExceptionsRestorer.Outcome, exceptions: SeriesExceptions? = nil) -> String {
+        if outcome.endsBeforeStart {
+            return "Restored from the series rules alone: an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of the recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
+        }
         if outcome.notApplied {
             return "Restored from the series rules alone: the recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
         }

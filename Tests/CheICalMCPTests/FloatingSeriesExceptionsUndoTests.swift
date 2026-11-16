@@ -136,6 +136,63 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
         XCTAssertEqual(after.starts(of: "E1"), slots)
     }
 
+    /// DS1 (iCloud, 2026-11-17, a server with `TZ=America/Los_Angeles`): a floating weekly series at
+    /// 02:30, 30 minutes long, its occurrence of 2027-03-14 (no 02:30 that day there) retitled. The store
+    /// listed it from 03:30 to 03:00 PDT: both readings put it on its slot, so it was placed, and the
+    /// one-off save failed (`eventkit_error_4`, its end before its start), so the undo restored nothing
+    /// and the series stayed deleted. Such a record now applies nothing, as before #539, and the series
+    /// comes back from its rules.
+    func testAPlacedRecordThatEndsBeforeItStartsAppliesNothing() throws {
+        let zone = losAngeles
+        let first = date(2027, 2, 28, 2, in: zone).addingTimeInterval(30 * 60)
+        let rule = DeletedOccurrenceCheck.Rule(frequency: .weekly, interval: 1, daysOfWeek: [], daysOfMonth: [], endDate: nil,
+                                               occurrenceCount: 6, hasOtherParts: false)
+        let slots = Array(try XCTUnwrap(DeletedOccurrenceCheck.expectedSlots(of: rule, firstStart: first, until: first.addingTimeInterval(60 * day),
+                                                                             calendar: .gregorian(in: zone))).prefix(6))
+        let store = FakeSeriesExceptionsStore()
+        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots)
+        let nominal = Calendar.gregorian(in: utc).date(from: DateComponents(year: 2027, month: 3, day: 14, hour: 2, minute: 30))!
+        edit(occurrences[2], rid: "/RID=\(Int(nominal.timeIntervalSinceReferenceDate))", title: "Retitled")
+        occurrences[2].end = slots[2].addingTimeInterval(-30 * 60)
+
+        let (outcome, after, _) = try deleteAndUndo(occurrences[0], in: store, slots: slots, now: slots[0].addingTimeInterval(-30 * day), zone: zone)
+
+        XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true)))
+        XCTAssertEqual(after.starts(of: "E1"), slots)
+        XCTAssertFalse(after.events.contains { $0.title == "Retitled" }, "nothing written for it")
+    }
+
+    /// The check reads only what the restore would write: a record of two readings that ends where it
+    /// starts is written, one placed outside every window is dropped anyway, and a record of one reading
+    /// is left as it was before #539 (its one-off is attempted).
+    func testOnlyAWrittenRecordOfTwoReadingsThatEndsBeforeItStartsStopsTheRestore() throws {
+        let window = DateInterval(start: date(2027, 2, 10, 0, in: taipei), end: date(2027, 3, 21, 0, in: taipei))
+        let slots = weekly(from: date(2027, 2, 11, 10, in: taipei), count: 6)
+        let generated = slots.map { (slot: $0, occurrence: $0) }
+        func record(at slot: Date, end: Date, twoReadings: Bool) -> DetachedOccurrence {
+            let readings = twoReadings ? SlotReadings(instant: slot.addingTimeInterval(8 * 3600), wallClock: slot) : SlotReadings(instant: slot)
+            return DetachedOccurrence(slot: readings.instant, snapshot: UndoSnapshotFixtures.event(title: "Edited", startDate: slot, endDate: end),
+                                      readings: readings)
+        }
+        func restore(_ detached: [DetachedOccurrence], margins: [Date] = []) throws -> SeriesExceptionsRestorer.Outcome {
+            let kept = slots.filter { slot in !detached.contains { UndoPostState.sameInstant($0.snapshot.startDate, slot) } }
+            return try SeriesExceptionsRestorer.restore(
+                exceptions: SeriesExceptions(window: window, keptSlots: kept, detached: detached), seriesStart: slots[0],
+                generated: generated, marginSlots: margins, remove: { _ in }, createOneOff: { _ in 0 }, removeOneOff: { _ in },
+                rollbackSeries: {})
+        }
+        XCTAssertEqual(try restore([record(at: slots[2], end: slots[2], twoReadings: true)]),
+                       .init(stayedDeleted: 0, oneOffs: 1), "ends where it starts: written")
+        XCTAssertEqual(try restore([record(at: slots[2], end: slots[2].addingTimeInterval(-60), twoReadings: false)]),
+                       .init(stayedDeleted: 0, oneOffs: 1), "one reading: as before #539")
+        let outside = window.end.addingTimeInterval(2 * 3600)
+        XCTAssertEqual(try restore([record(at: slots[2], end: slots[2].addingTimeInterval(3600), twoReadings: true),
+                                    record(at: outside, end: outside.addingTimeInterval(-60), twoReadings: true)], margins: [outside]),
+                       .init(stayedDeleted: 0, oneOffs: 1), "placed outside the window: dropped, not checked")
+        XCTAssertEqual(try restore([record(at: slots[2], end: slots[2].addingTimeInterval(-60), twoReadings: true)]),
+                       .init(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true))
+    }
+
     // MARK: - the window-edge path (read in the Diagnosis; cannot be made on a device)
 
     /// An open weekly series begun years before the delete, so its window is cut at 1460 days around

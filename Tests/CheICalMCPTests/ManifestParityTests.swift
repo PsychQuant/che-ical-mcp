@@ -720,6 +720,16 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #539 (device cell DS1): the three surfaces that list what the undo of a whole-series delete does
+    /// not restore say that a placed record ending before it starts stops the exceptions, once each.
+    func testUndoSurfacesSayAPlacedEditEndingBeforeItStartsStopsTheExceptions() {
+        let phrase = "one placed that ends before it starts as this Mac reads it, its time falling in a daylight-saving change, stops them as well, since no one-off can be written for it"
+        for name in ["delete_event", "delete_events_batch", "undo"] {
+            let description = CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? ""
+            XCTAssertEqual(description.components(separatedBy: phrase).count - 1, 1, "defineTools() \(name)")
+        }
+    }
+
     /// #541: the `clear_timezone` parameter of `update_event` says the event is left floating, not in
     /// the system time zone, with what was measured on iCloud and on Google, once each.
     func testClearTimezoneSaysTheEventIsLeftFloating() throws {

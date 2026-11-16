@@ -55,9 +55,12 @@ struct SlotReadings: Equatable {
 
     /// The digits of `rid` (an instant as `originalSlot` reads them) taken as wall-clock time in UTC,
     /// and that wall-clock time placed in `zone` by `Calendar.date(from:)`. On a daylight-saving day in
-    /// `zone` a time that does not exist, or exists twice, is placed by Foundation's rule, which may not
-    /// be the instant the store gave that occurrence; then it is no slot of the rule and is not placed
-    /// (`place(among:)`): fail closed. Not measured on a device.
+    /// `zone` a time that does not exist, or exists twice, is placed by Foundation's rule; where that is
+    /// not the instant the store gave the occurrence, it is no slot of the rule and is not placed
+    /// (`place(among:)`): fail closed. Measured on iCloud (2026-11-17, a process at America/Los_Angeles,
+    /// one 30-minute weekly occurrence each): 02:30 on 2027-03-14 was listed at 03:30 PDT and 01:30 on
+    /// 2027-11-07 at 01:30 PDT, both Foundation's instants, so both were placed. The first ended before
+    /// it started (03:00 PDT), which stops the restore (`SeriesExceptionsPlanner.endsBeforeItStarts`).
     static func wallClock(of rid: Date, in zone: TimeZone) -> Date? {
         var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
         var local = Calendar(identifier: .gregorian); local.timeZone = zone

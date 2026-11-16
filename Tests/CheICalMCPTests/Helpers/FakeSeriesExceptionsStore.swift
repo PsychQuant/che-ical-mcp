@@ -21,6 +21,8 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
         var occurrenceDate: Date?
         var detached: Bool
         var hasRules: Bool
+        /// #539: the end its snapshot reads; an hour after `start` when nil.
+        var end: Date?
 
         init(id: String? = nil, external: String? = nil, calendar: String? = nil, title: String = "",
              start: Date = .distantPast, occurrenceDate: Date? = nil, detached: Bool = false, hasRules: Bool = false) {
@@ -98,7 +100,8 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
         observedCount += 1
         return SeriesExceptionsPlanner.ObservedOccurrence(
             ids: identifiers(of: occurrence), isDetached: occurrence.detached, occurrenceDate: occurrence.occurrenceDate,
-            startDate: occurrence.start, snapshot: UndoSnapshotFixtures.event(title: occurrence.title, startDate: occurrence.start))
+            startDate: occurrence.start, snapshot: UndoSnapshotFixtures.event(title: occurrence.title, startDate: occurrence.start,
+                                                                              endDate: occurrence.end))
     }
 
     func events(in range: DateInterval, inCalendarOf event: Event) -> [Event] {

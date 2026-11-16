@@ -69,11 +69,18 @@ extension UndoOperation {
         }
         let applied = restores.filter { !$0.notApplied }
         if !applied.isEmpty { notes.append(seriesExceptionsBatchNote(applied)) }
-        let notApplied = restores.count - applied.count
+        // #539: the ones stopped by a record that ends before it starts are told apart.
+        let endsBeforeStart = restores.filter(\.endsBeforeStart).count
+        let notApplied = restores.count - applied.count - endsBeforeStart
         if notApplied > 0 {
             notes.append(notApplied == 1
                 ? "1 series was restored from its rules alone: its recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
                 : "\(notApplied) series were restored from their rules alone: their recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)")
+        }
+        if endsBeforeStart > 0 {
+            notes.append(endsBeforeStart == 1
+                ? "1 series was restored from its rules alone: an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of its recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
+                : "\(endsBeforeStart) series were restored from their rules alone: in each, an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of their recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)")
         }
         return notes.isEmpty ? nil : notes.joined(separator: ". ")
     }
