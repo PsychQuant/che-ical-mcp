@@ -104,6 +104,17 @@ final class UndoKeepLaterEditsTests: XCTestCase {
         XCTAssertTrue(text.contains("kept the later edits to title"), text)
     }
 
+    /// spec-example: undo-history-discard / the merge answer with a new identifier
+    /// #484: the merge that restores the calendar can give the event a new identifier (measured, M3).
+    func testTheMergeAnswerEndsWithTheNewIdentifierWhenThereIsOne() {
+        let plan = UndoKeepLaterEdits.Plan(restored: ["calendar"], kept: ["title"], overlapping: [])
+        let plain = "Undone: restored event 'Standup' in calendar; kept the later edits to title"
+        XCTAssertEqual(UndoKeepLaterEdits.undoneMessage(kind: .event, title: "Standup", plan: plan, newID: nil), plain)
+        XCTAssertEqual(UndoKeepLaterEdits.undoneMessage(kind: .event, title: "Standup", plan: plan, newID: "NEW-1"),
+                       plain + " (new ID: NEW-1)")
+        XCTAssertEqual(UndoKeepLaterEdits.undoneMessage(kind: .event, title: "Standup", plan: plan), plain, "the default is no identifier")
+    }
+
     /// Round 1, M3: the guard's geocode exemption is not applied to what the update itself wrote.
     func testCoordinatesTheUpdateAddedCountAsChangedByIt() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
