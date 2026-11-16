@@ -74,3 +74,29 @@ func capturedStderr(of body: () throws -> Void) rethrows -> String {
     let (_, captured) = try withCapturedStderr(body)
     return captured
 }
+
+/// #532: `withCapturedStderr` around an `async` body, for a handler call (`handleToolCall` is
+/// async). The same restore-then-close order. A test that asserts the capture is empty should also
+/// drive one write through the same call path (a positive control), since an empty capture is also
+/// what a broken capture gives.
+func withCapturedStderrAsync<R>(_ body: () async throws -> R) async rethrows -> (result: R, stderr: String) {
+    let pipe = Pipe()
+    let savedFD = dup(STDERR_FILENO)
+    dup2(pipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+
+    let r: R
+    do {
+        r = try await body()
+    } catch {
+        dup2(savedFD, STDERR_FILENO)
+        close(savedFD)
+        pipe.fileHandleForWriting.closeFile()
+        throw error
+    }
+
+    dup2(savedFD, STDERR_FILENO)
+    close(savedFD)
+    pipe.fileHandleForWriting.closeFile()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    return (r, String(data: data, encoding: .utf8) ?? "")
+}
