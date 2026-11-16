@@ -116,6 +116,37 @@ struct DeletedEventSnapshots {
     }
 }
 
+/// #539 step 6: which deletes of one call forecast that their undo brings a series back from its
+/// rules alone. The count (`SeriesExceptionsPlanner.unplacedEdits`) is read before the removal; it
+/// leaves only with a record of the whole series (`.deleteEvent`), since an occurrence's delete or a
+/// delete of an occurrence and the following ones does not recreate a series. In a batch, a member
+/// whose record refuses the whole call's undo (`batchMemberUndoRefusal`) means that undo restores no
+/// row, so then no row forecasts anything, recorded before it or after.
+struct RulesAloneForecast {
+    struct Row: Equatable, Sendable {
+        let identifier: String
+        let unplacedEdits: Int
+    }
+
+    private var rows: [Row] = []
+    private var undoRefused = false
+
+    mutating func recorded(_ record: UndoOperation, identifier: String, unplacedEdits: Int) {
+        if record.batchMemberUndoRefusal != nil { undoRefused = true }
+        if case .deleteEvent = record, unplacedEdits > 0 { rows.append(Row(identifier: identifier, unplacedEdits: unplacedEdits)) }
+    }
+
+    /// The rows in the order recorded; empty when the call's undo would be refused.
+    var expected: [Row] { undoRefused ? [] : rows }
+
+    /// `delete_event`: the count of the one record it made.
+    static func unplacedEdits(of record: UndoOperation, unplacedEdits: Int) -> Int {
+        var forecast = RulesAloneForecast()
+        forecast.recorded(record, identifier: "", unplacedEdits: unplacedEdits)
+        return forecast.expected.first?.unplacedEdits ?? 0
+    }
+}
+
 extension EventSnapshot {
     /// #322: the record of a whole-series delete by `deleteEventSeries` / `deleteEventSeriesBatch`
     /// (#185): the event's snapshot, rules included, carrying the series' exceptions (#285) when it

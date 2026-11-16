@@ -15,20 +15,23 @@
 - 擷取：修改場次任一讀法在記錄視窗內就記錄，兩種讀法都留著。
 - 還原：在重建系列的場次（視窗內，加上有需要時視窗外 14 小時的邊界）上放置每筆紀錄；放在視窗外的丟掉（交給規則），有一筆放不上去就整個不套用（all or nothing）。
 - #321 的檢查：場次與持有者兩邊的所有讀法互相比對；只有同一個系列（或 undo 從它重建的系列）的場次算數。
+- 刪除時的預告（計畫第 6 步）：整個系列刪除之前，把記下的修改場次放到規則從第一個場次展開的場次上；有放不上去的就在回應寫 `undo_note`，說 undo 預期只照規則重建。第一個場次讀不出來、規則展開器不跟、或整個呼叫的 undo 會被拒絕時不寫。
 - 工具描述、manifest、README、CHANGELOG 與 release gate 一併更新。
 
 ## Non-Goals
 
-- #503 檢查（`DeletedOccurrenceCheck.verdict`）怎麼讀浮動系列的修改場次：#553（是否在這裡處理，等協調者決定；計畫第 4 步）。
-- 刪除時的 `undo_note` 預告（計畫第 6 步）與三個小讀者（create-undo 的 `differsFromSeries`、#416 的 `originalDay`、#509 的規則結束檢查；計畫第 5 步）：依協調者決定，在這裡或另開 issue。
+- #503 檢查（`DeletedOccurrenceCheck.verdict`）怎麼讀浮動系列的修改場次（計畫第 4 步、mutant 10、裝置格 MB 與 R1）：協調者決定不在這裡做，提案寫在 #553 的留言。
+- 三個小讀者（create-undo 的 `differsFromSeries`、#416 的 `originalDay`、#509 的規則結束檢查；計畫第 5 步、mutant 11）：協調者決定另開 issue 追蹤。
 - 以 `occurrenceDate` 讀場次的原時間（Diagnosis 的 option 3）。
 - 拒絕整個系列的刪除。
 - `clear_timezone` 的行為（只改描述，#541）。
+- 用 span `future` 刪除日期範圍時的試跑預告：同一次呼叫裡從較後場次切斷的列會讓整個 undo 拒絕，試跑分不出來，所以試跑不給預告（實際呼叫在沒有這種列時才給）。
 
 ## Success Criteria
 
 - iCloud 上 F1、L1、U1、R2：undo 帶回兩個修改；D2：刪除的維持刪除、修改的回來；MA：第二次 undo 只寫一個事件；Z1、D1 不變。
 - 一筆放不上去的紀錄讓整個例外都不套用。
+- 刪除時有放不上去的修改場次，回應帶 `undo_note`；F1 的形狀（放得上去）沒有。
 - 保有時區的系列在四種視窗邊界形狀上結果與以前相同。
 
 ## Impact

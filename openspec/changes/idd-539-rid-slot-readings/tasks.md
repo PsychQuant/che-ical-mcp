@@ -18,8 +18,15 @@
 - [x] 4.1 `delete_event`、`delete_events_batch`、`undo` 的描述與 manifest 的 `undo` 摘要說明兩種讀法。驗證：`ManifestParityTests.testUndoSurfacesSayHowAnOccurrenceEditedWithoutATimeZoneIsRead`。
 - [x] 4.2 README、README_zh-TW、CHANGELOG、release gate（rule 檔）。驗證：對照裝置結果逐句讀過。
 
-## 5. 證明
+## 5. 刪除時的預告（計畫第 6 步）
 
-- [x] 5.1 mutation 逐一看到變紅。驗證：PR body 的 mutation 表。
-- [x] 5.2 全套 `swift test` 在主機時區、`TZ=UTC`、`TZ=America/Los_Angeles` 都是 0 failures；`main` 的測試名稱沒有少。
-- [x] 5.3 iCloud 裝置格 F1、D1、D2、L1、U1、R2、MA、Z1。驗證：PR body 的裝置表。
+- [ ] 5.1 擷取之後，把記下的修改場次放到規則從第一個場次展開的場次上（`DeletedOccurrenceCheck.expansion`，展開到最後一個視窗結束後 14 小時），數出放不上去的筆數；規則不只一條、展開器不跟的規則、場次太多、第一個場次讀不出來時不給數字。驗證：`SeriesDeleteForecastTests`。
+- [ ] 5.2 四個擷取點（`delete_event` span `all`、從第一個場次起的 span `future`、`delete_events_batch` span `all` 的系列列、span `future` 刪掉整個系列的列）在移除之前算出筆數，第一個場次經替身讀到或第一個場次自己被改過時不算（`wholeSeriesBaseline` 為 `.stored` 才算）；只有記錄是整個系列的刪除時才往外傳；批次裡有一列讓整個 undo 拒絕時，所有列都不給。驗證：`SeriesDeleteForecastWiringTests`、`SeriesDeleteForecastTests`。
+- [ ] 5.3 `delete_event` 的回應、批次實際呼叫的 `rules_alone_on_undo` 列、`span: all` 試跑的列寫 `undo_note`；與 #436、#452 的 `undo_note` 不會互相覆蓋。驗證：`SeriesDeleteForecastHandlerTests`。
+- [ ] 5.4 描述、manifest、README、CHANGELOG、release gate 說明預告。驗證：`ManifestParityTests`、`SlotReadingsDocsTests`。
+
+## 6. 證明
+
+- [ ] 6.1 mutation 逐一看到變紅（計畫的 mutant 1–9、12、13，以及每個新分支與新文字一個）。驗證：PR 說明的 mutation 表。
+- [ ] 6.2 全套 `swift test` 在主機時區、`TZ=UTC`、`TZ=America/Los_Angeles` 都是 0 failures（最後的 head）；`main` 的測試名稱沒有少，改寫的測試列出理由。
+- [ ] 6.3 iCloud 裝置格（最後的 head 的簽章 release build）。驗證：PR 說明的裝置表。

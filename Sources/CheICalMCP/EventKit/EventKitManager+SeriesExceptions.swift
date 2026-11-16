@@ -26,6 +26,22 @@ extension EventKitManager {
         SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore)
     }
 
+    /// #539 step 6: the forecast of a whole-series delete, read before the removal: how many of the
+    /// occurrences edited on their own that `exceptions` (this delete's capture) recorded the series'
+    /// rule does not place (`SeriesExceptionsPlanner.unplacedEdits`). The rule is expanded from the
+    /// first slot #503's check proves (`wholeSeriesBaseline`), in the zone its verdict expands in, and
+    /// only when that slot is a plain first occurrence at its own start (`.stored`): through a stand-in,
+    /// or with a first occurrence edited on its own, the count is 0, as it is when the expander cannot
+    /// tell. The series is listed for it only when the capture recorded an edited occurrence.
+    func unplacedEditsAtDelete(_ exceptions: SeriesExceptions?, of series: EKEvent, id: String, viaStandIn: Bool) -> Int {
+        guard let exceptions, !exceptions.detached.isEmpty else { return 0 }
+        let first = wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn)
+        guard first.baseline == .stored else { return 0 }
+        let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
+        return SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
+                                                     firstSlot: first.slot, calendar: .gregorian(in: zone)) ?? 0
+    }
+
     /// The `.deleteEvent` undo arm (`SeriesExceptionsUndo.undoDeleteEvent`).
     /// `kind` words a missing calendar: `.undoMoveByCopy` for the source of a move by copy (#466).
     func undoDeletedEvent(_ snapshot: EventSnapshot, kind: EventRestoreKind = .recreateDeleted) async throws

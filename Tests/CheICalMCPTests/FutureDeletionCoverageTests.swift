@@ -140,7 +140,8 @@ final class FutureDeletionCoverageTests: XCTestCase {
         let body = String(source[from.lowerBound..<to.lowerBound])
         let skip = try XCTUnwrap(body.range(of: "sequence.before("))
         // The row's lookup (#452 review r1: a pass before the loop notes which ids resolve).
-        let lookup = try XCTUnwrap(body.range(of: "guard let masterEvent = try freshEventWithOrigin("))
+        // #539 step 6: the lookup keeps whether the series was reached through a stand-in (the forecast).
+        let lookup = try XCTUnwrap(body.range(of: "guard let resolvedRow = try freshEventWithOrigin("))
         XCTAssertLessThan(skip.lowerBound, lookup.lowerBound)
         let remove = try XCTUnwrap(body.range(of: "try eventStore.remove(occurrence, span: span)"))
         let record = try XCTUnwrap(body.range(of: "sequence.deletedOccurrence("))

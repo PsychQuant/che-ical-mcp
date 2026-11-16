@@ -352,6 +352,28 @@ enum SeriesExceptionsPlanner {
         return result
     }
 
+    /// #539 step 6: how many of the recorded occurrences edited on their own the series' rule does not
+    /// place, read at the delete, before anything is removed: each record's readings
+    /// (`SlotReadings.place`) against the slots the rule gives from `firstSlot` (`DeletedOccurrenceCheck`'s
+    /// expander, in `calendar`'s zone) up to `SlotReadings.largestOffset` past the last window, so a
+    /// record whose slot lies just outside a window, which the restore drops, is placed and not counted.
+    /// A record with one reading counts when that reading is no slot, as the restore's consistency
+    /// check would not apply it either. A count above 0 forecasts that undo restores the series from its
+    /// rules alone; the restore itself places against the recreated series and decides.
+    /// Nil when the expander cannot tell, so the delete says nothing rather than guess: not exactly one
+    /// rule, no first slot (a stand-in, or a first occurrence edited on its own), a rule the expander
+    /// does not follow, or more slots than it takes.
+    static func unplacedEdits(_ exceptions: SeriesExceptions, rules: [DeletedOccurrenceCheck.Rule], firstSlot: Date?,
+                              calendar: Calendar) -> Int? {
+        guard !exceptions.detached.isEmpty else { return 0 }
+        guard rules.count == 1, let firstSlot, let end = exceptions.windows.map(\.end).max() else { return nil }
+        guard case .slots(let slots) = DeletedOccurrenceCheck.expansion(of: rules[0], firstStart: firstSlot,
+                                                                         until: end.addingTimeInterval(SlotReadings.largestOffset),
+                                                                         calendar: calendar) else { return nil }
+        let set = InstantSet(slots)
+        return exceptions.detached.filter { $0.readings.place(among: set) == nil }.count
+    }
+
     /// The slots of the recreated series (`generated`) that undo must remove: inside the window
     /// and not the slot of an occurrence that existed and was not edited on its own. A detached
     /// occurrence's slot is not in `keptSlots`, so it is removed here and comes back as a one-off.
