@@ -39,7 +39,7 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
         let edited = UndoSnapshotFixtures.event(title: "Standup moved", startDate: slot(2).addingTimeInterval(1800))
         let exceptions = SeriesExceptions(window: DateInterval(start: s0.addingTimeInterval(-day), end: slot(3).addingTimeInterval(day)),
                                           keptSlots: [slot(0), slot(1)], detached: [DetachedOccurrence(slot: slot(2), snapshot: edited)])
-        return .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0)
+        return .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0)
             .withExceptions(exceptions))
     }
 
@@ -166,7 +166,7 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
         let store = FakeSeriesExceptionsStore()
         store.seriesSlots = (0...3).map(slot)
         let operation = recordedSeriesDelete()
-        guard case .deleteEvent(let snapshot) = operation else { return XCTFail("record") }
+        guard case .deleteEvent(_, let snapshot) = operation else { return XCTFail("record") }
         store.missingCalendars = [snapshot.calendarIdentifier]
         let history = await history(with: operation)
         let before = await history.historySnapshot()

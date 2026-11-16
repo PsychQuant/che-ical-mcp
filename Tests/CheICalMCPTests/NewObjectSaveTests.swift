@@ -607,14 +607,14 @@ final class NewObjectSaveTests: XCTestCase {
         XCTAssertEqual(try matches(#"^\{ ?let reminder = try await applyReminderSnapshot\( ?snapshot ?, ?for: ?\.recreateDeleted ?, ?into: ?\{ ?EKReminder\( ?eventStore: ?eventStore ?\) ?\} ?\) ?let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?true ?\) ?markNeedsRefresh\( ?\) ?return \( ?snapshot\.title ?, ?storeDiffers ?\) ?\}$"#, in: undoArm).count, 1, undoArm)
         let message = try body(of: "static func restoredReminderMessage(_ restored: (title: String, storeDiffers: [String])) -> String", in: code)
         XCTAssertEqual(try matches(#"^\{ ?"" ?\+ ?NewObjectSave\.undoSuffix\( ?restored\.storeDiffers ?\) ?\}$"#, in: message).count, 1, message)
-        XCTAssertEqual(try matches(#"case \.deleteReminder\( ?let snapshot ?\) ?: ?return Self\.restoredReminderMessage\( ?try await restoreDeletedReminder\( ?snapshot ?\) ?\)"#, in: code).count, 1)
+        XCTAssertEqual(try matches(#"case \.deleteReminder\( ?_ ?, ?let snapshot ?\) ?: ?return Self\.restoredReminderMessage\( ?try await restoreDeletedReminder\( ?snapshot ?\) ?\)"#, in: code).count, 1)
         // PR #282 integrates the batch arm with #248's narrowing: each member runs through
         // `undoBatchMember`, which takes a reminder's names from `restoreDeletedReminder` as data,
         // and the batch text builds its note from them with `differingFieldsNote`
         // (`UndoRestoredDifference.sentences`); no member text is read
         // back (`UndoBatchWiringTests.testTheUndoBatchArmCarriesRestoredRemindersDifferencesAsData`).
         let member = try body(of: "func undoBatchMember(_ operation: UndoOperation)", in: code)
-        XCTAssertEqual(try matches(#"case \.deleteReminder\( ?let snapshot ?\) ?: ?let restored = try await restoreDeletedReminder\( ?snapshot ?\) ?return UndoMemberOutcome\( ?text: ?Self\.restoredReminderMessage\( ?restored ?\) ?, ?differing: ?\[ ?UndoRestoredDifference\( ?title: ?restored\.title ?, ?storeDiffers: ?restored\.storeDiffers ?\) ?\] ?\)"#, in: member).count, 1,
+        XCTAssertEqual(try matches(#"case \.deleteReminder\( ?_ ?, ?let snapshot ?\) ?: ?let restored = try await restoreDeletedReminder\( ?snapshot ?\) ?return UndoMemberOutcome\( ?text: ?Self\.restoredReminderMessage\( ?restored ?\) ?, ?differing: ?\[ ?UndoRestoredDifference\( ?title: ?restored\.title ?, ?storeDiffers: ?restored\.storeDiffers ?\) ?\] ?\)"#, in: member).count, 1,
                        "a batch undo collects each restored member's names and builds its note from them")
         XCTAssertEqual(try matches(#"restore: ?\{ ?try await self\.undoBatchMember\( ?\$0 ?\) ?\}"#, in: code).count, 1)
         XCTAssertEqual(try matches(#"UndoRestoredDifference\.sentences\( ?differing ?\)"#, in: code).count, 1)

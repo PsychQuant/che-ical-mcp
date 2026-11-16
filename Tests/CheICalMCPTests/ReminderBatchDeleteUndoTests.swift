@@ -8,7 +8,7 @@ final class ReminderBatchDeleteUndoTests: XCTestCase {
     private func memberTitles(_ operation: UndoOperation?) -> [String]? {
         guard case .batch(let members)? = operation else { return nil }
         return members.map { member -> String in
-            guard case .deleteReminder(let snapshot) = member else { return "<not a reminder delete>" }
+            guard case .deleteReminder(_, let snapshot) = member else { return "<not a reminder delete>" }
             return snapshot.title
         }
     }
@@ -19,13 +19,13 @@ final class ReminderBatchDeleteUndoTests: XCTestCase {
     }
 
     func testOneRemovedReminderIsABatchOfOne() {
-        let operation = UndoOperation.reminderBatchDelete([UndoSnapshotFixtures.reminder(title: "Pay rent")])
+        let operation = UndoOperation.reminderBatchDelete([(id: "R1", snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent"))])
         XCTAssertEqual(memberTitles(operation), ["Pay rent"])
     }
 
     func testMembersKeepTheOrderTheRemindersWereRemovedIn() {
         let titles = ["A", "B", "C"]
-        let operation = UndoOperation.reminderBatchDelete(titles.map { UndoSnapshotFixtures.reminder(title: $0) })
+        let operation = UndoOperation.reminderBatchDelete(titles.map { (id: "id-" + $0, snapshot: UndoSnapshotFixtures.reminder(title: $0)) })
         XCTAssertEqual(memberTitles(operation), titles)
     }
 
@@ -33,7 +33,7 @@ final class ReminderBatchDeleteUndoTests: XCTestCase {
     /// (#247), since redo does not delete the restored reminders again.
     func testTheEntryIsListedAsABatchAndItsRedoNamesTheBatchTool() throws {
         let operation = try XCTUnwrap(UndoOperation.reminderBatchDelete(
-            [UndoSnapshotFixtures.reminder(title: "A"), UndoSnapshotFixtures.reminder(title: "B")]))
+            [(id: "A1", snapshot: UndoSnapshotFixtures.reminder(title: "A")), (id: "B1", snapshot: UndoSnapshotFixtures.reminder(title: "B"))]))
         XCTAssertEqual(operation.description, "Batch (2 operations)")
         let redo = try XCTUnwrap(operation.redoInstruction)
         XCTAssertTrue(redo.contains("2 reminders") && redo.contains("delete_reminders_batch"), redo)

@@ -2043,13 +2043,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // rebuilds the whole series), consistent with single deleteEvent.
         // #285: a series' exceptions are listed before the removal takes them away.
         let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })
+        // #538: read before the removal.
+        let removedID = DeleteUndoFollow.removedIdentifier(eventIdentifier: event.eventIdentifier, hasRules: event.hasRecurrenceRules)
         if event.hasRecurrenceRules {
             try eventStore.remove(event, span: .futureEvents)
         } else {
             try eventStore.remove(event, span: .thisEvent)
         }
         markNeedsRefresh()
-        await CalendarUndoManager.shared.record(.deleteEvent(snapshot: snapshot))
+        await CalendarUndoManager.shared.record(.deleteEvent(id: removedID, snapshot: snapshot))
         return .series
     }
 
@@ -2078,7 +2080,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var successCount = 0
         var failures: [(String, String)] = []
-        var undoSnapshots: [EventSnapshot] = []
+        var undoOperations: [UndoOperation] = []
         var throughFirstOccurrence: [(identifier: String, occurrenceID: String)] = []
         var refusingMarker: UndoOperation?
 
@@ -2115,13 +2117,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     continue
                 }
                 let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })
+                // #538: read before the removal.
+                let removedID = DeleteUndoFollow.removedIdentifier(eventIdentifier: event.eventIdentifier, hasRules: event.hasRecurrenceRules)
                 if event.hasRecurrenceRules {
                     try eventStore.remove(event, span: .futureEvents)
                 } else {
                     try eventStore.remove(event, span: .thisEvent)
                 }
                 successCount += 1
-                undoSnapshots.append(snapshot)
+                undoOperations.append(.deleteEvent(id: removedID, snapshot: snapshot))
             } catch {
                 let code = EventKitErrorSanitizer.writeFailureLog(
                     handler: "deleteEventsBatch",
@@ -2133,8 +2137,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         markNeedsRefresh()
-        if !undoSnapshots.isEmpty {
-            await CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))
+        if !undoOperations.isEmpty {
+            await CalendarUndoManager.shared.record(.batch(undoOperations))
         } else if let refusingMarker {
             // PR #465 verify r2: with no other row recorded, the call records what delete_event
             // records for the same delete, which undo refuses and drops. Without it, the next undo
@@ -3142,10 +3146,12 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             throw EventKitError.reminderNotFound(identifier: identifier)
         }
 
+        // #538: the identifier its undo moves older records from, read before the removal.
+        let removedID = reminder.calendarItemIdentifier
         // PR #507 round 4: the snapshot comes off the write store's copy, before the removal.
         let snapshot = try removeExistingReminder(reminder, handler: "deleteReminder")
         markNeedsRefresh()
-        await CalendarUndoManager.shared.record(.deleteReminder(snapshot: snapshot))
+        await CalendarUndoManager.shared.record(.deleteReminder(id: removedID, snapshot: snapshot))
     }
 
     // MARK: - Reminder Search & Batch
@@ -3225,7 +3231,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // #243: a snapshot per reminder actually removed, so the whole call is one undo entry, as
             // in deleteEventsBatch (#185). Both delete_reminders_batch and cleanup_completed_reminders
             // come through here.
-            var undoSnapshots: [ReminderSnapshot] = []
+            var undoSnapshots: [(id: String, snapshot: ReminderSnapshot)] = []
 
             for id in identifiers {
                 do {
@@ -3252,7 +3258,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                         continue
                     }
                     successCount += 1
-                    undoSnapshots.append(snapshot)
+                    // #538: the identifier read off the reminder looked up before the removal.
+                    undoSnapshots.append((id: reminder.calendarItemIdentifier, snapshot: snapshot))
                 } catch let error as EventKitError where WriteStoreRowFailure.code(for: error) != nil {
                     // PR #507 round 1: the write store's own errors keep their own codes and a stderr line.
                     if WriteStoreRowFailure.endsTheBatch(error, removedSoFar: successCount) { throw error }
@@ -3397,7 +3404,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             markNeedsRefresh()
             return "Undone: removed created event '\(undoVisibleTitle(title))'"
 
-        case .deleteEvent(let snapshot):
+        case .deleteEvent(_, let snapshot):
             // Undo delete = recreate from snapshot, with the series' recorded exceptions (#285);
             // the arm's code is `SeriesExceptionsUndo.undoDeleteEvent` (#322 seam), which reads the
             // calendar through `restoreCalendar(for:kind:)` with `.recreateDeleted` (#269).
@@ -3531,7 +3538,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             return "Undone: removed created reminder '\(undoVisibleTitle(title))'"
 
         // Undo delete = recreate (`restoreDeletedReminder`, shared with the batch arm).
-        case .deleteReminder(let snapshot):
+        case .deleteReminder(_, let snapshot):
             return Self.restoredReminderMessage(try await restoreDeletedReminder(snapshot))
 
         case .updateReminder(_, let oldSnapshot, _):
@@ -3665,11 +3672,11 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         case .batch(let inner):
             let undone = try await undoBatch(inner)
             return UndoMemberOutcome(text: undone.message, differing: undone.differing, events: undone.events)
-        case .deleteReminder(let snapshot):
+        case .deleteReminder(_, let snapshot):
             let restored = try await restoreDeletedReminder(snapshot)
             return UndoMemberOutcome(text: Self.restoredReminderMessage(restored),
                                      differing: [UndoRestoredDifference(title: restored.title, storeDiffers: restored.storeDiffers)])
-        case .deleteEvent(let snapshot):
+        case .deleteEvent(_, let snapshot):
             // #323: the same arm as `executeUndo`'s, with what it did as data.
             let undone = try await undoDeletedEvent(snapshot)
             return UndoMemberOutcome(text: undone.text, differing: [], events: undone.outcome.map { [$0] } ?? [])

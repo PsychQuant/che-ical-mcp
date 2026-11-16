@@ -76,11 +76,11 @@ final class UndoRecordPostStateTests: XCTestCase {
                                                     hasRecurrence: true, due: nil, rules: [], completionDate: nil)
         let ops: [(UndoOperation, String)] = [
             (.createEvent(id: "e", title: title, created: event), "Created event: \(shown)"),
-            (.deleteEvent(snapshot: event), "Deleted event: \(shown)"),
+            (.deleteEvent(id: "", snapshot: event), "Deleted event: \(shown)"),
             (.updateEvent(id: "e", oldSnapshot: event, saved: event), "Updated event: \(shown)"),
             (.moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: title, isSeries: false), "Moved event: \(shown)"),
             (.createReminder(id: "r", title: title, created: reminder), "Created reminder: \(shown)"),
-            (.deleteReminder(snapshot: reminder), "Deleted reminder: \(shown)"),
+            (.deleteReminder(id: "", snapshot: reminder), "Deleted reminder: \(shown)"),
             (.updateReminder(id: "r", oldSnapshot: reminder, saved: reminder), "Updated reminder: \(shown)"),
             (.completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil, title: title,
                                redoCompletionDate: nil, wasRecurring: false), "Completed reminder: \(shown)"),
@@ -190,7 +190,7 @@ final class UndoRecordPostStateTests: XCTestCase {
     func testDeleteArmsAndMessageOnlyRedoArmsCheckNothing() {
         let event = UndoSnapshotFixtures.event()
         let reminder = UndoSnapshotFixtures.reminder()
-        let unchecked: [UndoOperation] = [.deleteEvent(snapshot: event), .deleteReminder(snapshot: reminder)]
+        let unchecked: [UndoOperation] = [.deleteEvent(id: "", snapshot: event), .deleteReminder(id: "", snapshot: reminder)]
         for op in unchecked {
             XCTAssertNil(op.undoPostState, op.description)
             XCTAssertNil(op.redoPostState, op.description)
@@ -205,7 +205,7 @@ final class UndoRecordPostStateTests: XCTestCase {
         for op in messageOnlyRedo {
             XCTAssertNil(op.redoPostState, "redo of \(op.description) writes nothing")
         }
-        XCTAssertNil(UndoOperation.batch([.deleteEvent(snapshot: event)]).undoPostState, "batches are checked per sub-operation")
+        XCTAssertNil(UndoOperation.batch([.deleteEvent(id: "", snapshot: event)]).undoPostState, "batches are checked per sub-operation")
     }
 
     // MARK: - Batch pre-flight (D4)

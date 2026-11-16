@@ -16,7 +16,7 @@ final class UndoBatchPartialRestoreTests: XCTestCase {
     private let e = UndoSnapshotFixtures.event(title: "E")
 
     private var members: [UndoOperation] {
-        [.deleteEvent(snapshot: a), .deleteEvent(snapshot: b), .deleteReminder(snapshot: c), .deleteReminder(snapshot: d),
+        [.deleteEvent(id: "", snapshot: a), .deleteEvent(id: "", snapshot: b), .deleteReminder(id: "", snapshot: c), .deleteReminder(id: "", snapshot: d),
          .deleteOccurrence(snapshot: e, notCarriedOver: [])]
     }
 
@@ -48,8 +48,8 @@ final class UndoBatchPartialRestoreTests: XCTestCase {
     /// A nested batch is one member: when any of its items is blocked, it is kept whole (no tool
     /// records a nested batch today).
     func testANestedBatchIsKeptWholeWhenAnyOfItsItemsIsBlocked() {
-        let nested = UndoOperation.batch([.deleteEvent(snapshot: a), .deleteEvent(snapshot: b)])
-        let split = UndoBatchPartialRestore.split([nested, .deleteReminder(snapshot: c)], problem: problem)
+        let nested = UndoOperation.batch([.deleteEvent(id: "", snapshot: a), .deleteEvent(id: "", snapshot: b)])
+        let split = UndoBatchPartialRestore.split([nested, .deleteReminder(id: "", snapshot: c)], problem: problem)
         XCTAssertEqual(split.restorable.count, 1)
         XCTAssertEqual(split.blocked.map(\.description), [nested.description])
     }
@@ -249,7 +249,7 @@ final class UndoBatchPartialRestoreTests: XCTestCase {
     /// that are missing are two groups.
     func testTheKeptTextKeepsCalendarsApartAndPunctuation() {
         let other = UndoSnapshotFixtures.event(title: "F")
-        let twoCalendars = UndoBatchPartialRestore.split([.deleteEvent(snapshot: a), .deleteEvent(snapshot: b), .deleteEvent(snapshot: other)]) {
+        let twoCalendars = UndoBatchPartialRestore.split([.deleteEvent(id: "", snapshot: a), .deleteEvent(id: "", snapshot: b), .deleteEvent(id: "", snapshot: other)]) {
             if case .eventCalendar(let snapshot) = $0, snapshot.calendarIdentifier == self.a.calendarIdentifier { return nil }
             return .missing
         }

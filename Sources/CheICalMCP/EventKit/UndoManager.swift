@@ -377,7 +377,12 @@ struct ReminderSnapshot {
 /// drops the post-state must not compile (#196 convention).
 enum UndoOperation {
     case createEvent(id: String, title: String, created: EventSnapshot)
-    case deleteEvent(snapshot: EventSnapshot)
+    /// #538: `id` is the identifier the removed event had (for an event with rules, the series'
+    /// identifier without a `/RID=` part, `DeleteUndoFollow.removedIdentifier`). Its undo writes a
+    /// new event under a new identifier and moves older records of `id` to it
+    /// (`DeleteUndoFollow.identifierToFollow`). No default: a record site that leaves it out must
+    /// not compile. Never rewritten: it names an event that no longer exists.
+    case deleteEvent(id: String, snapshot: EventSnapshot)
     /// #244: one occurrence of a series deleted (span "this"). The snapshot is the occurrence
     /// without rules; undo recreates it as a one-off event, never a second series (`EventRemovalKind`).
     /// `notCarriedOver` as the move path reports it (#253): `absolute_alarms` when an absolute alarm
@@ -401,7 +406,9 @@ enum UndoOperation {
     /// the record otherwise. Every other recurring update stays `updateRecurringEvent`.
     case updateSeries(SeriesUpdateRecord)
     case createReminder(id: String, title: String, created: ReminderSnapshot)
-    case deleteReminder(snapshot: ReminderSnapshot)
+    /// #538: `id` is the removed reminder's `calendarItemIdentifier`, read before the removal; its
+    /// undo moves older reminder records of `id` to the recreated reminder. No default; never rewritten.
+    case deleteReminder(id: String, snapshot: ReminderSnapshot)
     case updateReminder(id: String, oldSnapshot: ReminderSnapshot, saved: ReminderSnapshot)
     /// #196: `requestedCompleted` is replayed by redo (never inferred as !wasCompleted —
     /// that reopened an idempotently completed reminder); `completionDate` is the
@@ -451,6 +458,10 @@ enum UndoOperation {
             return .moveEvent(id: swapped(id), fromCalendarIdentifier: from, toCalendarIdentifier: to, title: title, isSeries: isSeries)
         case .batch(let operations):
             return .batch(operations.map { $0.replacingEventIdentifier(old, with: new) })
+        case .deleteEvent:
+            // #538: its identifier names a removed event, also when the record sits on the redo
+            // stack after its undo recreated the event under the new one.
+            return self
         case .moveByCopy(let original, let isSplit, let notCarriedOver, let copyID, let copy):
             // #466 and #435: the copy is the live event this record names; a later move of it that
             // changed its identifier is followed, so the undo can still find and remove it. The
@@ -472,7 +483,7 @@ enum UndoOperation {
         switch self {
         case .createEvent(_, let title, _):
             return "Created event: \(undoVisibleTitle(title))"
-        case .deleteEvent(let snapshot):
+        case .deleteEvent(_, let snapshot):
             // Verify round 4, findings 11/15: the listing says it before the undo runs (#285).
             var restore = ""
             if snapshot.restoresFromRules {
@@ -501,7 +512,7 @@ enum UndoOperation {
             return "Moved event: \(undoVisibleTitle(original.title)) (by copy: undo restores it in its original calendar and removes the copy if unchanged)"
         case .createReminder(_, let title, _):
             return "Created reminder: \(undoVisibleTitle(title))"
-        case .deleteReminder(let snapshot):
+        case .deleteReminder(_, let snapshot):
             return "Deleted reminder: \(undoVisibleTitle(snapshot.title))"
         case .updateReminder(_, let old, _):
             return "Updated reminder: \(undoVisibleTitle(old.title))"
@@ -793,8 +804,9 @@ extension UndoOperation {
     /// `cleanup_completed_reminders`), holding only the reminders the call removed, in the order it
     /// removed them; one undo restores them all, as for `delete_events_batch` (#185). `nil` when it
     /// removed none, so the call pushes no entry that undo would pop instead of an older operation.
-    static func reminderBatchDelete(_ removed: [ReminderSnapshot]) -> UndoOperation? {
-        removed.isEmpty ? nil : .batch(removed.map { .deleteReminder(snapshot: $0) })
+    /// #538: each removed reminder with the identifier it had, read before its removal.
+    static func reminderBatchDelete(_ removed: [(id: String, snapshot: ReminderSnapshot)]) -> UndoOperation? {
+        removed.isEmpty ? nil : .batch(removed.map { .deleteReminder(id: $0.id, snapshot: $0.snapshot) })
     }
 }
 
@@ -832,7 +844,7 @@ extension UndoOperation {
             return nil
         case .createEvent(_, let title, _):
             return "Cannot redo the creation of event '\(undoVisibleTitle(title))': redo does not create items again. Use create_event to create it again." + nothingWritten
-        case .deleteEvent(let snapshot):
+        case .deleteEvent(_, let snapshot):
             return "Cannot redo the deletion of event '\(undoVisibleTitle(snapshot.title))': redo does not delete the restored event. Use delete_event to delete it again." + nothingWritten
         case .deleteOccurrence(let snapshot, _):
             // #244: the undo brought the occurrence back as a one-off event, not into its series.
@@ -855,7 +867,7 @@ extension UndoOperation {
             return "Cannot redo the move of event '\(undoVisibleTitle(original.title))': redo does not move events again. Use move_events_batch to move it again. If the undo left the copy in the calendar it was moved to, moving the event again adds a second one there: check that calendar first." + nothingWritten
         case .createReminder(_, let title, _):
             return "Cannot redo the creation of reminder '\(undoVisibleTitle(title))': redo does not create items again. Use create_reminder to create it again." + nothingWritten
-        case .deleteReminder(let snapshot):
+        case .deleteReminder(_, let snapshot):
             return "Cannot redo the deletion of reminder '\(undoVisibleTitle(snapshot.title))': redo does not delete the restored reminder. Use delete_reminder to delete it again." + nothingWritten
         case .updateReminder(_, let oldSnapshot, _):
             return "Cannot redo the update of reminder '\(undoVisibleTitle(oldSnapshot.title))': redo does not apply updates again, so it stays as the undo left it. Use update_reminder to apply the changes again." + nothingWritten

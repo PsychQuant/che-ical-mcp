@@ -76,6 +76,9 @@ struct DeletedEventSnapshots {
     /// `occurrenceDate` equal to `startDate` for a timed, an all-day and a New York series
     /// (checked 2026-10-08), and the delete from the first occurrence was recorded whole for each.
     let fromFirstOccurrence: Bool
+    /// #538: the identifier the event the identifier resolved to had, held by `.deleteEvent`
+    /// (`DeleteUndoFollow.removedIdentifier`: a series' without a `/RID=` part).
+    let removedID: String
 
     /// `seriesExceptions` (#285) lists the series' exceptions; it runs, before anything is removed,
     /// only for a delete that can turn out to remove the whole series: span other than "this",
@@ -83,6 +86,7 @@ struct DeletedEventSnapshots {
     init(series: EKEvent, removed: EKEvent, span: EKSpan = .thisEvent, seriesExceptions: (() -> SeriesExceptions?)? = nil) {
         hadRules = series.hasRecurrenceRules
         isDetached = series.isDetached
+        removedID = DeleteUndoFollow.removedIdentifier(eventIdentifier: series.eventIdentifier, hasRules: series.hasRecurrenceRules)
         fromFirstOccurrence = UndoPostState.sameInstant(removed.occurrenceDate ?? removed.startDate,
                                                         series.occurrenceDate ?? series.startDate)
         let exceptions = (hadRules && span != .thisEvent && fromFirstOccurrence) ? seriesExceptions?() : nil
@@ -109,7 +113,7 @@ struct DeletedEventSnapshots {
 
     func record(for kind: EventRemovalKind) -> UndoOperation {
         switch kind {
-        case .wholeEvent: return .deleteEvent(snapshot: series)
+        case .wholeEvent: return .deleteEvent(id: removedID, snapshot: series)
         case .occurrence: return .deleteOccurrence(snapshot: occurrence, notCarriedOver: occurrenceNotCarriedOver)
         case .followingOccurrences: return .deleteFollowingOccurrences(title: series.title)
         }
@@ -333,7 +337,7 @@ extension UndoOperation {
     /// Exhaustive, so a new record kind has to be classified here (verify round 3, finding 2).
     private var undoDisclosures: [UndoDisclosure] {
         switch self {
-        case .deleteEvent(let snapshot):
+        case .deleteEvent(_, let snapshot):
             guard snapshot.restoresFromRules else { return [] }
             return snapshot.exceptions == nil ? [.seriesRules] : [.seriesExceptions]
         case .batch(let members):
@@ -341,7 +345,8 @@ extension UndoOperation {
         case .moveByCopy(let original, _, _, _, _):
             // #466: the source is restored as `.deleteEvent` or `.deleteOccurrence` restores it; its
             // snapshot holds no rules, so neither discloses anything.
-            return UndoOperation.deleteEvent(snapshot: original).undoDisclosures
+            // The identifier is not read here (#538: a move by copy records none for its source).
+            return UndoOperation.deleteEvent(id: "", snapshot: original).undoDisclosures
         case .createEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent, .updateRecurringEvent, .updateSeries, .moveEvent,
              .createReminder, .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder,
              .calendarOperation:

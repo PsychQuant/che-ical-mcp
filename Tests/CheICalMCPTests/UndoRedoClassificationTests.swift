@@ -23,7 +23,7 @@ final class UndoRedoClassificationTests: XCTestCase {
     private var instructionOnly: [UndoOperation] {
         [
             .createEvent(id: "EVT-1", title: "Standup", created: event),
-            .deleteEvent(snapshot: event),
+            .deleteEvent(id: "", snapshot: event),
             .deleteOccurrence(snapshot: event, notCarriedOver: []),
             .deleteFollowingOccurrences(title: "Standup"),
             .updateEvent(id: "EVT-1", oldSnapshot: event, saved: event),
@@ -31,7 +31,7 @@ final class UndoRedoClassificationTests: XCTestCase {
             UndoSnapshotFixtures.seriesUpdate(id: "EVT-1"),   // #263
             .moveEvent(id: "EVT-1", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: false),
             .createReminder(id: "REM-1", title: "Pay rent", created: reminder),
-            .deleteReminder(snapshot: reminder),
+            .deleteReminder(id: "", snapshot: reminder),
             .updateReminder(id: "REM-1", oldSnapshot: reminder, saved: reminder),
             .moveByCopy(original: event, isSplit: false, notCarriedOver: [], copyID: "EVT-1", copy: event),
             .calendarOperation(kind: .created, title: "Standup"),   // #273
@@ -52,9 +52,9 @@ final class UndoRedoClassificationTests: XCTestCase {
     /// The batch path the issue did not list: a batch of deletes answered "Redone batch" for a
     /// no-op. A batch writes on redo only when every member does.
     func testBatchWritesOnRedoOnlyWhenEveryMemberDoes() {
-        XCTAssertFalse(UndoOperation.batch([.deleteEvent(snapshot: event), .deleteEvent(snapshot: event)]).redoWrites)
-        XCTAssertFalse(UndoOperation.batch([.deleteReminder(snapshot: reminder)]).redoWrites)
-        XCTAssertFalse(UndoOperation.batch([completion, .deleteEvent(snapshot: event)]).redoWrites)
+        XCTAssertFalse(UndoOperation.batch([.deleteEvent(id: "", snapshot: event), .deleteEvent(id: "", snapshot: event)]).redoWrites)
+        XCTAssertFalse(UndoOperation.batch([.deleteReminder(id: "", snapshot: reminder)]).redoWrites)
+        XCTAssertFalse(UndoOperation.batch([completion, .deleteEvent(id: "", snapshot: event)]).redoWrites)
         XCTAssertFalse(UndoOperation.batch([]).redoWrites, "an empty batch writes nothing")
         XCTAssertTrue(UndoOperation.batch([completion, completion]).redoWrites)
     }
@@ -75,9 +75,9 @@ final class UndoRedoClassificationTests: XCTestCase {
             XCTAssertFalse(text.contains("stays until"), "the entry is dropped, not kept (#247): \(text)")
             if let tool { XCTAssertTrue(text.contains(tool), text) }
         }
-        let events = try XCTUnwrap(UndoOperation.batch([.deleteEvent(snapshot: event), .deleteEvent(snapshot: event)]).redoInstruction)
+        let events = try XCTUnwrap(UndoOperation.batch([.deleteEvent(id: "", snapshot: event), .deleteEvent(id: "", snapshot: event)]).redoInstruction)
         XCTAssertTrue(events.contains("2 events") && events.contains("delete_events_batch"), events)
-        let reminders = try XCTUnwrap(UndoOperation.batch([.deleteReminder(snapshot: reminder)]).redoInstruction)
+        let reminders = try XCTUnwrap(UndoOperation.batch([.deleteReminder(id: "", snapshot: reminder)]).redoInstruction)
         XCTAssertTrue(reminders.contains("1 reminder") && reminders.contains("delete_reminders_batch"), reminders)
     }
 
@@ -88,7 +88,7 @@ final class UndoRedoClassificationTests: XCTestCase {
         let one = try XCTUnwrap(UndoOperation.batch([.createReminder(id: "REM-1", title: "Pay rent", created: reminder)]).redoInstruction)
         XCTAssertTrue(one.hasPrefix("Cannot redo this batch of 1 operation:"), one)
         let two = try XCTUnwrap(UndoOperation.batch([.createReminder(id: "REM-1", title: "Pay rent", created: reminder),
-                                                    .deleteEvent(snapshot: event)]).redoInstruction)
+                                                    .deleteEvent(id: "", snapshot: event)]).redoInstruction)
         XCTAssertTrue(two.hasPrefix("Cannot redo this batch of 2 operations:"), two)
     }
 
@@ -105,13 +105,13 @@ final class UndoRedoClassificationTests: XCTestCase {
     /// A `delete_events_batch` record can mix whole events and occurrences (#244); both come back
     /// as events, so the batch instruction is the event one.
     func testABatchOfEventAndOccurrenceDeletesNamesDeleteEventsBatch() throws {
-        let mixed = try XCTUnwrap(UndoOperation.batch([.deleteEvent(snapshot: event),
+        let mixed = try XCTUnwrap(UndoOperation.batch([.deleteEvent(id: "", snapshot: event),
                                                        .deleteOccurrence(snapshot: event, notCarriedOver: [])]).redoInstruction)
         XCTAssertTrue(mixed.contains("2 events") && mixed.contains("delete_events_batch"), mixed)
     }
 
     func testInstructionDropsHiddenCharactersFromTheTitle() throws {
-        let text = try XCTUnwrap(UndoOperation.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Stand\u{202E}up\u{200B}")).redoInstruction)
+        let text = try XCTUnwrap(UndoOperation.deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Stand\u{202E}up\u{200B}")).redoInstruction)
         XCTAssertTrue(text.contains("'Standup'"), text)
     }
 
@@ -123,7 +123,7 @@ final class UndoRedoClassificationTests: XCTestCase {
     /// second time (the repeated undo #247 reported).
     func testBeginRedoDropsATopRecordWhoseRedoWritesNothingAndLeavesTheUndoStack() async throws {
         let history = CalendarUndoManager()
-        await history.record(.deleteEvent(snapshot: event))
+        await history.record(.deleteEvent(id: "", snapshot: event))
         await history.record(completion)
         let completionRecord = try await history.beginUndo()
         await history.finishHistoryOperation(try XCTUnwrap(completionRecord))
@@ -157,7 +157,7 @@ final class UndoRedoClassificationTests: XCTestCase {
     func testDroppingARedoRecordKeepsTheOlderUndoRecords() async throws {
         let history = CalendarUndoManager()
         await history.record(completion)
-        await history.record(.deleteEvent(snapshot: event))
+        await history.record(.deleteEvent(id: "", snapshot: event))
         let undoneRecord = try await history.beginUndo()
         let undone = try XCTUnwrap(undoneRecord)
         await history.finishHistoryOperation(undone)

@@ -31,11 +31,11 @@ private actor PartialRestoreExecutor: UndoExecutionSource {
 
 final class UndoPartialRestoreHandlerTests: XCTestCase {
     private func deleted(_ title: String) -> UndoOperation {
-        .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: title))
+        .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: title))
     }
 
     private func reminder(_ title: String) -> UndoOperation {
-        .deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: title))
+        .deleteReminder(id: "", snapshot: UndoSnapshotFixtures.reminder(title: title))
     }
 
     private func object(_ result: CallTool.Result) throws -> [String: Any] {

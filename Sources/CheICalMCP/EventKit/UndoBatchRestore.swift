@@ -124,12 +124,12 @@ extension UndoOperation {
     func restoreDestination(verb: UndoHistoryVerb) -> UndoRestoreDestination? {
         guard verb == .undo else { return nil }
         switch self {
-        case .deleteEvent(let snapshot):
+        case .deleteEvent(_, let snapshot):
             return .eventCalendar(snapshot)
         case .deleteOccurrence(let snapshot, _):
             // #244: recreated as a one-off event in the occurrence's recorded calendar.
             return .eventCalendar(snapshot)
-        case .deleteReminder(let snapshot):
+        case .deleteReminder(_, let snapshot):
             return .reminderList(snapshot)
         case .moveByCopy(let original, _, _, _, _):
             // #466: the source is recreated in its recorded calendar. No batch records this kind.
@@ -423,10 +423,10 @@ extension UndoOperation {
     /// kinds no batch records), for the partial error. Exhaustive (#196 convention).
     var restoredItemTitle: String? {
         switch self {
-        case .deleteEvent(let snapshot): return snapshot.title
+        case .deleteEvent(_, let snapshot): return snapshot.title
         case .moveByCopy(let original, _, _, _, _): return original.title
         case .deleteOccurrence(let snapshot, _): return snapshot.title
-        case .deleteReminder(let snapshot): return snapshot.title
+        case .deleteReminder(_, let snapshot): return snapshot.title
         case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .updateSeries, .moveEvent,
              .createReminder, .updateReminder, .completeReminder, .completeRecurringReminder, .calendarOperation:
             return nil
@@ -441,11 +441,11 @@ extension UndoOperation {
     /// list or account name (#37).
     var restoredItemWhen: String? {
         switch self {
-        case .deleteEvent(let snapshot), .deleteOccurrence(let snapshot, _), .moveByCopy(let snapshot, _, _, _, _):
+        case .deleteEvent(_, let snapshot), .deleteOccurrence(let snapshot, _), .moveByCopy(let snapshot, _, _, _, _):
             let format = snapshot.isAllDay ? "yyyy-MM-dd" : "yyyy-MM-dd'T'HH:mm:ssXXXXX"
             let zone = snapshot.isAllDay ? TimeZone.current : (snapshot.timeZone ?? TimeZone.current)
             return "starting " + DateFormatter.machineReadable(format, zone: zone).string(from: snapshot.startDate)
-        case .deleteReminder(let snapshot):
+        case .deleteReminder(_, let snapshot):
             guard let due = snapshot.dueDateComponents, let year = due.year, let month = due.month, let day = due.day else { return nil }
             var text = String(format: "%04d-%02d-%02d", year, month, day)
             if let hour = due.hour { text += String(format: "T%02d:%02d", hour, due.minute ?? 0) }
