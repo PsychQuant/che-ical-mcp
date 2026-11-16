@@ -920,4 +920,17 @@ final class ManifestParityTests: XCTestCase {
         assertOnce("The undo of an in-place move, or of an update_event that changed the calendar of a one-off event and left it one-off, can give the event a new identifier where the store does that (measured within a Google account; for a calendar update also between iCloud and Google); the answer then ends with the new ID, and older entries of that event follow it (#484).", in: undo.declared, "undo")
         assertOnce("the undo of an in-place move or of a calendar update of a one-off event left one-off can give the event a new identifier (measured within a Google account; for a calendar update also between iCloud and Google), named at the end of the answer, and older entries of the event follow it", in: undo.summary, "manifest undo")
     }
+
+    /// #538: the `undo` description and its manifest summary say that older entries follow an item
+    /// the undo of its delete recreated, and the one exception, each in its own words, once.
+    func testTheUndoTextsSayOlderEntriesFollowARecreatedItem() throws {
+        func assertOnce(_ pin: String, in text: String, _ place: String, line: UInt = #line) {
+            XCTAssertEqual(text.components(separatedBy: pin).count - 1, 1, "\(place): exactly one \"\(pin)\" in: \(text)", line: line)
+        }
+        let undo = try descriptions(of: "undo")
+        assertOnce("older entries of that event or reminder follow it, so a further undo acts on the recreated item and is checked like any undo (#538, measured on iCloud)", in: undo.declared, "undo")
+        assertOnce("They do not follow a series whose occurrences edited on their own came back as separate events", in: undo.declared, "undo")
+        assertOnce("The undo of one occurrence's delete, of a split move or of a move by copy moves no entry.", in: undo.declared, "undo")
+        assertOnce("the undo of a delete recreates the event or reminder under a new identifier and older entries of it follow, except for a series whose edited occurrences came back as separate events, whose older entries say so and can only be discarded (#538)", in: undo.summary, "manifest undo")
+    }
 }

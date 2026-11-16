@@ -125,4 +125,30 @@ final class DeleteUndoFollowWiringTests: XCTestCase {
         XCTAssertEqual(try calls(".markSeriesNotFollowed("), ["EventKitManager+SeriesExceptions.swift": 1])
         XCTAssertEqual(try calls(".replaceReminderIdentifier("), ["EventKitManager.swift": 1])
     }
+
+    /// Every record site of the two cases reads the removed identifier before the removal: the
+    /// record type has no default, so a site that leaves it out does not compile; these pins hold
+    /// which identifier it reads.
+    func testTheRecordSitesReadTheRemovedIdentifierBeforeTheRemoval() throws {
+        let snapshots = try body("init(series: EKEvent, removed: EKEvent, span: EKSpan = .thisEvent,", in: "EventKit/DeleteUndo.swift")
+        assertOnce("removedID = DeleteUndoFollow.removedIdentifier(eventIdentifier: series.eventIdentifier, hasRules: series.hasRecurrenceRules)", in: snapshots)
+        let record = try body("func record(for kind: EventRemovalKind) -> UndoOperation", in: "EventKit/DeleteUndo.swift")
+        assertOnce("case .wholeEvent: return .deleteEvent(id: removedID, snapshot: series)", in: record)
+
+        let read = "let removedID = DeleteUndoFollow.removedIdentifier(eventIdentifier: event.eventIdentifier, hasRules: event.hasRecurrenceRules)"
+        let series = try body("func deleteEventSeries(identifier: String) async throws -> SeriesDeleteRoute", in: Self.manager)
+        try assertOrder([read, "try eventStore.remove(event, span: .futureEvents)",
+                         "await CalendarUndoManager.shared.record(.deleteEvent(id: removedID, snapshot: snapshot))"], in: series)
+        let batch = try body("func deleteEventSeriesBatch(identifiers: [String])", in: Self.manager)
+        try assertOrder([read, "try eventStore.remove(event, span: .futureEvents)",
+                         "undoOperations.append(.deleteEvent(id: removedID, snapshot: snapshot))"], in: batch)
+
+        let reminder = try body("func deleteReminder(identifier: String) async throws", in: Self.manager)
+        try assertOrder(["let removedID = reminder.calendarItemIdentifier",
+                         "let snapshot = try removeExistingReminder(reminder, handler:",
+                         "await CalendarUndoManager.shared.record(.deleteReminder(id: removedID, snapshot: snapshot))"], in: reminder)
+        let reminders = try body("func deleteRemindersBatch(identifiers: [String]", in: Self.manager)
+        try assertOrder(["guard let snapshot = try commitReminderRemoval(reminder, onlyCompleted: onlyCompleted) else {",
+                         "undoSnapshots.append((id: reminder.calendarItemIdentifier, snapshot: snapshot))"], in: reminders)
+    }
 }
