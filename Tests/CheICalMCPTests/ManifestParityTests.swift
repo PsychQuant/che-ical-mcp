@@ -693,6 +693,33 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #539 step 6: the two delete tools say when their answer forecasts that undo restores a series
+    /// from its rules alone, where the note is, and when there is none; both copies, once each.
+    func testTheDeleteSurfacesSayWhenTheUndoIsForecastFromTheRulesAlone() throws {
+        let declared = CheICalMCPServer.defineTools()
+        let phrases = [
+            "delete_event": ["the answer adds undo_note saying that undo is expected to bring the series back from its rules alone, with how many",
+                             "That is a forecast made at the delete: the undo places the records on the recreated series and decides.",
+                             "There is no such note when the series' first occurrence is not a plain occurrence at its own start (edited or deleted on its own)"],
+            "delete_events_batch": ["the real call lists each row with one not placed under rules_alone_on_undo, as event_id and undo_note",
+                                    "and lists none when a row of the call makes the call's undo refuse",
+                                    "The dry run with span all gives that undo_note in the series' row, before anything is deleted; the dry run with span future does not."]
+        ]
+        for (name, list) in phrases {
+            let description = declared.first { $0.name == name }?.description ?? ""
+            for phrase in list {
+                XCTAssertEqual(description.components(separatedBy: phrase).count - 1, 1, "defineTools() \(name): \(phrase)")
+            }
+        }
+        let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
+        let tools = manifest?["tools"] as? [[String: Any]] ?? []
+        for (name, phrase) in [("delete_event", "a whole-series delete adds undo_note when an occurrence edited on its own that it records falls on no slot of the series' rule, since undo is then expected to restore the series from its rules alone, #539"),
+                               ("delete_events_batch", "series rows whose undo is expected to restore from the rules alone are listed in rules_alone_on_undo with an undo_note, and the span all dry run gives it in the row, #539")] {
+            let summary = tools.first { $0["name"] as? String == name }?["description"] as? String ?? ""
+            XCTAssertEqual(summary.components(separatedBy: phrase).count - 1, 1, "mcpb/manifest.json \(name)")
+        }
+    }
+
     /// #541: the `clear_timezone` parameter of `update_event` says the event is left floating, not in
     /// the system time zone, with what was measured on iCloud and on Google, once each.
     func testClearTimezoneSaysTheEventIsLeftFloating() throws {
