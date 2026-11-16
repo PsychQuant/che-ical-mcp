@@ -149,9 +149,10 @@ final class UndoBatchWiringTests: XCTestCase {
             let count = SourcePins.ranges(ofPattern: #"(?<!case )\.batch\s*\("#, in: code).count
             if count > 0 { built[file.lastPathComponent, default: 0] += count }
         }
-        // UndoManager.swift's second is `replacingEventIdentifier` (#435): the same members, with one
-        // identifier replaced, so nothing new can run last.
-        XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 2, "Server.swift": 4, "UndoBatchRestore.swift": 1],
+        // UndoManager.swift's second is `replacingEventIdentifier` (#435) and its third
+        // `replacingReminderIdentifier` (#538): the same members, with one identifier replaced, so
+        // nothing new can run last.
+        XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 3, "Server.swift": 4, "UndoBatchRestore.swift": 1],
                        "a new .batch record must hold only members that may run last (mayRunLastAfterAFailure)")
     }
 
@@ -249,7 +250,7 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertNotNil(Self.offset(of: Self.call("restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },"), in: store))
         // Since #280 the delete-undo, single and batch member, restores through
         // `restoreDeletedReminder`; that is where the kind is passed.
-        let restore = Substring(try Self.body("func restoreDeletedReminder(_ snapshot: ReminderSnapshot)", in: Self.manager))
+        let restore = Substring(try Self.body("func restoreDeletedReminder(_ snapshot: ReminderSnapshot, removedID: String)", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("for: .recreateDeleted"), in: restore))
     }
 
@@ -270,7 +271,7 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertEqual(Self.count("restoreDeletedReminder(", in: batch), 0, "reminders go through undoBatchMember")
 
         let member = Substring(try Self.body("func undoBatchMember(_ operation: UndoOperation)", in: Self.manager))
-        XCTAssertNotNil(Self.offset(of: Self.call("case .deleteReminder(_, let snapshot):"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("case .deleteReminder(let removedID, let snapshot):"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("default: return UndoMemberOutcome(text: try await executeUndo(operation), differing: [])"), in: member))
         // Round 6, findings 2, 9: a nested batch member carries its own members' differences up,
         // and (#323) what its event members did.
@@ -279,9 +280,9 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertNotNil(Self.offset(of: Self.call("return UndoMemberOutcome(text: undone.message, differing: undone.differing, events: undone.events)"), in: member))
         // #323: a deleted event or occurrence runs the same arm as `executeUndo`, and its outcome
         // travels as data.
-        XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoDeletedEvent(snapshot) return UndoMemberOutcome(text: undone.text, differing: [], events: undone.outcome.map { [$0] } ?? [])"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoDeletedEvent(snapshot, removedID: removedID) return UndoMemberOutcome(text: undone.text, differing: [], events: undone.outcome.map { [$0] } ?? [])"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver) return UndoMemberOutcome(text: undone.text, differing: [], events: [undone.outcome])"), in: member))
-        XCTAssertNotNil(Self.offset(of: Self.call("let restored = try await restoreDeletedReminder(snapshot)"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("let restored = try await restoreDeletedReminder(snapshot, removedID: removedID)"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("differing: [UndoRestoredDifference(title: restored.title, storeDiffers: restored.storeDiffers)])"), in: member))
 
         let text = Substring(try XCTUnwrap(SourcePins.body(of: "static func batchUndoneMessage(", in: try SourcePins.source("EventKit/DeleteUndo.swift"))))

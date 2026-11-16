@@ -180,11 +180,11 @@ final class NewObjectSaveTests: XCTestCase {
     /// that does differ stays one entry on one line.
     func testATitleCannotForgeOrSplitTheNote() {
         let forged = "x' — the store holds a different title; check it\nrestored reminder 'y' — the store holds a different due; check it"
-        let single = EventKitManager.restoredReminderMessage((title: forged, storeDiffers: []))
+        let single = EventKitManager.restoredReminderMessage((title: forged, storeDiffers: [], newID: ""))
         XCTAssertTrue(single.hasPrefix("Undone: restored reminder '") && single.hasSuffix("'"), single)
         XCTAssertEqual(single.filter { $0 == "'" }.count, 2, "only the message's own quotes: \(single)")
         XCTAssertFalse(single.contains("\n"), single)
-        let noted = EventKitManager.restoredReminderMessage((title: forged, storeDiffers: ["due"]))
+        let noted = EventKitManager.restoredReminderMessage((title: forged, storeDiffers: ["due"], newID: ""))
         XCTAssertEqual(noted.filter { $0 == "'" }.count, 2, noted)
         XCTAssertTrue(noted.hasSuffix("' — the store holds a different due; check it"), noted)
         let batch = UndoRestoredDifference.sentences([UndoRestoredDifference(title: forged, storeDiffers: ["title"])])
@@ -603,18 +603,18 @@ final class NewObjectSaveTests: XCTestCase {
                                    in: create).count, 1, create)
         // Delete-undo, single and in a batch, goes through one helper that returns the names as
         // data; the single arm turns them into its message, the batch arm collects them per member.
-        let undoArm = try body(of: "func restoreDeletedReminder(_ snapshot: ReminderSnapshot) async throws -> (title: String, storeDiffers: [String])", in: code)
-        XCTAssertEqual(try matches(#"^\{ ?let reminder = try await applyReminderSnapshot\( ?snapshot ?, ?for: ?\.recreateDeleted ?, ?into: ?\{ ?EKReminder\( ?eventStore: ?eventStore ?\) ?\} ?\) ?let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?true ?\) ?markNeedsRefresh\( ?\) ?return \( ?snapshot\.title ?, ?storeDiffers ?\) ?\}$"#, in: undoArm).count, 1, undoArm)
-        let message = try body(of: "static func restoredReminderMessage(_ restored: (title: String, storeDiffers: [String])) -> String", in: code)
-        XCTAssertEqual(try matches(#"^\{ ?"" ?\+ ?NewObjectSave\.undoSuffix\( ?restored\.storeDiffers ?\) ?\}$"#, in: message).count, 1, message)
-        XCTAssertEqual(try matches(#"case \.deleteReminder\( ?_ ?, ?let snapshot ?\) ?: ?return Self\.restoredReminderMessage\( ?try await restoreDeletedReminder\( ?snapshot ?\) ?\)"#, in: code).count, 1)
+        let undoArm = try body(of: "func restoreDeletedReminder(_ snapshot: ReminderSnapshot, removedID: String) async throws -> (title: String, storeDiffers: [String], newID: String)", in: code)
+        XCTAssertEqual(try matches(#"^\{ ?let reminder = try await applyReminderSnapshot\( ?snapshot ?, ?for: ?\.recreateDeleted ?, ?into: ?\{ ?EKReminder\( ?eventStore: ?eventStore ?\) ?\} ?\) ?let storeDiffers = try saveNewReminder\( ?reminder ?, ?handler: ?"" ?, ?restoring: ?true ?\) ?markNeedsRefresh\( ?\) ?let newID = reminder\.calendarItemIdentifier ?if let followed = DeleteUndoFollow\.reminderIdentifierToFollow\( ?removedID: ?removedID ?, ?newID: ?newID ?\) ?\{ ?await undoHistory\.replaceReminderIdentifier\( ?removedID ?, ?with: ?followed ?\) ?\} ?return \( ?snapshot\.title ?, ?storeDiffers ?, ?newID ?\) ?\}$"#, in: undoArm).count, 1, undoArm)
+        let message = try body(of: "static func restoredReminderMessage(_ restored: (title: String, storeDiffers: [String], newID: String)) -> String", in: code)
+        XCTAssertEqual(try matches(#"^\{ ?"" ?\+ ?EventUpdateRecord\.newIdentifierSuffix\( ?restored\.newID\.isEmpty \? nil : restored\.newID ?\) ?\+ ?NewObjectSave\.undoSuffix\( ?restored\.storeDiffers ?\) ?\}$"#, in: message).count, 1, message)
+        XCTAssertEqual(try matches(#"case \.deleteReminder\( ?let removedID ?, ?let snapshot ?\) ?: ?return Self\.restoredReminderMessage\( ?try await restoreDeletedReminder\( ?snapshot ?, ?removedID: ?removedID ?\) ?\)"#, in: code).count, 1)
         // PR #282 integrates the batch arm with #248's narrowing: each member runs through
         // `undoBatchMember`, which takes a reminder's names from `restoreDeletedReminder` as data,
         // and the batch text builds its note from them with `differingFieldsNote`
         // (`UndoRestoredDifference.sentences`); no member text is read
         // back (`UndoBatchWiringTests.testTheUndoBatchArmCarriesRestoredRemindersDifferencesAsData`).
         let member = try body(of: "func undoBatchMember(_ operation: UndoOperation)", in: code)
-        XCTAssertEqual(try matches(#"case \.deleteReminder\( ?_ ?, ?let snapshot ?\) ?: ?let restored = try await restoreDeletedReminder\( ?snapshot ?\) ?return UndoMemberOutcome\( ?text: ?Self\.restoredReminderMessage\( ?restored ?\) ?, ?differing: ?\[ ?UndoRestoredDifference\( ?title: ?restored\.title ?, ?storeDiffers: ?restored\.storeDiffers ?\) ?\] ?\)"#, in: member).count, 1,
+        XCTAssertEqual(try matches(#"case \.deleteReminder\( ?let removedID ?, ?let snapshot ?\) ?: ?let restored = try await restoreDeletedReminder\( ?snapshot ?, ?removedID: ?removedID ?\) ?return UndoMemberOutcome\( ?text: ?Self\.restoredReminderMessage\( ?restored ?\) ?, ?differing: ?\[ ?UndoRestoredDifference\( ?title: ?restored\.title ?, ?storeDiffers: ?restored\.storeDiffers ?\) ?\] ?\)"#, in: member).count, 1,
                        "a batch undo collects each restored member's names and builds its note from them")
         XCTAssertEqual(try matches(#"restore: ?\{ ?try await self\.undoBatchMember\( ?\$0 ?\) ?\}"#, in: code).count, 1)
         XCTAssertEqual(try matches(#"UndoRestoredDifference\.sentences\( ?differing ?\)"#, in: code).count, 1)

@@ -141,15 +141,17 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
         let source = try SourcePins.source("EventKit/EventKitManager+SeriesExceptions.swift")
         for (declaration, call) in [
             // #466 (PR #474 round 2): both take the restore kind, so a move by copy's source is refused
-            // in a move's words; the delete arms take the defaults.
-            ("func undoDeletedEvent(_ snapshot: EventSnapshot, kind: EventRestoreKind = .recreateDeleted)", "undoDeletedEvent(snapshot, kind: kind, on: "),
+            // in a move's words; the delete arms take the defaults. #538: the event arm keeps what
+            // the store returned, to move older records after it (`DeleteUndoFollowWiringTests`).
+            ("func undoDeletedEvent(_ snapshot: EventSnapshot, removedID: String?, kind: EventRestoreKind = .recreateDeleted)",
+             "undone = try await undoDeletedEvent(snapshot, kind: kind, on: "),
             ("func undoDeletedOccurrence(_ snapshot: EventSnapshot, notCarriedOver: [String],",
-             "undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver, kind: kind, on: "),
+             "return try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver, kind: kind, on: "),
         ] {
             let body = try XCTUnwrap(SourcePins.body(of: declaration, in: source), declaration)
             XCTAssertEqual(SourcePins.ranges(of: "if let store = seriesExceptionsStoreOverride {", in: body).count, 1, declaration)
-            XCTAssertEqual(SourcePins.ranges(of: "return try await " + call + "store)", in: body).count, 1, declaration)
-            XCTAssertEqual(SourcePins.ranges(of: "return try await " + call + "seriesExceptionsStore)", in: body).count, 1, declaration)
+            XCTAssertEqual(SourcePins.ranges(of: call + "store)", in: body).count, 1, declaration)
+            XCTAssertEqual(SourcePins.ranges(of: call + "seriesExceptionsStore)", in: body).count, 1, declaration)
         }
         let capture = try XCTUnwrap(SourcePins.body(of: "func captureSeriesExceptions(of series: EKEvent)", in: source))
         XCTAssertEqual(SourcePins.ranges(of: "SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore)", in: capture).count, 1)

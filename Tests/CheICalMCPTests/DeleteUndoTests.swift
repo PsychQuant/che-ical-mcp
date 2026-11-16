@@ -413,15 +413,15 @@ final class DeleteUndoTests: XCTestCase {
     /// a fake store; this pin keeps the arm on it and the message in it.
     func testTheWholeEventUndoArmReportsTheRulesRestore() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: try SourcePins.source("EventKit/EventKitManager.swift")))
-        let arm = try XCTUnwrap(SourcePins.ranges(of: "case .deleteEvent(_, let snapshot):", in: body).first)
+        let arm = try XCTUnwrap(SourcePins.ranges(of: "case .deleteEvent(let removedID, let snapshot):", in: body).first)
         let next = try XCTUnwrap(SourcePins.ranges(of: "case .deleteOccurrence(", in: body).first)
-        let call = SourcePins.ranges(ofPattern: #"return\s+try\s+await\s+undoDeletedEvent\(snapshot\)\.text"#, in: body)
+        let call = SourcePins.ranges(ofPattern: #"return\s+try\s+await\s+undoDeletedEvent\(snapshot,\s*removedID:\s*removedID\)\.text"#, in: body)
         XCTAssertEqual(call.count, 1)
         if let call = call.first {
             XCTAssertGreaterThan(call.lowerBound, arm.lowerBound)
             XCTAssertLessThan(call.lowerBound, next.lowerBound, "in the whole-event arm")
         }
-        let undo = try XCTUnwrap(SourcePins.body(of: "static func undoDeleteEvent<", in: try SourcePins.source("EventKit/SeriesExceptionsUndo.swift")))
+        let undo = try XCTUnwrap(SourcePins.body(of: "static func recreateDeletedEvent<", in: try SourcePins.source("EventKit/SeriesExceptionsUndo.swift")))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"let\s+text\s*=\s*UndoOperation\.eventRestoredMessage\(snapshot:\s*snapshot,\s*newID:"#, in: undo).count, 1)
     }
 

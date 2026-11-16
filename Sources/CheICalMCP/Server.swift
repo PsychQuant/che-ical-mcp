@@ -1710,6 +1710,14 @@ class CheICalMCPServer {
                 await undoManager.restoreFailedUndo(record, remaining: .batch(partial.remaining))
             }
             throw partial
+        } catch let missing as UndoTargetMissingError where record.seriesNotFollowed {
+            // #538: the entry names a series that the undo of its delete recreated as a new series
+            // without moving this entry (its edited occurrences came back as separate events). Put
+            // back as every not-found is, then answered in words that say so instead of the generic
+            // not-found, which reads like a lost identifier.
+            await undoManager.restoreFailedUndo(record)
+            guard let title = record.operation.notFollowedTitle else { throw missing }
+            throw UndoTargetMissingError.seriesNotFollowed(title: title)
         } catch {
             switch UndoFailureDisposition.of(error) {
             case .restore:

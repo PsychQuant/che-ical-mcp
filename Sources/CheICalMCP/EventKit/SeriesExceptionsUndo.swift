@@ -216,9 +216,21 @@ enum SeriesExceptionsUndo {
     /// record is: nothing is written when the series holds its slot again.
     static func undoDeleteEvent<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, calendar: Store.Calendar,
                                                                     in store: Store) throws -> (text: String, outcome: UndoEventOutcome?) {
+        let undone = try recreateDeletedEvent(snapshot, calendar: calendar, in: store)
+        return (undone.text, undone.outcome)
+    }
+
+    /// #538: `undoDeleteEvent` with the recreated event's identifier, read after the save and after
+    /// the series' exceptions were restored (a restore that throws leaves before it), and normalized
+    /// as a delete record holds one (`DeleteUndoFollow.removedIdentifier`). Nil when nothing was
+    /// written (a slot its series already holds) and when the event reads back without one.
+    static func recreateDeletedEvent<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, calendar: Store.Calendar,
+                                                                         in store: Store) throws
+        -> (text: String, outcome: UndoEventOutcome?, newID: String?) {
         if !snapshot.restoresFromRules, let origin = snapshot.occurrenceOrigin,
            seriesHoldsSlot(origin, length: slotLength(of: snapshot), calendar: calendar, in: store) {
-            return held(snapshot, origin)
+            let answer = held(snapshot, origin)
+            return (answer.text, answer.outcome, nil)
         }
         let event = store.makeEvent()
         store.apply(snapshot, to: event, calendar: calendar)
@@ -234,18 +246,20 @@ enum SeriesExceptionsUndo {
         if snapshot.restoresFromRules, let exceptions = snapshot.exceptions {
             outcome = try restore(exceptions, of: event, in: store)
         }
-        let text = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: store.identifiers(of: event).eventIdentifier ?? "unknown",
+        let readID = store.identifiers(of: event).eventIdentifier
+        let text = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: readID ?? "unknown",
                                                       exceptionsOutcome: outcome)
+        let newID = readID.map { DeleteUndoFollow.removedIdentifier(eventIdentifier: $0, hasRules: snapshot.restoresFromRules) }
         // PR #494 round 1: an occurrence's record that could not name its series says so, as
         // `.deleteOccurrence` does; round 2: and returns it as the outcome, so a batch says it too.
         if !snapshot.restoresFromRules, snapshot.isOccurrenceRecord {
             guard snapshot.occurrenceOrigin != nil else {
-                return (text + ". " + UndoOperation.occurrenceSlotUncheckedNote, .occurrenceOneOffSlotUnchecked(notCarriedOver: []))
+                return (text + ". " + UndoOperation.occurrenceSlotUncheckedNote, .occurrenceOneOffSlotUnchecked(notCarriedOver: []), newID)
             }
-            return (text, .occurrenceOneOff(notCarriedOver: []))
+            return (text, .occurrenceOneOff(notCarriedOver: []), newID)
         }
-        guard snapshot.restoresFromRules else { return (text, nil) }
-        return (text, outcome.map(UndoEventOutcome.seriesWithExceptions) ?? .seriesFromRules)
+        guard snapshot.restoresFromRules else { return (text, nil, newID) }
+        return (text, outcome.map(UndoEventOutcome.seriesWithExceptions) ?? .seriesFromRules, newID)
     }
 
     /// The undo of `.deleteOccurrence`. #244: the snapshot holds no rules, so the occurrence comes

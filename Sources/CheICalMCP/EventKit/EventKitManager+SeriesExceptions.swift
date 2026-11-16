@@ -26,14 +26,34 @@ extension EventKitManager {
         SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore)
     }
 
-    /// The `.deleteEvent` undo arm (`SeriesExceptionsUndo.undoDeleteEvent`).
+    /// The `.deleteEvent` undo arm (`SeriesExceptionsUndo.recreateDeletedEvent`).
     /// `kind` words a missing calendar: `.undoMoveByCopy` for the source of a move by copy (#466).
-    func undoDeletedEvent(_ snapshot: EventSnapshot, kind: EventRestoreKind = .recreateDeleted) async throws
+    /// #538: `removedID` is the identifier the record holds, nil for the source of a move by copy
+    /// (which records none and is not followed). After the arm returned, older records follow the
+    /// recreated event, or are flagged for a series whose edited occurrences came back as separate
+    /// events (`DeleteUndoFollow.decision`); an arm that threw has returned no identifier, and
+    /// nothing is rewritten. Required, so a caller has to say which.
+    func undoDeletedEvent(_ snapshot: EventSnapshot, removedID: String?, kind: EventRestoreKind = .recreateDeleted) async throws
         -> (text: String, outcome: UndoEventOutcome?) {
+        let undone: (text: String, outcome: UndoEventOutcome?, newID: String?)
         if let store = seriesExceptionsStoreOverride {
-            return try await undoDeletedEvent(snapshot, kind: kind, on: store)
+            undone = try await undoDeletedEvent(snapshot, kind: kind, on: store)
+        } else {
+            undone = try await undoDeletedEvent(snapshot, kind: kind, on: seriesExceptionsStore)
         }
-        return try await undoDeletedEvent(snapshot, kind: kind, on: seriesExceptionsStore)
+        guard let removedID else { return (undone.text, undone.outcome) }
+        switch DeleteUndoFollow.decision(removedID: removedID, newID: undone.newID,
+                                         isOccurrenceRecord: snapshot.isOccurrenceRecord, outcome: undone.outcome) {
+        case .follow(let newID):
+            await undoHistory.replaceEventIdentifier(removedID, with: newID)
+            return (undone.text, undone.outcome)
+        case .flag(let oneOffs):
+            let flagged = await undoHistory.markSeriesNotFollowed(removedID)
+            guard flagged > 0 else { return (undone.text, undone.outcome) }
+            return (DeleteUndoFollow.appendingNotFollowed(undone.text, oneOffs: oneOffs), undone.outcome)
+        case .none:
+            return (undone.text, undone.outcome)
+        }
     }
 
     /// The `.deleteOccurrence` undo arm (`SeriesExceptionsUndo.undoDeleteOccurrence`).
@@ -50,9 +70,9 @@ extension EventKitManager {
     /// on this actor, as before #322 moved it.
     private func undoDeletedEvent<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, kind: EventRestoreKind,
                                                                       on store: Store) async throws
-        -> (text: String, outcome: UndoEventOutcome?) {
+        -> (text: String, outcome: UndoEventOutcome?, newID: String?) {
         let calendar = try await store.restoreCalendar(for: snapshot, kind: kind)
-        return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: calendar, in: store)
+        return try SeriesExceptionsUndo.recreateDeletedEvent(snapshot, calendar: calendar, in: store)
     }
 
     /// The occurrence's calendar is read once, before the slot check and the write (#269 verify).

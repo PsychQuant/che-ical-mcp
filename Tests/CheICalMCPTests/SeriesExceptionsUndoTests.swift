@@ -882,4 +882,60 @@ final class SeriesExceptionsUndoTests: XCTestCase {
         XCTAssertEqual(exceptions.windows, [around(now), fromFirst(now, -3650)])
         XCTAssertEqual(exceptions.keptSlots, near)
     }
+
+    // MARK: - #538: the recreated event's identifier
+
+    /// The identifier the undo of a delete hands back for older records to follow: the recreated
+    /// event's for a one-off and for a series (with the outcome that decides whether they follow),
+    /// and none when nothing was written.
+    func testTheRecreateReturnsTheNewIdentifierOfAOneOffAndOfASeries() throws {
+        let store = FakeSeriesExceptionsStore()
+        let event = UndoSnapshotFixtures.event(title: "Review", startDate: s0)
+        let oneOff = try SeriesExceptionsUndo.recreateDeletedEvent(event, calendar: event.calendarIdentifier, in: store)
+        XCTAssertEqual(oneOff.newID, "E1")
+        XCTAssertNil(oneOff.outcome)
+
+        let seriesStore = FakeSeriesExceptionsStore()
+        seriesStore.seriesSlots = [s0, s1, s2, s3]
+        let (series, _) = recordedSeries()
+        let recreated = try SeriesExceptionsUndo.recreateDeletedEvent(series, calendar: series.calendarIdentifier, in: seriesStore)
+        XCTAssertEqual(recreated.newID, "E1", "the series', read after its exceptions were restored")
+        XCTAssertEqual(recreated.outcome, .seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 1)),
+                       "the recorded edited occurrence came back as one separate event: oneOffs is one")
+        XCTAssertEqual(DeleteUndoFollow.decision(removedID: "S", newID: recreated.newID, isOccurrenceRecord: false,
+                                                 outcome: recreated.outcome), .flag(oneOffs: 1))
+    }
+
+    /// `undoDeleteEvent` answers what `recreateDeletedEvent` answers, without the identifier.
+    func testUndoDeleteEventIsTheRecreateWithoutTheIdentifier() throws {
+        let event = UndoSnapshotFixtures.event(title: "Review", startDate: s0)
+        let a = try SeriesExceptionsUndo.recreateDeletedEvent(event, calendar: event.calendarIdentifier, in: FakeSeriesExceptionsStore())
+        let b = try SeriesExceptionsUndo.undoDeleteEvent(event, calendar: event.calendarIdentifier, in: FakeSeriesExceptionsStore())
+        XCTAssertEqual(a.text, b.text)
+        XCTAssertEqual(a.outcome, b.outcome)
+    }
+
+    /// A slot its series already holds: nothing was written, so no identifier to follow.
+    func testAHeldSlotReturnsNoIdentifier() throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        let series = seriesS
+        _ = try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: series.calendarIdentifier, in: store)
+        let detached = UndoSnapshotFixtures.event(title: "Standup moved", startDate: s1.addingTimeInterval(1800))
+            .withOccurrenceOrigin(editedOrigin(s1))
+
+        let held = try SeriesExceptionsUndo.recreateDeletedEvent(detached, calendar: series.calendarIdentifier, in: store)
+
+        XCTAssertNil(held.newID)
+        XCTAssertEqual(held.outcome, .editedOccurrenceAlreadyHeld)
+    }
+
+    /// A restore that failed and was rolled back throws: no identifier is handed back.
+    func testARolledBackRestoreHandsBackNothing() {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        store.failingSaveTitles = ["Standup moved"]
+        let series = seriesSWithExceptions()
+        XCTAssertThrowsError(try SeriesExceptionsUndo.recreateDeletedEvent(series, calendar: series.calendarIdentifier, in: store))
+    }
 }

@@ -25,7 +25,7 @@ final class MoveByCopyUndoWiringTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(of: "let undone = try await self.undoDeletedOccurrence(original, notCarriedOver: notCarriedOver, kind: .undoMoveByCopy)", in: arm).count, 1)
         // Round 3, MEDIUM: the occurrence undo's outcome goes in, so a held slot keeps the copy.
         XCTAssertEqual(SourcePins.ranges(of: "return MoveByCopyUndo.Restore(text: undone.text, outcome: undone.outcome)", in: arm).count, 1)
-        XCTAssertEqual(SourcePins.ranges(of: "return .written(try await self.undoDeletedEvent(original, kind: .undoMoveByCopy).text)", in: arm).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "return .written(try await self.undoDeletedEvent(original, removedID: nil, kind: .undoMoveByCopy).text)", in: arm).count, 1)
     }
 
     /// Round 2, MEDIUM: the check and the removal are one async closure formed on the actor (its
