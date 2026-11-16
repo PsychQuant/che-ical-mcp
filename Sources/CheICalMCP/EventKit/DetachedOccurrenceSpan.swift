@@ -444,7 +444,8 @@ enum DetachedOccurrenceSpan {
     /// An update resolved to an edited occurrence by `occurrence_date`, on a source where that
     /// occurrence keeps the series' identifier. iCloud and Google cannot get here: `findOccurrence`
     /// needs the identifier, and there an edited occurrence has its own (Google measured through
-    /// EventKit, #320), so that call is refused earlier with the occurrence's identifier (#532,
+    /// EventKit, #320), so that call is refused earlier with the occurrence's identifier when the
+    /// occurrence starts on that day, and answers not found when it was moved off it (#532,
     /// `EditedOccurrenceAddress`). No source that keeps the series' identifier was measured:
     /// Exchange may be one. The save would be the same as through the occurrence's own id, so the
     /// same checks run. Whether it starts a new series is not known there, so it counts as doing

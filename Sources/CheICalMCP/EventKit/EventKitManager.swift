@@ -1923,30 +1923,27 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         return readings
     }
 
-    /// #532: the occurrences of `series` that were edited on their own and belong to the requested
-    /// day: from the day's events, and from one listing of the series around that day
-    /// (`EditedOccurrenceAddress.listingRange`; nil when it cannot be listed, then only the day's
-    /// events are read). Called only after `findOccurrence` missed, so a call that resolves an
-    /// occurrence costs what it did; a miss costs one more enumeration of the day and one series
-    /// listing, and writes nothing.
-    func editedOccurrences(ofSeries series: EKEvent, for request: EditedOccurrenceAddress.Request) -> [EditedOccurrenceAddress.Match] {
-        let listed = EditedOccurrenceAddress.listingRange(for: request).flatMap { seriesReadings(of: series, id: request.seriesID, over: $0) }
-        return EditedOccurrenceAddress.matches(onDay: dayReadings(containing: request.requested, in: request.seriesZone), listed: listed, for: request)
+    /// #532: the occurrences of the series that were edited on their own and start on the requested
+    /// day, from the day's events only (`dayReadings`). The series is not listed and no slot is read.
+    /// Called only after `findOccurrence` missed, so a call that resolves an occurrence costs what it
+    /// did; a miss costs one more enumeration of the day, and writes nothing.
+    func editedOccurrences(for request: EditedOccurrenceAddress.Request) -> [EditedOccurrenceAddress.Match] {
+        EditedOccurrenceAddress.matches(onDay: dayReadings(containing: request.requested, in: request.seriesZone), for: request)
     }
 
     /// The answer of `move_events_batch` for a date on which no occurrence of the event starts.
     static let noOccurrenceOnDateReason = "No occurrence of this event falls on occurrence_date."
 
     /// #532: the error for an occurrence lookup that missed. A refusal that gives the identifier of
-    /// each occurrence edited on its own that belongs to the day, or the not-found answer as before
+    /// each occurrence edited on its own that starts on the day, or the not-found answer as before
     /// (with the day as a date, #535). Both are trusted messages, so nothing is logged for them.
     /// The day is taken in the zone the lookup searched in, `occurrenceZone(of:)` of the same object,
     /// and that zone goes in as it is: with none, the series is timed and floating or all-day, and
-    /// the search reads no slot of a floating one (`EditedOccurrenceAddress.Request.readsSlots`).
+    /// the day is read in this Mac's zone (`EditedOccurrenceAddress.Request.zone`).
     func occurrenceMissError(series: EKEvent, id: String, on date: Date, call: EditedOccurrenceAddress.Call) -> EventKitError {
         let request = EditedOccurrenceAddress.Request(seriesID: id, seriesIsAllDay: series.isAllDay,
-                                                      seriesZone: Self.occurrenceZone(of: series), seriesStart: series.startDate, requested: date)
-        switch EditedOccurrenceAddress.miss(for: call, matches: editedOccurrences(ofSeries: series, for: request), request: request) {
+                                                      seriesZone: Self.occurrenceZone(of: series), requested: date)
+        switch EditedOccurrenceAddress.miss(for: call, matches: editedOccurrences(for: request), request: request) {
         case .refusal(let reason):
             return call == .moveRow ? .moveRefused(reason: reason) : .occurrenceAddressRefused(reason: reason)
         case .notFound(let detail):

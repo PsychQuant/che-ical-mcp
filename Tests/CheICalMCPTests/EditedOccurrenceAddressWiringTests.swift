@@ -68,10 +68,10 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
     func testTheMissErrorIsBuiltFromTheSearchAndWritesNothing() throws {
         let miss = try body(of: "func occurrenceMissError(")
         // What was asked is built once, from the object the lookup searched with, and the zone goes
-        // in as it is: a default in its place would hide a series with no time zone, whose slots are
-        // not read (PR #545 verify).
-        let asked = "let request = EditedOccurrenceAddress.Request(seriesID: id, seriesIsAllDay: series.isAllDay, seriesZone: Self.occurrenceZone(of: series), seriesStart: series.startDate, requested: date)"
-        let decide = "switch EditedOccurrenceAddress.miss(for: call, matches: editedOccurrences(ofSeries: series, for: request), request: request) {"
+        // in as it is: a default in its place would read the day of a series with no time zone in
+        // another zone than the lookup's and hide its #549 text (PR #545 verify).
+        let asked = "let request = EditedOccurrenceAddress.Request(seriesID: id, seriesIsAllDay: series.isAllDay, seriesZone: Self.occurrenceZone(of: series), requested: date)"
+        let decide = "switch EditedOccurrenceAddress.miss(for: call, matches: editedOccurrences(for: request), request: request) {"
         assertOnce(asked, in: miss)
         assertOnce(decide, in: miss)
         let notFound = ".eventNotFound(identifier: detail)"
@@ -83,14 +83,16 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
         assertOnce("EditedOccurrenceAddress.Request(", in: miss)
         assertOnce("editedOccurrences(", in: miss)
 
-        // The listing is made over the range around the requested day, once, and the day's events
-        // are read in the series' zone as it is.
+        // Only the day's events are read, in the series' zone as it is; the series is not listed
+        // (PR #545 narrowing round).
         let edited = try body(of: "func editedOccurrences(")
-        assertOnce("let listed = EditedOccurrenceAddress.listingRange(for: request).flatMap { seriesReadings(of: series, id: request.seriesID, over: $0) }", in: edited)
-        assertOnce("return EditedOccurrenceAddress.matches(onDay: dayReadings(containing: request.requested, in: request.seriesZone), listed: listed, for: request)", in: edited)
-        assertOnce("seriesReadings(", in: edited)
+        assertOnce("func editedOccurrences(for request: EditedOccurrenceAddress.Request) -> [EditedOccurrenceAddress.Match] { EditedOccurrenceAddress.matches(onDay: dayReadings(containing: request.requested, in: request.seriesZone), for: request) }", in: edited)
         assertOnce("dayReadings(", in: edited)
         assertOnce("EditedOccurrenceAddress.matches(", in: edited)
+        for listing in ["seriesOccurrences(", "seriesReadings(", "listingRange", "predicateForEvents(", "enumerateEvents("] {
+            XCTAssertFalse(edited.contains(listing), "editedOccurrences lists: \(listing)")
+            XCTAssertFalse(miss.contains(listing), "occurrenceMissError lists: \(listing)")
+        }
 
         // The day's events: the window and the predicate of the lookup (`OccurrenceDayTests` pins the
         // same two statements in `findOccurrence`), opening the body, with neither input rebound.
@@ -111,16 +113,8 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
             XCTAssertFalse(code.contains("TimeZone.current"), code)
         }
 
-        // Nothing the search runs writes, records history or logs: its three functions here, and
-        // the two it calls in the listing file.
-        let listing = try SourcePins.source("EventKit/FirstRemainingOccurrence.swift")
-        func listingBody(_ declaration: String) throws -> String {
-            SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: declaration, in: listing), declaration))
-        }
-        let readings = try listingBody("func seriesReadings(")
-        let occurrences = try listingBody("private func seriesOccurrences(")
-        for (name, code) in [("occurrenceMissError", miss), ("editedOccurrences", edited), ("dayReadings", day),
-                             ("seriesReadings", readings), ("seriesOccurrences", occurrences)] {
+        // Nothing the search runs writes, records history or logs: its three functions.
+        for (name, code) in [("occurrenceMissError", miss), ("editedOccurrences", edited), ("dayReadings", day)] {
             for write in writes {
                 XCTAssertFalse(code.contains(write), "\(name): \(write)")
             }
@@ -203,36 +197,33 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
         }
     }
 
-    /// The listing the search reads is made over the range it is handed, through the function the
-    /// other checks list a series with, and a listing kept for other ranges is not served for it.
-    func testTheListingIsMadeOverTheRangeAroundTheRequestedDay() throws {
-        let source = try SourcePins.source("EventKit/FirstRemainingOccurrence.swift")
-        let readings = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func seriesReadings(", in: source)))
-        assertOnce("seriesOccurrences(of: stale, id: id, ranges: [range])?.0.map(EditedOccurrenceAddress.Reading.init)", in: readings)
-        assertOnce("seriesOccurrences(", in: readings)
-        assertOnce("func seriesReadings(of stale: EKEvent, id: String, over range: DateInterval) -> [EditedOccurrenceAddress.Reading]?", in: SourceScan.strippingComments(source))
-        // The ranges that are listed are the ones in the key of the kept listing.
-        let occurrences = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "private func seriesOccurrences(", in: source)))
-        assertOnce("ranges: ranges ?? SeriesExceptionsPlanner.listingRanges(for: window))", in: occurrences)
-        assertOnce("for range in ranges ?? SeriesExceptionsPlanner.listingRanges(for: window) {", in: occurrences)
-        assertOnce("let predicate = eventStore.predicateForEvents(withStart: range.start, end: range.end, calendars: [calendar])", in: occurrences)
-
-        let day: TimeInterval = 86_400
-        let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
-        func key(_ ranges: [DateInterval]) -> SeriesListingKey {
-            SeriesListingKey(calendarIdentifier: "C", eventIdentifier: "S", externalIdentifier: "UID", ranges: ranges)
+    /// PR #545 narrowing round: the search reads no slot. What is read of an event is its
+    /// identifier, all-day state, start and zone, and nothing in the search's file reads the digits
+    /// after `/RID=` as a number or a date, or reads an occurrence date, an external identifier or
+    /// `isDetached`. The only code that looks past the marker is the shape check of the echo, which
+    /// tests that the digits are ASCII digits. The series listing of the earlier rounds is gone.
+    // spec-example: edited-occurrence-addressing / The search reads no slot
+    func testTheSearchReadsNoSlotAndListsNoSeries() throws {
+        let address = SourceScan.strippingComments(try SourcePins.source("EventKit/EditedOccurrenceAddress.swift"))
+        for reads in ["ruleSlot", "originalSlot", "occurrenceDate", "externalIdentifier", "calendarItemExternalIdentifier", "isDetached",
+                      "timeIntervalSinceReferenceDate", "Date(timeInterval", "Int(", "Double(", "TimeInterval(", "originalDay", "listingRange",
+                      "seriesStart", "readsSlots", "slotOffSeriesTime", "originallyThatDay", "addressesOneOccurrence"] {
+            XCTAssertFalse(address.contains(reads), "the search's file reads a slot or lists a series: \(reads)")
         }
-        let around = key([DateInterval(start: start, duration: 733 * day)])
-        let scan = key([DateInterval(start: start.addingTimeInterval(-2000 * day), duration: 1460 * day)])
-        XCTAssertNotEqual(around, scan)
-        let memo = SeriesListingMemo<String>()
-        var made: [String] = []
-        memo.sharing {
-            for (name, key) in [("scan", scan), ("around", around), ("around", around)] {
-                made.append(memo.listing(for: key) { name })
-            }
+        let collapsed = SourceScan.collapsingWhitespace(address)
+        assertOnce("self.init(eventIdentifier: event.eventIdentifier, isAllDay: event.isAllDay, start: event.startDate, timeZone: event.timeZone)", in: collapsed)
+        // The marker is used twice: by the series part of an identifier (`seriesIdentifier`, which
+        // reads what is before it) and by the echo's shape check (digits are digits).
+        assertOnce("DetachedOccurrenceSpan.slotMarker", in: address)
+        assertOnce("let digits = identifier.unicodeScalars.dropFirst(prefix.unicodeScalars.count)", in: collapsed)
+        assertOnce("guard !digits.isEmpty, digits.allSatisfy({ (\"0\"...\"9\").contains($0) }) else { return nil }", in: collapsed)
+        XCTAssertEqual(count("digits", in: address), 3, "digits are used only by the echo's shape check")
+        // No listing of the series is left for this search in Sources.
+        for file in try SourceScan.swiftFiles() {
+            let code = SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8))
+            XCTAssertFalse(code.contains("seriesReadings("), file.lastPathComponent)
+            XCTAssertFalse(code.contains("EditedOccurrenceAddress.listingRange"), file.lastPathComponent)
         }
-        XCTAssertEqual(made, ["scan", "around", "around"], "the listing kept for the scan ranges is not read for the range around the day")
     }
 
     // MARK: - Documents
@@ -241,64 +232,56 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
     /// passage it is meant to hold).
     func testTheDocumentsDescribeTheRefusalOnce() throws {
         let pins: [(file: String, phrases: [String])] = [
-            ("README.md", ["the series' identifier and that day no longer address it",
+            ("README.md", ["so the series' identifier and that day do not address it",
                            "an occurrence edited on its own that starts on an excluded date is a conflict",
                            "(no occurrence on 2026-12-21)",
-                           // PR #545 verify round 1: when the refusal applies, and the limits.
                            "An occurrence that was not edited on its own and starts on the day is resolved and written to as before.",
-                           "more than about a year away from the day asked for",
-                           "in a timed series with no time zone, an occurrence asked for by its original day",
                            "That entry is read in the occurrence's own time zone",
                            "whose identifier has another shape",
                            "Google and Exchange were not run for this change",
                            "`No occurrence of this event falls on occurrence_date.`",
-                           // Before verify round 2: both directions of a moved occurrence, and #549.
-                           "for one that was moved earlier it did not reach the occurrence between them",
                            "answers `deleted`, and leaves the edited occurrence itself",
-                           // Before verify round 3: the slot guard, the floating update text, #549 as a defect.
-                           "whose recorded slot is not at the series' time of day is likewise found only by the day it starts on",
-                           "then says not to use span `future` through its identifier",
-                           "there the refusal says that the write starts at the occurrence's original date, which this server does not read",
-                           "for one that was moved earlier, that occurrence itself is deleted",
-                           "(#548, cause not separated)"]),
-            ("README_zh-TW.md", ["系列識別碼加那一天已經指不到它",
+                           "(#548, cause not separated)",
+                           // PR #545 narrowing round.
+                           "an occurrence edited on its own and moved to another day, asked for by the day it was moved off",
+                           "and this server does not read that date. So the refusal says both directions without a date",
+                           "Every span `future` refusal also says, whatever the occurrence, what #550 measured on iCloud",
+                           "no refusal prints or implies the original date of an occurrence"]),
+            ("README_zh-TW.md", ["所以系列識別碼加那一天指不到它",
                                  "在排除日開始、被單獨修改過的場次算衝突",
                                  "(no occurrence on 2026-12-21)",
                                  "沒被單獨修改過、在那一天開始的場次照舊找得到、照舊寫入。",
-                                 "超過大約一年",
-                                 "沒有時區的非全天系列裡",
                                  "這一項是用場次自己的時區讀的",
                                  "ID 是別種形狀的被修改場次",
                                  "這次改動沒有在 Google 與 Exchange 上跑",
                                  "`No occurrence of this event falls on occurrence_date.`",
-                                 "往前移的場次，兩天之間的那一場沒有被寫到",
                                  "回應 `deleted`，卻留下被修改的那個場次本身",
-                                 "紀錄的時段不在系列那個時刻的被修改場次",
-                                 "還會說不要經它的 ID 用 span `future`",
-                                 "訊息在那裡改說寫入從該場次原本的日期開始、這個 server 讀不到那個日期",
-                                 "往前移過時，那個場次本身會被刪",
-                                 "（#548，原因還沒分開）"]),
+                                 "（#548，原因還沒分開）",
+                                 "被單獨修改過並移到別天的場次，用它被移走的那一天來指",
+                                 "所以訊息不寫日期，寫出兩個方向",
+                                 "都會寫出 #550 在 iCloud 量到的",
+                                 "任何拒絕訊息都不寫、也不暗示場次原本的日期"]),
             ("CHANGELOG.md", ["A series' identifier and a day no longer answer not found for an occurrence edited on its own",
                               "an excluded date that still holds an occurrence edited on its own is a conflict",
                               "The not-found answer of `update_event` and `delete_event` prints the requested day, not a UTC instant",
-                              "the occurrence was moved more than about a year away from the requested day",
-                              "its `/RID=` is wall time read as UTC and is not read as a slot here",
                               "answer a conflict error of its own",
                               "Google and Exchange were not run for this change",
-                              "moved earlier, it did not reach the occurrences between the two days",
                               "the call answers `deleted`, and the edited occurrence itself stays, #549",
-                              "a recorded slot that is not at the series' time of day is not read either",
-                              "says not to use span `future` through its identifier",
-                              "it says that the write starts at the occurrence's original date, which this server does not read"]),
+                              "an occurrence edited on its own and moved to another day, asked for by the day it was moved off",
+                              "give both directions without a date",
+                              "No refusal prints or implies an occurrence's original date."]),
             (".claude/rules/mcp-binary-version-testing.md", ["## Release gate：系列識別碼加日期指到被單獨修改過的場次（#532、#534、#535）",
                                                              "這個呼叫會被 #532 的訊息拒絕",
+                                                             "4. **T（被移到別天的場次）**",
                                                              "8. **F（沒有時區的系列，PR #545 verify r1）**",
                                                              "9. **L（開始很久的系列，PR #545 verify r1）**",
                                                              "10. **R3（被往後移的場次與 span `future`，PR #545 verify r1）**",
                                                              "11. **Z（有自己時區的場次，PR #545 verify r1）**",
                                                              "12. **常駐 process（session MCP；這一格沒有做過，出版前要做）**",
                                                              "13. **G（場次被修改之後才有時區的系列，PR #545 verify r2）**",
-                                                             "那個代表場次被單獨改成另一種全天狀態"]),
+                                                             "session MCP 只用在第 12 格",
+                                                             "**至少一小時後再查",
+                                                             "任何一則拒絕訊息都不可以有原本的日期"]),
         ]
         for pin in pins {
             let text = try repoFile(pin.file)
