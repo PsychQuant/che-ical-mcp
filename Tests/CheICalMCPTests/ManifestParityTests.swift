@@ -846,8 +846,9 @@ final class ManifestParityTests: XCTestCase {
         let update = try descriptions(of: "update_event")
         assertOnce("calendar_name moves the event to another calendar and the store gives it a new identifier there: a calendar in another account, and within a Google account another calendar of the same account (measured; within an iCloud account the identifier stayed the same)", in: update.declared, "update_event")
         XCTAssertFalse(update.declared.contains("calendar_name moves the event to a calendar in another account ("), "the old first case: \(update.declared)")
-        assertOnce("After a calendar change over the whole event (a one-off event, or a series with span 'all' through its own identifier), older undo entries of the event follow it to the new identifier (#484); a split of the series is not followed.", in: update.declared, "update_event")
+        assertOnce("After a calendar change over the whole event (a one-off event, or a series with span 'all' through its own identifier), older undo entries of the event follow it to the new identifier (#484); a split of the series is not followed, nor is span 'future' from the series' first occurrence with calendar_name, which moved the whole series under a new identifier within a Google account while older entries kept the old one (#551).", in: update.declared, "update_event")
         assertOnce("a move to another calendar (another account, or within a Google account)", in: update.summary, "manifest update_event")
+        assertOnce("(older undo entries follow a calendar change of the whole event, not one through span future from the first occurrence, #551)", in: update.summary, "manifest update_event")
         XCTAssertFalse(update.summary.contains("when a move to another account or a split"), update.summary)
 
         let tool = CheICalMCPServer.defineTools().first { $0.name == "update_event" }
@@ -856,7 +857,7 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(calendarName.contains("(#503: the move is a create plus a delete, not measured)"), "the #503 sentence stays: \(calendarName)")
 
         let undo = try descriptions(of: "undo")
-        assertOnce("The undo of a move, or of an update_event that changed the calendar, can give the event a new identifier where the store does that (measured within a Google account); the answer then ends with the new ID, and older entries of that event follow it (#484).", in: undo.declared, "undo")
-        assertOnce("the undo of a move or of a calendar update can give the event a new identifier (measured within a Google account), named at the end of the answer, and older entries of the event follow it", in: undo.summary, "manifest undo")
+        assertOnce("The undo of a move, or of an update_event that changed the calendar, can give the event a new identifier where the store does that (measured within a Google account and between iCloud and Google); the answer then ends with the new ID, and older entries of that event follow it (#484).", in: undo.declared, "undo")
+        assertOnce("the undo of a move or of a calendar update can give the event a new identifier (measured within a Google account and between iCloud and Google), named at the end of the answer, and older entries of the event follow it", in: undo.summary, "manifest undo")
     }
 }
