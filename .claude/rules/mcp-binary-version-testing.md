@@ -1262,7 +1262,23 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
   搬移列的拒絕印出的日期照著填，在主機時區與 `TZ=America/Los_Angeles` 的 process 下都 `split`，搬過去之後時區不變。這是
   iCloud；Google 上這種場次回報的時區在不同次執行之間不一樣（#548，原因還沒分開）。讀場次時區的 `Reading.init`、印日期的
   `ownDay` 與搬移列的分支在之後的 build 沒有改。
-- 縮小那一輪的 build：見下一段（裝置跑完之後補上）。
+- `2a70988d`（2026-11-16，縮小那一輪的簽章 release build，紀錄在 #532 縮小那一輪的 Implementation Complete 補充）：
+  第 1 格（三個拒絕都給出 `list_events` 顯示的 id、什麼都沒寫；照訊息經那個 id 的 span `this` 改 `notes` 成功；經那個 id 的
+  span `future` 改 `start_time` 被 #416 拒絕，改 `title` 被接受，第 3 場起都改了、前兩場沒改；對該場次 span `this` 改
+  `start_time`、系列 id 加第 4 場的日期 span `future` 改 `start_time` 都成功；對照照舊成功）、第 2 格（兩個拒絕；照訊息
+  span `this` 刪掉第 3 場；另一個系列經那個 id 帶 span `future` 刪除，只剩第 1、2 場）、第 3 格（被拒絕的那一列沒搬，同一次呼叫的
+  另一列 `in_place`；照訊息 `split`）、第 4 格（用它被移走的那一天：`update_event` 的 span `this`、`delete_event` 的 span `this`
+  與 `future` 都回 `(no occurrence on 2026-12-21)`，搬移列回 `No occurrence of this event falls on occurrence_date.`，什麼都沒寫；
+  用它現在開始的那一天：`update_event` 與搬移列都拒絕並給它的 id；照搬移的訊息 `split`）、第 5 格（#534 的衝突錯誤；沒改過的
+  場次照舊回原本的衝突；已刪的場次 `skipped`；移到排除日上的同一句；移走的那天 `skipped`；`create_events_batch` 一列帶衝突錯誤、
+  另一列建立）、第 7 格（同一天兩個：四種呼叫都列出兩個、依開始排序；沒改過的場次照舊解析；被刪的那天回找不到；全天系列在主機時區
+  與 `TZ=America/Los_Angeles` 都是原地修改的那天與現在那天拒絕、移走的那天找不到；第一場被刪掉的系列拒絕並給 id；四年的每日系列上
+  被拒絕的呼叫 0.27 秒）、第 8 格的訊息（隔天與它被移走的那一天找不到，現在那一天拒絕，span `future` 的刪除帶 #549 那一句、更新寫出
+  兩個方向與 #550）、第 9 格（現在那一天的 `update_event` 與 `delete_event` 拒絕，被移走的那一天找不到）、第 11 格（搬移列印出
+  場次自己時區的那一天 2026-12-20 並註明，照著做 `split`，搬過去的事件仍是 America/Los_Angeles）、第 12 格的 stdio 部分證據
+  （三個都回帶那個 id 的拒絕，另一個 `--cli` process 讀回什麼都沒寫）。每一則拒絕訊息裡的日期只有要求的那一天與場次的開始（第 11 格
+  另有場次自己時區的那一天），沒有一則說場次原本在那一天。沒有在這個 build 上重做：第 2 格往後移、往前移的刪除、第 6 格、第 8 格
+  照訊息做的兩步、第 10 格與第 13 格；這些量的是經場次 id 的 store 行為、沒改的路，或需要舊 build，沿用上一條。
 
 沒做、沒量過（都不擋這一節的其他格）：
 
