@@ -706,8 +706,9 @@ end、notes、location、alarms。
    刪掉事件，不是 not found；
    (j3) `create_event` → `update_event` 只帶 `calendar_name` → `undo` 帶那筆紀錄的 `discard_id` → `undo`：以
    「changed after this operation … (calendar)」拒絕，不是 not found，紀錄保留，`discard_id` 可移除。
-   (j) 不涵蓋 `keep_later_edits` 的 undo、undo 之後的 redo，以及跨帳號（iCloud 與 Google 兩個方向）的換日曆與它的 undo：
-   這三項只有 PR #552 的裝置執行（長駐 stdio server，各跑一次）；
+   (j) 不涵蓋 `keep_later_edits` 的 undo、undo 之後的 redo、跨帳號（iCloud 與 Google 兩個方向）的換日曆與它的 undo、
+   整個系列以 span `all` 換日曆（裝置格 M1、X3），以及 iCloud 帳號內 ID 不變的對照（IC1–IC3）：
+   這五項只有 PR #552 的裝置執行（長駐 stdio server，各跑一次）；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時
    系列 id 單獨呼叫時走第一場，#436）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
    上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，
