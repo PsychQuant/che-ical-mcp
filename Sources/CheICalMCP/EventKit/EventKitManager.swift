@@ -1836,7 +1836,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #484: within a Google account, and across accounts, a calendar change gives the event a new
         // identifier (measured). Older undo and redo records that name the event follow it, as after
         // an in-place move (#435), but only when the save renamed the whole event
-        // (`EventUpdateRecord.identifierToFollow`): a split leaves the old identifier in use.
+        // (`EventUpdateRecord.identifierToFollow`): a split usually leaves the old identifier in use
+        // (not span `future` from the first occurrence with a calendar change: #551).
         if let followed = EventUpdateRecord.identifierToFollow(
             requestedID: identifier, identifierAfterSave: event.eventIdentifier, changedCalendar: changesCalendar,
             wholeEvent: !hadRules || applyToAll, viaStandIn: resolved.viaStandIn, ownOccurrenceID: ownOccurrenceID) {

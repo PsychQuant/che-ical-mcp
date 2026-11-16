@@ -857,7 +857,7 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(calendarName.contains("(#503: the move is a create plus a delete, not measured)"), "the #503 sentence stays: \(calendarName)")
 
         let undo = try descriptions(of: "undo")
-        assertOnce("The undo of a move, or of an update_event that changed the calendar, can give the event a new identifier where the store does that (measured within a Google account and between iCloud and Google); the answer then ends with the new ID, and older entries of that event follow it (#484).", in: undo.declared, "undo")
-        assertOnce("the undo of a move or of a calendar update can give the event a new identifier (measured within a Google account and between iCloud and Google), named at the end of the answer, and older entries of the event follow it", in: undo.summary, "manifest undo")
+        assertOnce("The undo of an in-place move, or of an update_event that changed the calendar of a one-off event and left it one-off, can give the event a new identifier where the store does that (measured within a Google account; for a calendar update also between iCloud and Google); the answer then ends with the new ID, and older entries of that event follow it (#484).", in: undo.declared, "undo")
+        assertOnce("the undo of an in-place move or of a calendar update of a one-off event left one-off can give the event a new identifier (measured within a Google account; for a calendar update also between iCloud and Google), named at the end of the answer, and older entries of the event follow it", in: undo.summary, "manifest undo")
     }
 }

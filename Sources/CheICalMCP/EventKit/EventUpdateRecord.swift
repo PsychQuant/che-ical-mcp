@@ -25,8 +25,10 @@ enum EventUpdateRecord {
     /// `all`); the identifier was not resolved through the stand-in (#326); the identifier is not an
     /// occurrence's own (#416); and the identifier after the save differs from the requested one in
     /// its series part and is not empty. Together they say "the save renamed what the identifier
-    /// named". A split (span `future`, a write through one occurrence) starts a new series while the
-    /// old identifier still resolves, so its records stay.
+    /// named". A split (span `future`, a write through one occurrence) usually starts a new series while
+    /// the old identifier still resolves, so its records stay. Span `future` from the first occurrence
+    /// with a calendar change is the known exception: the whole series moved under a new identifier
+    /// and the records stayed behind (#551).
     static func identifierToFollow(requestedID: String, identifierAfterSave: String?, changedCalendar: Bool,
                                    wholeEvent: Bool, viaStandIn: Bool, ownOccurrenceID: Bool) -> String? {
         guard changedCalendar, wholeEvent, !viaStandIn, !ownOccurrenceID, let saved = identifierAfterSave,
