@@ -107,4 +107,68 @@ final class EventUpdateRecordTests: XCTestCase {
             XCTAssertNil(code.range(of: direct, options: .regularExpression), "record through EventUpdateRecord, not \(direct)")
         }
     }
+
+    // MARK: - #484: older records follow a calendar change made through update_event
+
+    private func follow(_ requested: String, _ saved: String?, calendar: Bool = true, whole: Bool = true,
+                        standIn: Bool = false, own: Bool = false) -> String? {
+        EventUpdateRecord.identifierToFollow(requestedID: requested, identifierAfterSave: saved, changedCalendar: calendar,
+                                             wholeEvent: whole, viaStandIn: standIn, ownOccurrenceID: own)
+    }
+
+    /// spec-example: undo-history-discard / the five conditions of the forward rewrite
+    /// Measured on a Google account (#484, 2026-11-13): a one-off, and a whole series with span all.
+    func testACalendarChangeOverTheWholeEventFollowsTheNewIdentifier() {
+        XCTAssertEqual(follow("A", "B"), "B", "a one-off moved to another calendar")
+        XCTAssertEqual(follow("S", "T"), "T", "the series object with span all")
+    }
+
+    /// Condition 1. A new identifier with no calendar change is a split or a remainder, not this event renamed.
+    func testNoRewriteWithoutACalendarChange() {
+        XCTAssertNil(follow("A", "B", calendar: false))
+    }
+
+    /// Condition 2. An occurrence picked by occurrence_date (span this or future): the old identifier
+    /// still names the series it was picked from.
+    func testNoRewriteWhenAnOccurrenceWasPicked() {
+        XCTAssertNil(follow("S", "T", whole: false))
+    }
+
+    /// Condition 3 (#326).
+    func testNoRewriteThroughTheStandIn() {
+        XCTAssertNil(follow("S", "T", standIn: true))
+    }
+
+    /// Condition 4 (#416, #428). The identifiers differ in their series part, so only this condition stops it.
+    func testNoRewriteThroughAnOccurrencesOwnIdentifier() {
+        XCTAssertNil(follow("S/RID=1800000000", "T/RID=1800000000", own: true))
+    }
+
+    /// Condition 5: unchanged (iCloud within one account), nothing read back, or nothing at all.
+    func testNoRewriteWhenTheIdentifierIsUnchangedOrMissing() {
+        XCTAssertNil(follow("A", "A"))
+        XCTAssertNil(follow("A", ""))
+        XCTAssertNil(follow("A", nil))
+    }
+
+    /// Condition 5 compares the series part: `S` read back as an occurrence's own id of the same series.
+    func testAnOccurrenceFormOfTheSameSeriesIsNotANewIdentifier() {
+        XCTAssertNil(follow("S", "S/RID=1800000000"))
+        XCTAssertNil(follow("S/RID=1800000000", "S"))
+    }
+
+    /// spec-example: undo-history-discard / the answer of an update's undo with and without a new identifier
+    func testTheUpdateUndoAnswerGivesTheNewIdentifierOnlyWhenThereIsOne() {
+        XCTAssertEqual(EventUpdateRecord.updateUndoneText(title: "Standup", newID: nil),
+                       "Undone: restored event 'Standup' to previous state", "today's text, byte for byte")
+        XCTAssertEqual(EventUpdateRecord.updateUndoneText(title: "Standup", newID: "NEW-1"),
+                       "Undone: restored event 'Standup' to previous state (new ID: NEW-1)")
+    }
+
+    func testTheUpdateUndoAnswerShowsTheTitleAsEveryUndoneTextDoes() {
+        let text = EventUpdateRecord.updateUndoneText(title: "Stand\u{1B}[31mup\u{200B}", newID: "NEW-1")
+        XCTAssertFalse(text.contains("\u{1B}"), text)
+        XCTAssertFalse(text.contains("\u{200B}"), text)
+        XCTAssertTrue(text.hasSuffix(" (new ID: NEW-1)"), text)
+    }
 }

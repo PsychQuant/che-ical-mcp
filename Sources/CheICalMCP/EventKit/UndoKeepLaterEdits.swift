@@ -102,10 +102,10 @@ enum UndoKeepLaterEdits {
     /// What `undo` with `keep_later_edits` answers after the masked restore. `title` is the item's title
     /// after the merge (PR #504 round 2, LOW 4: a later title edit may have been kept). Titles through
     /// `undoVisibleTitle`, field names from the table.
-    static func undoneMessage(kind: UndoPostState.Kind, title: String, plan: Plan) -> String {
+    static func undoneMessage(kind: UndoPostState.Kind, title: String, plan: Plan, newID: String? = nil) -> String {
         let restored = plan.restored.isEmpty ? "nothing (the update changed none of the fields undo restores)" : plan.restored.joined(separator: ", ")
         let kept = plan.kept.isEmpty ? "" : "; kept the later edits to \(plan.kept.joined(separator: ", "))"
-        return "Undone: restored \(kind.rawValue) '\(undoVisibleTitle(title))' in \(restored)\(kept)"
+        return "Undone: restored \(kind.rawValue) '\(undoVisibleTitle(title))' in \(restored)\(kept)" + EventUpdateRecord.newIdentifierSuffix(newID)
     }
 }
 

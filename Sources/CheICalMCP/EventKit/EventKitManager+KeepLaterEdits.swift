@@ -51,7 +51,14 @@ extension EventKitManager {
             throw error
         }
         markNeedsRefresh()
-        return UndoKeepLaterEdits.undoneMessage(kind: .event, title: event.title ?? old.title, plan: plan)
+        // #484: a restored calendar can give the event a new identifier, as in the default arm.
+        var newID: String?
+        if case .updateEvent(let recordedID, _, _) = operation, let restoredID = event.eventIdentifier,
+           CalendarUndoManager.identifierChanged(from: recordedID, to: restoredID) {
+            await CalendarUndoManager.shared.replaceEventIdentifier(recordedID, with: restoredID)
+            newID = restoredID
+        }
+        return UndoKeepLaterEdits.undoneMessage(kind: .event, title: event.title ?? old.title, plan: plan, newID: newID)
     }
 
     private func undoUpdatedReminderKeepingLaterEdits(_ operation: UndoOperation, old: ReminderSnapshot,

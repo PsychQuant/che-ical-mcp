@@ -78,6 +78,42 @@ final class EventMoveIdentifierTests: XCTestCase {
         XCTAssertEqual(id(of: older.operation), "new")
     }
 
+    /// spec-example: undo-history-discard / older create and update records follow one rewrite
+    /// #484, run E: a create record and a title-update record of one event both follow, and the
+    /// record of another event does not.
+    func testACreateAndAnUpdateRecordOfOneEventFollowTogether() async throws {
+        let manager = CalendarUndoManager()
+        await manager.record(.createEvent(id: "old", title: "Standup", created: snapshot))
+        await manager.record(.createEvent(id: "other", title: "Other", created: snapshot))
+        await manager.record(.updateEvent(id: "old", oldSnapshot: snapshot, saved: snapshot))
+        let before = await manager.historySnapshot().entries.map(\.id)
+        await manager.replaceEventIdentifier("old", with: "new")
+        let after = await manager.historySnapshot().entries.map(\.id)
+        XCTAssertEqual(before, after, "the same history entries, in the same order")
+        let update = try await XCTUnwrapAsync(await manager.popUndo())
+        guard case .updateEvent(let updated, _, _) = update.operation else { return XCTFail("\(update.operation)") }
+        XCTAssertEqual(updated, "new")
+        let other = try await XCTUnwrapAsync(await manager.popUndo())
+        XCTAssertEqual(id(of: other.operation), "other", "another event")
+        let create = try await XCTUnwrapAsync(await manager.popUndo())
+        XCTAssertEqual(id(of: create.operation), "new")
+    }
+
+    /// spec-example: undo-history-discard / an update record on the redo stack follows
+    /// #484: the undo of a calendar update runs after popUndo moved its own record to the redo stack.
+    func testAnUpdateRecordOnTheRedoStackFollows() async throws {
+        let manager = CalendarUndoManager()
+        await manager.record(.createEvent(id: "moved", title: "Standup", created: snapshot))
+        await manager.record(.updateEvent(id: "moved", oldSnapshot: snapshot, saved: snapshot))
+        _ = try await XCTUnwrapAsync(await manager.popUndo())
+        await manager.replaceEventIdentifier("moved", with: "restored")
+        let create = try await XCTUnwrapAsync(await manager.popUndo())
+        XCTAssertEqual(id(of: create.operation), "restored", "the older record on the undo stack")
+        _ = try await XCTUnwrapAsync(await manager.popRedo())   // the create record, popped just above
+        let redo = try await XCTUnwrapAsync(await manager.popRedo())
+        XCTAssertEqual(id(of: redo.operation), "restored", "the update record on the redo stack")
+    }
+
     private func XCTUnwrapAsync<T>(_ value: T?) async throws -> T { try XCTUnwrap(value) }
 
     /// Cluster verify r2: an undo that changes the identifier runs after popUndo moved its own record
@@ -103,6 +139,7 @@ final class EventMoveIdentifierTests: XCTestCase {
         XCTAssertTrue(CalendarUndoManager.identifierChanged(from: "S/RID=1800000000", to: "T/RID=1800000000"))
     }
 
+    /// spec-example: undo-history-discard / a move and its undo call the rewrite
     func testTheMoveAndItsUndoReportAndFollow() throws {
         let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift")))
         XCTAssertTrue(source.contains("if let restoredID = event.eventIdentifier, CalendarUndoManager.identifierChanged(from: movedID, to: restoredID) { await CalendarUndoManager.shared.replaceEventIdentifier(movedID, with: restoredID) return \"Undone: moved event '\\(undoVisibleTitle(title))' back to its original calendar (new ID: \\(restoredID))\" }"), "the undo")

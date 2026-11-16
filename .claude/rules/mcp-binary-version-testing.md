@@ -697,8 +697,18 @@ end、notes、location、alarms。
    5 場都在原日曆；帶它自己的日期：`split`，它到目標日曆成單一事件，原日曆 4 場。span `all`：全部搬走，id 不變，在 session MCP 上
    `undo` 搬回來；span `all` 帶日期：拒絕。`copy_event` 的 `delete_original`：拒絕。`update_event` span `this` 帶同帳號的新日曆，
    經場次自己的 id、經系列 id 加 `occurrence_date`：都拒絕，帶目前的日曆放行；
-   (j) Google 帳號（#435，只在該帳號上有意義，在兩個拋棄式日曆上做）：`create_event` → `move_events_batch` 到同帳號另一日曆
-   （`id_changed: true`）→ `undo`：訊息帶新的 ID → `undo`：刪掉事件，不是 not found。都在同一個 session MCP 或 stdio process；
+   (j) Google 帳號（#435、#484；同帳號內換日曆會換 ID 的只量到 Google，iCloud 帳號內 ID 不變）。在該帳號手動建兩個拋棄式日曆
+   （`create_calendar` 只建在預設來源，#437），**打 tag 前在重啟後的 session MCP 上做**，每個順序都在同一個 session 裡；
+   PR #552 用長駐 stdio server 跑過同樣的順序（2026-11-14），那次不算數，session MCP 這一次仍欠：
+   (j1) `create_event` → `move_events_batch` 到同帳號另一日曆（`id_changed: true`）→ `undo`：訊息帶新的 ID → `undo`：刪掉事件，
+   不是 not found；
+   (j2) 同上，把搬移換成 `update_event` 只帶 `calendar_name`（`id_changed: true`）→ `undo`：訊息以 `(new ID: …)` 結尾 → `undo`：
+   刪掉事件，不是 not found；
+   (j3) `create_event` → `update_event` 只帶 `calendar_name` → `undo` 帶那筆紀錄的 `discard_id` → `undo`：以
+   「changed after this operation … (calendar)」拒絕，不是 not found，紀錄保留，`discard_id` 可移除。
+   (j) 不涵蓋 `keep_later_edits` 的 undo、undo 之後的 redo、跨帳號（iCloud 與 Google 兩個方向）的換日曆與它的 undo、
+   整個系列以 span `all` 換日曆（裝置格 M1、X3），以及 iCloud 帳號內 ID 不變的對照（IC1–IC3）：
+   這五項只有 PR #552 的裝置執行（長駐 stdio server，各跑一次）；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時
    系列 id 單獨呼叫時走第一場，#436）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
    上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，
