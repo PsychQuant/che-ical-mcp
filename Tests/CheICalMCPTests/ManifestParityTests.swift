@@ -693,6 +693,19 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #541: the `clear_timezone` parameter of `update_event` says the event is left floating, not in
+    /// the system time zone, with what was measured on iCloud and on Google, once each.
+    func testClearTimezoneSaysTheEventIsLeftFloating() throws {
+        let update = CheICalMCPServer.defineTools().first { $0.name == "update_event" }
+        let text = "\(String(describing: update?.inputSchema))"
+        XCTAssertFalse(text.contains("revert to system timezone"), "the retired claim")
+        for phrase in ["The event does not take the system time zone: it is left with none (floating, item_timezone null)",
+                       "on a Google calendar the series read a time zone again within 90 seconds",
+                       "a whole-series time zone write is refused by the #503 check once one exists (#553)"] {
+            XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, phrase)
+        }
+    }
+
     /// #285: undo of a whole-series delete recreates the series from its rules and restores its
     /// exceptions inside the scan window: an occurrence deleted on its own earlier stays deleted,
     /// one edited on its own comes back as a separate one-off event, and exceptions outside the
