@@ -142,6 +142,7 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
     /// one-off save failed (`eventkit_error_4`, its end before its start), so the undo restored nothing
     /// and the series stayed deleted. Such a record now applies nothing, as before #539, and the series
     /// comes back from its rules.
+    // spec-example: undo-history-discard / DS1
     func testAPlacedRecordThatEndsBeforeItStartsAppliesNothing() throws {
         let zone = losAngeles
         let first = date(2027, 2, 28, 2, in: zone).addingTimeInterval(30 * 60)
