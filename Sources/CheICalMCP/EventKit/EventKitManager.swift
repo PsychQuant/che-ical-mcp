@@ -3422,7 +3422,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         case .deleteEvent(let removedID, let snapshot):
             // Undo delete = recreate from snapshot, with the series' recorded exceptions (#285);
-            // the arm's code is `SeriesExceptionsUndo.undoDeleteEvent` (#322 seam), which reads the
+            // the arm's code is `SeriesExceptionsUndo.recreateDeletedEvent` (#322 seam), which reads the
             // calendar through `restoreCalendar(for:kind:)` with `.recreateDeleted` (#269). #538:
             // older records of `removedID` follow the recreated event (`undoDeletedEvent`).
             return try await undoDeletedEvent(snapshot, removedID: removedID).text
@@ -3547,8 +3547,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // Undo create = delete. #236: a missing reminder is not found (UndoTargetMissingError:
             // the record is kept and the message names discard_id), as for events since #182;
             // this arm used to report "Undone" for a no-op. "Already gone" is not taken as done:
-            // the identifier may only be unresolvable (moved to another account, recreated under
-            // a new identifier by a delete-undo), and the spec keeps not-found records.
+            // the identifier may only be unresolvable (moved to another account, or recreated under
+            // a new identifier by a delete-undo whose rewrite did not run: #538 moves this record to
+            // the recreated reminder when the save returned), and the spec keeps not-found records.
             let reminder = try await verifiedReminder(of: operation, verb: .undo)
             try removeExistingReminder(reminder, handler: "undo")
             markNeedsRefresh()

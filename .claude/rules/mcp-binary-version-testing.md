@@ -1311,19 +1311,40 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 #538 讓 delete 的 undo 重建項目之後，較舊的 undo 紀錄跟到新的 ID（`DeleteUndoFollow.decision`、`undoDeletedEvent(removedID:)`、
 `restoreDeletedReminder(removedID:)`），單獨改過的場次被寫回成獨立事件的系列則標記紀錄（`UndoRecord.seriesNotFollowed`）。
 純邏輯、history 與經 handler 的事件臂有單元測試；2026-11-16 用 repo 內 build 的簽章 release binary 在 iCloud 以每個順序一個 stdio
-process 做過下面全部步驟（結果記在 #538 的 Implementation Complete）。undo 是 stateful，`--cli` 走不到（見上表），所以**出 #538 的
-那個版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的 undo 以 ` (new ID: …)` 結尾），
-只用名稱含 `#538` 的拋棄式日曆與清單，再做一次：
+process 做過第 1 到 5 步（結果記在 #538 的 Implementation Complete），2026-11-17 用第一輪 verify 修正後的 build 做過第 1、3、4、6、7 步
+與第 8 步（結果記在 #538 的 Verify-fix）。undo 是 stateful，`--cli` 走不到（見上表），所以**出 #538 的那個版本打 tag 之前**，在重啟後的
+session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的 undo 在標題之後給出 ` (new ID: …)`），只用名稱含 `#538` 的拋棄式
+日曆與清單，再做一次：
 
 1. `create_event` 一次性事件 → `delete_event` → `undo`（回應帶 new ID）→ `undo`：`Undone: removed created event`，`--cli` 讀回日曆是空的。
 2. `create_event` → `update_event` 改標題 → `delete_event` → `undo` 三次：第二次還原標題，第三次刪掉事件。
-3. 用 `--cli` 單獨改一個較後場次的標題（span `this`）的每週 4 次系列，系列本身在 session 上 `create_event` 建立 → session：
-   `delete_event` span `all` → `undo`：結尾是 `Older undo entries of this series were not moved to the recreated series, because 1 of its
-   occurrences …` → `undo`：`Cannot undo: the recurring event '…' was deleted and then recreated by an undo as a new series …`，什麼都沒寫，
-   `undo_history` 最上面仍是 `Created event` → `discard_id` 移除。改的場次不要用第一場（#377、#416 的拒絕會先出現）。
-4. `create_reminder` → `delete_reminder` → `undo`（以 new ID 結尾）→ `undo`：刪掉重建的提醒事項。
+3. 每週 4 次的系列，在 session 上 `create_event` 建立 → 用 `--cli` 單獨改一個較後場次的標題（span `this`）→ session：先 `list_events`
+   （只列這個拋棄式日曆），確認 session 看得到改過的標題；看不到就停下來，這一步不算數（跨 process 的寫入沒傳到長駐 process 的 store，
+   見 #287、#263 第 8b 步與 #511 第 3 步的同一個檢查；這時 delete 會把例外記成 0 個，undo 走跟隨而不是標記）→ session：`delete_event`
+   span `all` → `undo`：結尾是 `Older undo entries of this series were not moved to the recreated series, because 1 of its occurrences …
+   An undo of such an entry that is not found will answer that, and the entry can only be given up with discard_id.` → `undo`：
+   `Cannot undo: the recurring event '…' was deleted and then recreated by an undo as a new series, … so the series this entry names no
+   longer exists. …`，什麼都沒寫，`undo_history` 最上面仍是 `Created event` → `discard_id` 移除。改的場次不要用第一場（#377、#416 的拒絕
+   會先出現）。
+4. `create_reminder` → `delete_reminder` → `undo`（標題之後給出 new ID）→ `undo`：刪掉重建的提醒事項。
 5. 每週重複的提醒事項 → `complete_reminder`（滾到下一個場次）→ `delete_reminder` 刪下一個場次 → `undo` 三次：第一次重建、第二次以 #204
    的訊息丟棄完成紀錄、第三次 create 紀錄（已跟上）以 `due_date` 等欄位拒絕並保留。
+6. 提醒事項的 batch（#538 fix 1，R2：識別碼在移除之前讀）：`create_reminder` 兩筆 → `delete_reminders_batch` 刪這兩筆 → `undo`：
+   `Undone batch (2 operations)` → `undo` → `undo`：各刪掉一筆重建的提醒事項，較新的先，`--cli` 讀回清單是空的。
+7. 第 3 步的形狀換成 batch（R1）：系列在 session 上建立，`--cli` 改較後場次的標題，session 的 `list_events` 確認看得到 → session：
+   `delete_events_batch`（`event_ids` 帶系列 ID，span `all`）→ `undo`：`Undone batch (1 operation)`，結尾是 `Older undo entries of a
+   recurring event this batch recreated were not moved to its recreated series, because 1 of its occurrences …` → `undo`：第 3 步的
+   flagged 文字，什麼都沒寫 → `discard_id` 移除。
+8. undo 能還原的整串修改（#263，R4）：在 session 上建每週 4 次、有結束日的系列 → `update_event` 用系列 ID、span `all` 只改 `title`
+   （`undo_history` 標成 `whole series; undo restores its title`）→ `delete_event` span `all` → `undo`（重建，沒有獨立事件）→ `undo`：
+   #263 的紀錄沒有跟上，回答 not found、紀錄保留 → `discard_id` 移除 → `undo`：create 紀錄（已跟上）以 `title` 拒絕並保留（重建的系列
+   是修改後的標題）→ `discard_id` 移除，系列用 `--cli` 刪掉。
 
 另外記錄、不算通過條件的：有 Google 拋棄式日曆時，第 1 步帶一個鬧鐘做一次：#317 量到重建後的鬧鐘讀回不同，第二次 undo 預期以 `alarms`
-拒絕；鬧鐘讀回相同時刪掉事件，兩種都記下讀回的鬧鐘。結束後刪掉拋棄式日曆與清單，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#538` 的都是 0。
+拒絕；鬧鐘讀回相同時刪掉事件，兩種都記下讀回的鬧鐘。
+
+沒有證據到達的（#538 fix 1，F20）：經 stand-in 整串刪除（系列第一場被刪掉之後再刪整個系列，#326）時，delete 紀錄記的是系列的 ID、
+不帶 `/RID=`，這件事只有 source pin（mutation M32），記憶體 store 做不出 `EKEvent` 的 stand-in，上面的步驟也沒有這個形狀；
+這一節的形狀之外它沒有被量過。
+
+結束後刪掉拋棄式日曆與清單，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#538` 的都是 0。

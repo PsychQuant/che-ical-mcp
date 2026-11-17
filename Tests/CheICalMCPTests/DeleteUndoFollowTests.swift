@@ -161,7 +161,7 @@ final class DeleteUndoFollowTests: XCTestCase {
         XCTAssertFalse(message.contains("\n"), message)
     }
 
-    /// The reminder delete's undo ends with the new identifier, before the note on fields the store
+    /// The reminder delete's undo gives the new identifier after the title, before the note on fields the store
     /// holds differently; without one it is the text of before.
     func testTheReminderAnswerGivesTheNewIdentifier() {
         XCTAssertEqual(EventKitManager.restoredReminderMessage((title: "Pay rent", storeDiffers: [], newID: "R2")),

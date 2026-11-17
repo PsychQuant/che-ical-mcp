@@ -930,7 +930,14 @@ final class ManifestParityTests: XCTestCase {
         let undo = try descriptions(of: "undo")
         assertOnce("older entries of that event or reminder follow it, so a further undo acts on the recreated item and is checked like any undo (#538, measured on iCloud)", in: undo.declared, "undo")
         assertOnce("They do not follow a series whose occurrences edited on their own came back as separate events", in: undo.declared, "undo")
-        assertOnce("The undo of one occurrence's delete, of a split move or of a move by copy moves no entry.", in: undo.declared, "undo")
-        assertOnce("the undo of a delete recreates the event or reminder under a new identifier and older entries of it follow, except for a series whose edited occurrences came back as separate events, whose older entries say so and can only be discarded (#538)", in: undo.summary, "manifest undo")
+        assertOnce("The undo of one occurrence's delete, of a split move or of a move by copy moves no entry, and no entry of a whole-series update that undo could restore (#263) is moved", in: undo.declared, "undo")
+        // #538 fix 1 (F22): which undos follow, in both texts, and the exceptions and the measurement in the summary.
+        assertOnce("The undo of a delete_event of a one-off event or of a whole series, of a delete_reminder, or of one member of a batch delete writes the item again under a new identifier", in: undo.declared, "undo")
+        assertOnce("the undo of such an entry that is not found answers that the series it names was recreated as a new one", in: undo.declared, "undo")
+        assertOnce("the undo of a delete_event of a one-off event or a whole series, of a delete_reminder or of a batch member recreates the item under a new identifier (measured on iCloud) and older entries of it follow", in: undo.summary, "manifest undo")
+        assertOnce("an entry of a whole-series update that undo could restore (#263) is not moved; and the undo of one occurrence's delete, a split move or a move by copy moves no entry (#538)", in: undo.summary, "manifest undo")
+        for character in ["<", ">", "&"] {
+            XCTAssertFalse(undo.summary.contains(character), "manifest undo: \(character)")
+        }
     }
 }

@@ -214,6 +214,11 @@ enum SeriesExceptionsUndo {
     /// snapshot of one occurrence (the whole-series delete of an occurrence edited on its own,
     /// addressed by its own identifier: PR #318 round 3, finding 22) is guarded as an occurrence
     /// record is: nothing is written when the series holds its slot again.
+    ///
+    /// #538 fix 1 (F37): production calls `recreateDeletedEvent`, which also returns the recreated
+    /// event's identifier; this two-value form is what the tests call, and it is kept because the
+    /// tests of PR #558 (#539) call and pin it too, so removing it here would break the build of
+    /// whichever of the two merges second.
     static func undoDeleteEvent<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, calendar: Store.Calendar,
                                                                     in store: Store) throws -> (text: String, outcome: UndoEventOutcome?) {
         let undone = try recreateDeletedEvent(snapshot, calendar: calendar, in: store)

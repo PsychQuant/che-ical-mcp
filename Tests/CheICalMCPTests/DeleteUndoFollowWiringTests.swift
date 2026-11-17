@@ -120,7 +120,9 @@ final class DeleteUndoFollowWiringTests: XCTestCase {
     }
 
     /// One event rewrite, one flag and one reminder rewrite on the delete-undo path, and no other
-    /// caller of the two new ones.
+    /// caller of the two new ones. Counted as `EventUpdateFollowWiringTests` counts: the text with its
+    /// leading dot in the code of every file under `Sources/CheICalMCP`, so a call with an implicit
+    /// `self` or through a method reference is not counted (#538 fix 1, F21).
     func testTheCallCounts() throws {
         XCTAssertEqual(try calls("undoHistory.replaceEventIdentifier("), ["EventKitManager+SeriesExceptions.swift": 1])
         XCTAssertEqual(try calls(".markSeriesNotFollowed("), ["EventKitManager+SeriesExceptions.swift": 1])

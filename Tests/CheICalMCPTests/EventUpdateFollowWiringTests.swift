@@ -100,7 +100,11 @@ final class EventUpdateFollowWiringTests: XCTestCase {
     /// The six callers, and no seventh: `moveEvent`, the move's undo, `updateEvent`, the update's
     /// undo, the `keep_later_edits` event arm, and (#538) the undo of an event's delete, which calls
     /// it on the manager's `undoHistory` (`CalendarUndoManager.shared` in production) rather than on
-    /// `shared` directly. Counted on any receiver, so a seventh caller fails whichever it uses.
+    /// `shared` directly. What is counted is the text `.replaceEventIdentifier(` in the code of every
+    /// file under `Sources/CheICalMCP` (comments and strings removed), so a seventh call written with a
+    /// receiver and a dot fails whichever receiver it uses. Not counted (#538 fix 1, F21): a call with
+    /// an implicit `self` inside `CalendarUndoManager` or an extension of it, and a call through a
+    /// stored method reference; `UndoManager.swift`, where the method is declared, has neither today.
     func testTheRewriteIsCalledFromExactlySixPlaces() throws {
         var calls: [String: Int] = [:]
         for file in try SourceScan.swiftFiles() {
