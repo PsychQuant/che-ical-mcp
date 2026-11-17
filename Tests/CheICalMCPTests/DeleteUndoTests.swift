@@ -430,7 +430,7 @@ final class DeleteUndoTests: XCTestCase {
     func testTheBatchUndoArmReportsItsMembers() throws {
         // PR #282: the arm returns `undoBatch(_:)`'s message (round 6, findings 2, 9); the count is of
         // the member texts, and the differences the restored reminders returned travel along
-        // (`UndoBatchWiringTests`).
+        // (`UndoBatchWiringTests`), and (#538 fix 1) what the members flagged instead of moving.
         let source = try SourcePins.source("EventKit/EventKitManager.swift")
         let undo = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: source))
         let arm = try XCTUnwrap(SourcePins.ranges(of: "case .batch(let ops):", in: undo).first)
@@ -438,7 +438,7 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertEqual(call.count, 1)
         if let call = call.first { XCTAssertGreaterThan(call.lowerBound, arm.lowerBound) }
         let body = try XCTUnwrap(SourcePins.body(of: "func undoBatch(_ ops: [UndoOperation], restoreAvailable: Bool = false) async throws", in: source))
-        let message = SourcePins.ranges(ofPattern: #"return\s+\(UndoOperation\.batchUndoneMessage\(count:\s*outcome\.texts\.count,\s*events:\s*outcome\.events,\s*differing:\s*outcome\.differing\)"#, in: body)
+        let message = SourcePins.ranges(ofPattern: #"return\s+\(UndoOperation\.batchUndoneMessage\(count:\s*outcome\.texts\.count,\s*events:\s*outcome\.events,\s*differing:\s*outcome\.differing,\s*notFollowed:\s*outcome\.notFollowed\)"#, in: body)
         XCTAssertEqual(message.count, 1)
     }
 
