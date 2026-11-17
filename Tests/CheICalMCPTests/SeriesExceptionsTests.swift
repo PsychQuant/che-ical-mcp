@@ -175,13 +175,12 @@ final class SeriesExceptionsTests: XCTestCase {
         XCTAssertEqual(zoned?.keptSlots, [at(slot1)])
         XCTAssertEqual(zoned?.detached.isEmpty, true)
         // On a series without one its wall-clock reading (8 hours earlier at +08:00) is inside, so it is
-        // recorded; placed on its slot at the window end, outside, it applies nothing (ruling C). Rewritten
-        // in round 1: round 0 dropped it and applied the rest.
+        // recorded, as a record of two readings, which applies nothing (PR #558 round 3; round 1's ruling C
+        // gave the same answer by placing it outside). Rewritten in rounds 1 and 3.
         let east = SeriesExceptionsPlanner.capture([inside, plain, edited], of: series, window: window, zone: taipei, floating: true)
         XCTAssertEqual(east?.keptSlots, [at(slot1)])
         XCTAssertEqual(east?.detached.map(\.slot), [at(atEnd)])
-        XCTAssertNil(east.flatMap { SeriesExceptionsPlanner.placeDetached($0, among: [at(slot1), at(atEnd)]) },
-                     "placed at the window end, outside: nothing applied")
+        XCTAssertEqual(east.map(SeriesExceptionsPlanner.holdsAFloatingEdit), true, "a record of two readings: nothing applied")
     }
 
     func testAListingThatOnlyReachedTheMarginsIsNotAListing() {

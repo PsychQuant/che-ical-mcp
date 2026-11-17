@@ -22,10 +22,8 @@ extension EventKitManager {
 
     /// `SeriesExceptionsUndo.capture` of `series`, read before a whole-series delete removes
     /// anything. The record sites hand it an `EKEvent`, so it always runs on this manager's store.
-    /// PR #558 round 2 (ruling I (a)): `viaStandIn` is the delete's own resolution (`freshEventWithOrigin`),
-    /// the one the forecast reads too, kept on the record for the restore.
-    func captureSeriesExceptions(of series: EKEvent, viaStandIn: Bool) -> SeriesExceptions? {
-        SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore, viaStandIn: viaStandIn)
+    func captureSeriesExceptions(of series: EKEvent) -> SeriesExceptions? {
+        SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore)
     }
 
     /// PR #558 round 2 (ruling J): whether the series of `event` has no time zone, for an occurrence's
@@ -37,23 +35,25 @@ extension EventKitManager {
     }
 
     /// #539 step 6: the forecast of a whole-series delete, read before the removal: how many of the
-    /// occurrences edited on their own that `exceptions` (this delete's capture) recorded the series'
-    /// rule does not place (`SeriesExceptionsPlanner.unplacedEdits`). The rule is expanded from the
-    /// first slot #503's check proves (`wholeSeriesBaseline`), in the zone its verdict expands in, and
-    /// only when that slot is a plain first occurrence at its own start (`.stored`): through a stand-in,
-    /// or with a first occurrence edited on its own, the count is 0, as it is when the expander cannot
-    /// tell. The series is listed for it only when the capture recorded an edited occurrence.
-    /// PR #558 round 2 (ruling I): before that, the first-slot stop the restore asks
-    /// (`SeriesExceptionsPlanner.firstSlotStopsTheRestore`, with the series' start, which the recreated
-    /// series takes): when it holds, every recorded edited occurrence is counted, through a stand-in too.
-    func unplacedEditsAtDelete(_ exceptions: SeriesExceptions?, of series: EKEvent, id: String, viaStandIn: Bool) -> Int {
-        guard let exceptions, !exceptions.detached.isEmpty else { return 0 }
-        if SeriesExceptionsPlanner.firstSlotStopsTheRestore(exceptions, seriesStart: series.startDate) { return exceptions.detached.count }
+    /// occurrences edited on their own that `exceptions` (this delete's capture) recorded the restore is
+    /// expected not to apply (`SeriesExceptionsPlanner.unplacedEdits`), and why; nil for none.
+    /// PR #558 round 3: when the capture holds a floating edit (`SeriesExceptionsPlanner.holdsAFloatingEdit`),
+    /// every recorded edited occurrence, through a stand-in too, since the restore applies none of them.
+    /// Otherwise the rule is expanded from the first slot #503's check proves (`wholeSeriesBaseline`), in
+    /// the zone its verdict expands in, and only when that slot is a plain first occurrence at its own
+    /// start (`.stored`): through a stand-in, or with a first occurrence edited on its own, nil, as when the
+    /// expander cannot tell. The series is listed for it only when the capture recorded an edited occurrence.
+    func unplacedEditsAtDelete(_ exceptions: SeriesExceptions?, of series: EKEvent, id: String, viaStandIn: Bool) -> RulesAloneOnUndo? {
+        guard let exceptions, !exceptions.detached.isEmpty else { return nil }
+        if SeriesExceptionsPlanner.holdsAFloatingEdit(exceptions) {
+            return RulesAloneOnUndo(edits: exceptions.detached.count, floatingEdit: true)
+        }
         let first = wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn)
-        guard first.baseline == .stored else { return 0 }
+        guard first.baseline == .stored else { return nil }
         let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
-        return SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
-                                                     firstSlot: first.slot, seriesStart: series.startDate, calendar: .gregorian(in: zone)) ?? 0
+        let edits = SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
+                                                          firstSlot: first.slot, calendar: .gregorian(in: zone)) ?? 0
+        return edits > 0 ? RulesAloneOnUndo(edits: edits, floatingEdit: false) : nil
     }
 
     /// The `.deleteEvent` undo arm (`SeriesExceptionsUndo.recreateDeletedEvent`).

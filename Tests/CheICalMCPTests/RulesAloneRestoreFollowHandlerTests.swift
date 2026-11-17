@@ -5,8 +5,9 @@ import XCTest
 @testable import CheICalMCP
 
 /// PR #558 round 1 with #538 merged: what the undo of a whole-series delete that applies none of the
-/// recorded exceptions (the record cannot be placed, rulings B, C, D, or a placed record ends before it
-/// starts, ruling E) does with older undo records of the series. It brings the series back from its
+/// recorded exceptions (a record of two readings, PR #558 round 3; a record of one reading that ends before
+/// it starts, ruling E; a recorded slot the recreated series does not generate, as before #539) does with
+/// older undo records of the series. It brings the series back from its
 /// rules alone, with no occurrence as a separate event, so `DeleteUndoFollow.decision` gives `follow`:
 /// the older records move to the recreated series, and none is flagged. Then the slot guard's refusal
 /// (`OccurrenceSlotWallClockRefusal`) through `handleUndo`, for an entry #538 flagged and for one it did
@@ -41,21 +42,16 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
         return text
     }
 
-    /// The four shapes, each a series of four weekly slots whose undo applies none of its exceptions.
+    /// The three shapes, each a series of four weekly slots whose undo applies none of its exceptions.
+    /// Rewritten in round 3: rulings B, C, D and I were withdrawn with the placement; each of their records
+    /// had two readings, which is now the one floating shape.
     private var shapes: [(String, SeriesExceptions)] {
-        [("B: on a kept slot", SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
-                                                detached: [record(SlotReadings(instant: slot(1).addingTimeInterval(8 * hour), wallClock: slot(0)))])),
-         ("C: outside every window", SeriesExceptions(window: DateInterval(start: window.start, end: slot(2).addingTimeInterval(-hour)),
-                                                      keptSlots: [slot(0), slot(1)],
-                                                      detached: [record(SlotReadings(instant: slot(2).addingTimeInterval(-9 * hour), wallClock: slot(2)))])),
-         ("D: two on one slot", SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
-                                                 detached: [record(SlotReadings(instant: slot(1).addingTimeInterval(8 * hour), wallClock: slot(1))),
-                                                            record(SlotReadings(instant: slot(1), wallClock: slot(1).addingTimeInterval(-8 * hour)))])),
+        [("floating edit", SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
+                                            detached: [record(SlotReadings(instant: slot(1).addingTimeInterval(8 * hour), wallClock: slot(1)))])),
          ("E: ends before it starts", SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
                                                        detached: [record(SlotReadings(instant: slot(1)), end: slot(1).addingTimeInterval(-30 * 60))])),
-         // PR #558 round 2 (ruling I): the first slot not a plain occurrence at the capture.
-         ("I: first slot not plain", SeriesExceptions(window: window, keptSlots: [slot(2), slot(3)],
-                                                      detached: [record(SlotReadings(instant: slot(1).addingTimeInterval(8 * hour), wallClock: slot(1)))]))]
+         ("did not match", SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
+                                            detached: [record(SlotReadings(instant: slot(1).addingTimeInterval(3 * hour)))]))]
     }
 
     func testANotAppliedRestoreMovesTheOlderRecordsToTheRecreatedSeries() async throws {
@@ -83,15 +79,15 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
         }
     }
 
-    /// PR #558 round 2 (H30): a floating series whose record of two readings is placed and applied writes the
-    /// edited occurrence as a separate event, so #538 flags the older records of the series instead of moving
-    /// them, through the production arm (`undoDeletedEvent(_:removedID:)`), as for a series with a time zone.
-    func testAPlacedFloatingRecordFlagsTheOlderRecords() async throws {
+    /// PR #558 round 2 (H30), rewritten in round 3 (no record of two readings is applied any more): a record of
+    /// one reading applied writes the edited occurrence as a separate event, so #538 flags the older records of
+    /// the series instead of moving them, through the production arm (`undoDeletedEvent(_:removedID:)`).
+    func testAnAppliedRecordFlagsTheOlderRecords() async throws {
         let store = FakeSeriesExceptionsStore()
         store.seriesSlots = (0...3).map(slot)
         let history = CalendarUndoManager()
         let exceptions = SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
-                                          detached: [record(SlotReadings(instant: slot(1).addingTimeInterval(8 * hour), wallClock: slot(1)))])
+                                          detached: [record(SlotReadings(instant: slot(1)))])
         let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0).withExceptions(exceptions)
         await history.record(.createEvent(id: "S", title: "Standup", created: series))
         await history.record(.deleteEvent(id: "S", snapshot: series))
@@ -114,7 +110,7 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
     func testTheDecisionForEachNotAppliedOutcomeIsFollow() {
         for outcome in [SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true),
                         SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true),
-                        SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true, firstSlotNotPlain: true)] {
+                        SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true, floatingEdit: true)] {
             XCTAssertEqual(DeleteUndoFollow.decision(removedID: "S", newID: "R", isOccurrenceRecord: false,
                                                      outcome: .seriesWithExceptions(outcome)), .follow("R"))
         }

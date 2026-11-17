@@ -40,7 +40,7 @@ extension EventKitManager {
         markNeedsRefresh()
         refreshIfNeeded()
         defer { markNeedsRefresh() }
-        guard let before = captureSeriesExceptions(of: series, viaStandIn: viaStandIn) else { return nil }
+        guard let before = captureSeriesExceptions(of: series) else { return nil }
         guard SeriesUpdateUndo.covers(before, firstStart: series.startDate, end: seriesExceptionsStore.seriesEnd(of: series)) else {
             return nil
         }

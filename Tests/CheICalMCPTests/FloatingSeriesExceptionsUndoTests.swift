@@ -5,7 +5,10 @@ import XCTest
 /// #539: the undo of a whole-series delete, and of one occurrence's delete, on a series whose edited
 /// occurrences carry a `/RID=` written while it had no time zone (the slot's wall-clock time as UTC),
 /// run against the in-memory store under three host zones. The shapes are the device cells of #539
-/// (F1, D2, R2, MA, the window-edge path). Each test names its host zone; none reads the process's.
+/// (F1, D2, R2, MA, DS1, the window-edge path). PR #558 round 3 (the placement withdrawn): on a host not
+/// at offset 0 such a record has two readings and the whole-series undo applies none of the exceptions
+/// (`Outcome.floatingEdit`); at UTC it has one and the restore is the one of before #539. Each test names
+/// its host zone; none reads the process's.
 final class FloatingSeriesExceptionsUndoTests: XCTestCase {
     private let day: TimeInterval = 86_400
     private let taipei = TimeZone(identifier: "Asia/Taipei")!
@@ -67,10 +70,12 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
     // MARK: - F1, D2, R2
 
     /// F1: six weekly occurrences at 10:00 local; the third retitled and the fourth moved an hour,
-    /// both while the series had no zone. Undo brings both back as one-off events (before #539: from
-    /// the rules alone, both edits lost), in every host zone.
-    // spec-example: undo-history-discard / a floating edit comes back
-    func testFloatingEditsComeBackInEveryHostZone() throws {
+    /// both while the series had no zone. Away from offset 0 the undo brings the series back from its
+    /// rules alone, both edits lost, and says why (rounds 0 to 2 brought both back as one-off events;
+    /// before #539 it also came back from the rules alone, saying the exceptions did not match). At UTC
+    /// (one reading) both come back, as before #539.
+    // spec-example: undo-history-discard / a floating edit comes back from the rules alone
+    func testFloatingEditsComeBackOnlyAtOffsetZero() throws {
         for zone in zones {
             let slots = weekly(from: date(2027, 2, 11, 10, in: zone), count: 6)
             let store = FakeSeriesExceptionsStore()
@@ -80,15 +85,21 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
 
             let (outcome, after, _) = try deleteAndUndo(occurrences[0], in: store, slots: slots, now: slots[0].addingTimeInterval(-30 * day), zone: zone)
 
-            XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 2)), zone.identifier)
-            XCTAssertEqual(after.starts(of: "E1"), [slots[0], slots[1], slots[4], slots[5]], zone.identifier)
-            XCTAssertEqual(Set(after.events.filter { $0.id != "E1" }.map(\.title)), ["Retitled", "Moved"], zone.identifier)
+            if zone == utc {
+                XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 2)), zone.identifier)
+                XCTAssertEqual(after.starts(of: "E1"), [slots[0], slots[1], slots[4], slots[5]], zone.identifier)
+                XCTAssertEqual(Set(after.events.filter { $0.id != "E1" }.map(\.title)), ["Retitled", "Moved"], zone.identifier)
+            } else {
+                XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true, floatingEdit: true)), zone.identifier)
+                XCTAssertEqual(after.starts(of: "E1"), slots, zone.identifier)
+                XCTAssertEqual(after.events.count, 6, zone.identifier)
+            }
         }
     }
 
-    /// D2: the third retitled floating and the fifth deleted on its own: the deletion stays and the
-    /// edit comes back (before #539 both were lost: the deleted occurrence came back from the rules).
-    func testAFloatingEditAndADeletionAreBothRestored() throws {
+    /// D2: the third retitled floating and the fifth deleted on its own: away from offset 0 both come back
+    /// from the rules (the deletion undone, the edit lost); at UTC the deletion stays and the edit comes back.
+    func testAFloatingEditAndADeletionComeBackFromTheRulesAlone() throws {
         for zone in zones {
             let slots = weekly(from: date(2027, 2, 11, 6, in: zone), count: 6)
             let store = FakeSeriesExceptionsStore()
@@ -98,14 +109,20 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
 
             let (outcome, after, _) = try deleteAndUndo(occurrences[0], in: store, slots: slots, now: slots[0].addingTimeInterval(-30 * day), zone: zone)
 
-            XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 1)), zone.identifier)
-            XCTAssertEqual(after.starts(of: "E1"), [slots[0], slots[1], slots[3], slots[5]], zone.identifier)
+            if zone == utc {
+                XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 1)), zone.identifier)
+                XCTAssertEqual(after.starts(of: "E1"), [slots[0], slots[1], slots[3], slots[5]], zone.identifier)
+            } else {
+                XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true, floatingEdit: true)), zone.identifier)
+                XCTAssertEqual(after.starts(of: "E1"), slots, zone.identifier)
+            }
         }
     }
 
     /// R2: one series holding both kinds: the third edited while it had a zone (an instant), the fourth
-    /// after `clear_timezone` (a wall-clock time). Both come back.
-    func testOneSeriesHoldingBothKindsOfRIDIsRestored() throws {
+    /// after `clear_timezone` (a wall-clock time). Read with the series floating, both records have two
+    /// readings away from offset 0, so nothing is applied; at UTC both come back.
+    func testOneSeriesHoldingBothKindsOfRIDComesBackFromTheRulesAlone() throws {
         for zone in zones {
             let slots = weekly(from: date(2027, 2, 11, 12, in: zone), count: 6)
             let store = FakeSeriesExceptionsStore()
@@ -115,35 +132,20 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
 
             let (outcome, _, _) = try deleteAndUndo(occurrences[0], in: store, slots: slots, now: slots[0].addingTimeInterval(-30 * day), zone: zone)
 
-            XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 2)), zone.identifier)
+            XCTAssertEqual(outcome, zone == utc ? .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 2))
+                                                : .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true, floatingEdit: true)),
+                           zone.identifier)
         }
-    }
-
-    /// A record neither reading of which is a slot of the recreated series (an edit whose series' time
-    /// was changed afterwards, or a `/RID=` in a unit not seen yet) applies nothing, as before #539:
-    /// all or nothing, so the occurrence deleted on its own comes back with the rest.
-    func testARecordThatCannotBePlacedAppliesNothing() throws {
-        let slots = weekly(from: date(2027, 2, 11, 10, in: taipei), count: 6)
-        let store = FakeSeriesExceptionsStore()
-        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots, floating: true)
-        edit(occurrences[2], rid: floatingRID(slots[2].addingTimeInterval(3 * 3600), in: taipei), title: "Retitled")
-        edit(occurrences[3], rid: floatingRID(slots[3], in: taipei), title: "Placed")
-        store.drop(occurrences[4])
-
-        let (outcome, after, _) = try deleteAndUndo(occurrences[0], in: store, slots: slots, now: slots[0].addingTimeInterval(-30 * day), zone: taipei)
-
-        XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true)))
-        XCTAssertEqual(after.starts(of: "E1"), slots)
     }
 
     /// DS1 (iCloud, 2026-11-17, a server with `TZ=America/Los_Angeles`): a floating weekly series at
     /// 02:30, 30 minutes long, its occurrence of 2027-03-14 (no 02:30 that day there) retitled. The store
-    /// listed it from 03:30 to 03:00 PDT: both readings put it on its slot, so it was placed, and the
-    /// one-off save failed (`eventkit_error_4`, its end before its start), so the undo restored nothing
-    /// and the series stayed deleted. Such a record now applies nothing, as before #539, and the series
-    /// comes back from its rules.
+    /// listed it from 03:30 to 03:00 PDT; on `cb3346ec` it was placed and the one-off save failed
+    /// (`eventkit_error_4`, its end before its start), so the undo restored nothing and the series stayed
+    /// deleted. Its record has two readings at Los Angeles, so it now stops the restore with the floating
+    /// reason, before ruling E is asked, and the series comes back from its rules.
     // spec-example: undo-history-discard / DS1
-    func testAPlacedRecordThatEndsBeforeItStartsAppliesNothing() throws {
+    func testDS1ComesBackFromTheRulesAloneForItsFloatingEdit() throws {
         let zone = losAngeles
         let first = date(2027, 2, 28, 2, in: zone).addingTimeInterval(30 * 60)
         let rule = DeletedOccurrenceCheck.Rule(frequency: .weekly, interval: 1, daysOfWeek: [], daysOfMonth: [], endDate: nil,
@@ -164,19 +166,18 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
         after.seriesSlots = slots
         let (text, outcome) = try SeriesExceptionsUndo.undoDeleteEvent(recorded, calendar: recorded.calendarIdentifier, in: after)
 
-        XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true)))
+        XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true, floatingEdit: true)))
         XCTAssertEqual(after.starts(of: "E1"), slots)
         XCTAssertFalse(after.events.contains { $0.title == "Retitled" }, "nothing written for it")
         // The text the undo returns, from the production arm.
-        XCTAssertTrue(text.hasSuffix(". Restored from the series rules alone: an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of the recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"), text)
+        XCTAssertTrue(text.hasSuffix(". " + UndoOperation.seriesFloatingEditNote), text)
     }
 
-    /// The check reads every record the restore places: one that ends where it starts is written; one
-    /// that ends before it starts stops the restore whatever its number of readings (PR #558 round 1,
-    /// ruling E: a record of one reading used to be attempted and fail, F7); a record of two readings
-    /// placed outside every window applies nothing before the check is read (ruling C). Rewritten in
-    /// round 1: before it, the one-reading record was attempted and the outside one was dropped.
-    func testEveryPlacedRecordThatEndsBeforeItStartsStopsTheRestore() throws {
+    /// Ruling E for records of one reading: one that ends where it starts is written; one that ends before
+    /// it starts stops the restore (PR #558 round 1: it used to be attempted and fail, F7). A record of two
+    /// readings stops it first with the floating reason (PR #558 round 3), whether or not it ends before it
+    /// starts. Rewritten in rounds 1 and 3.
+    func testARecordOfOneReadingThatEndsBeforeItStartsStopsTheRestore() throws {
         let window = DateInterval(start: date(2027, 2, 10, 0, in: taipei), end: date(2027, 3, 21, 0, in: taipei))
         let slots = weekly(from: date(2027, 2, 11, 10, in: taipei), count: 6)
         let generated = slots.map { (slot: $0, occurrence: $0) }
@@ -185,29 +186,21 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
             return DetachedOccurrence(slot: readings.instant, snapshot: UndoSnapshotFixtures.event(title: "Edited", startDate: slot, endDate: end),
                                       readings: readings)
         }
-        func restore(_ detached: [DetachedOccurrence], margins: [Date] = []) throws -> SeriesExceptionsRestorer.Outcome {
+        func restore(_ detached: [DetachedOccurrence]) throws -> SeriesExceptionsRestorer.Outcome {
             let kept = slots.filter { slot in !detached.contains { UndoPostState.sameInstant($0.snapshot.startDate, slot) } }
             return try SeriesExceptionsRestorer.restore(
                 exceptions: SeriesExceptions(window: window, keptSlots: kept, detached: detached), seriesStart: slots[0],
-                generated: generated, marginSlots: margins, remove: { _ in }, createOneOff: { _ in 0 }, removeOneOff: { _ in },
-                rollbackSeries: {})
+                generated: generated, remove: { _ in }, createOneOff: { _ in 0 }, removeOneOff: { _ in }, rollbackSeries: {})
         }
-        XCTAssertEqual(try restore([record(at: slots[2], end: slots[2], twoReadings: true)]),
+        XCTAssertEqual(try restore([record(at: slots[2], end: slots[2], twoReadings: false)]),
                        .init(stayedDeleted: 0, oneOffs: 1), "ends where it starts: written")
         XCTAssertEqual(try restore([record(at: slots[2], end: slots[2].addingTimeInterval(-60), twoReadings: false)]),
                        .init(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true), "one reading")
-        let outside = window.end.addingTimeInterval(2 * 3600)
-        XCTAssertEqual(try restore([record(at: slots[2], end: slots[2].addingTimeInterval(3600), twoReadings: true),
-                                    record(at: outside, end: outside.addingTimeInterval(3600), twoReadings: true)], margins: [outside]),
-                       .init(stayedDeleted: 0, oneOffs: 0, notApplied: true), "placed outside the window: nothing applied")
-        // PR #558 round 2 (H17): the check reads placed records only, after the placement: a record that is not
-        // placed (outside every window) and ends before it starts gives the placement's answer, not the
-        // daylight-saving one.
-        XCTAssertEqual(try restore([record(at: slots[2], end: slots[2].addingTimeInterval(3600), twoReadings: true),
-                                    record(at: outside, end: outside.addingTimeInterval(-60), twoReadings: true)], margins: [outside]),
-                       .init(stayedDeleted: 0, oneOffs: 0, notApplied: true), "not placed, ends before it starts: not the daylight-saving answer")
         XCTAssertEqual(try restore([record(at: slots[2], end: slots[2].addingTimeInterval(-60), twoReadings: true)]),
-                       .init(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true))
+                       .init(stayedDeleted: 0, oneOffs: 0, notApplied: true, floatingEdit: true), "two readings: the floating reason first")
+        XCTAssertEqual(try restore([record(at: slots[2], end: slots[2].addingTimeInterval(-60), twoReadings: false),
+                                    record(at: slots[3], end: slots[3].addingTimeInterval(3600), twoReadings: true)]),
+                       .init(stayedDeleted: 0, oneOffs: 0, notApplied: true, floatingEdit: true), "a floating edit beside it: the floating reason")
     }
 
     // MARK: - the window-edge path (read in the Diagnosis; cannot be made on a device)
@@ -235,22 +228,22 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
 
     /// The four shapes of the plan, at +08:00 and -08:00. East of UTC a floating `/RID=` read as an
     /// instant is later than its slot, west of it earlier, so each shape is built at the edge where it
-    /// arises. Rewritten in PR #558 round 1 (rulings A and C): the floating record placed outside applies
-    /// nothing, and the zoned one is not recorded.
+    /// arises. Rewritten in PR #558 round 1 (ruling A: the zoned one is not recorded) and round 3: a floating
+    /// record, inside or just outside, is recorded and applies nothing.
     func testTheFourWindowEdgeShapes() throws {
         let hours: TimeInterval = 3600
+        let floatingStop = UndoEventOutcome.seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true, floatingEdit: true))
         for zone in [taipei, losAngeles] {
             let east = zone.secondsFromGMT() > 0
-            // Floating, true slot inside, instant reading outside: recorded and applied (before #539 its
-            // slot was removed as surplus: the occurrence was lost, not only its edit).
+            // Floating, true slot inside, instant reading outside: recorded, so its slot is not removed as
+            // surplus (before #539 it was: the occurrence was lost, not only its edit); the series comes
+            // back from its rules alone.
             let inside = try edgeCase(zone: zone, floating: true) { east ? $0.end.addingTimeInterval(-4 * hours) : $0.start.addingTimeInterval(4 * hours) }
-            XCTAssertEqual(inside.outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 2)), "floating inside, \(zone.identifier)")
-            XCTAssertFalse(inside.starts.contains(inside.edge), "it comes back as a one-off, not from the rule")
-            // Floating, true slot just outside, instant reading inside: placed in the margin, so nothing
-            // is applied (PR #558 round 1, ruling C; round 0 dropped it and applied the rest; before #539
-            // it was recorded under the wrong slot and nothing was applied).
+            XCTAssertEqual(inside.outcome, floatingStop, "floating inside, \(zone.identifier)")
+            XCTAssertTrue(inside.starts.contains(inside.edge), "it comes back from the rule")
+            // Floating, true slot just outside, instant reading inside: the same.
             let outside = try edgeCase(zone: zone, floating: true) { east ? $0.start.addingTimeInterval(-4 * hours) : $0.end.addingTimeInterval(4 * hours) }
-            XCTAssertEqual(outside.outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true)), "floating outside, \(zone.identifier)")
+            XCTAssertEqual(outside.outcome, floatingStop, "floating outside, \(zone.identifier)")
             XCTAssertTrue(outside.starts.contains(outside.edge), "left to the rule")
             // Zoned, true slot inside: applied, as before #539.
             let zonedInside = try edgeCase(zone: zone, floating: false) { east ? $0.start.addingTimeInterval(4 * hours) : $0.end.addingTimeInterval(-4 * hours) }
@@ -266,8 +259,11 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
     // MARK: - MA: the slot guard of #321 on a floating series
 
     /// MA: the third occurrence, edited floating, is deleted through its own identifier; then the whole
-    /// series; undo of the series, then undo of the occurrence. With the series restored with its
-    /// exceptions the third slot stays empty and the second undo writes one one-off: one event there.
+    /// series; undo of the series, then undo of the occurrence. Away from offset 0 the series comes back
+    /// from its rules alone, with a plain occurrence at the third slot (the wall-clock reading of the
+    /// record), so the second undo is refused, writes nothing and keeps its entry (ruling F); at UTC the
+    /// series is restored with its exceptions, the third slot stays empty and the second undo writes one
+    /// one-off. Either way one event is there. Rewritten in round 3.
     // spec-example: undo-history-discard / MA writes one event
     func testTheChainOfMAWritesNoDuplicate() throws {
         for zone in zones {
@@ -282,12 +278,20 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
                                                            occurrenceDate: third.occurrenceDate, isAllDay: false, isDetached: true, floating: true, zone: zone))
             store.drop(third)
             let (seriesOutcome, after, calendar) = try deleteAndUndo(occurrences[0], in: store, slots: slots, now: slots[0].addingTimeInterval(-30 * day), zone: zone)
-            XCTAssertEqual(seriesOutcome, .seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 1)), zone.identifier)
-
             let record = UndoSnapshotFixtures.event(title: "Third", startDate: slots[2]).withOccurrenceOrigin(origin)
-            let (_, outcome) = try SeriesExceptionsUndo.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar, in: after)
-
-            XCTAssertEqual(outcome, .occurrenceOneOff(notCarriedOver: []), zone.identifier)
+            if zone == utc {
+                XCTAssertEqual(seriesOutcome, .seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 1)), zone.identifier)
+                let (_, outcome) = try SeriesExceptionsUndo.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar, in: after)
+                XCTAssertEqual(outcome, .occurrenceOneOff(notCarriedOver: []), zone.identifier)
+            } else {
+                XCTAssertEqual(seriesOutcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true, floatingEdit: true)), zone.identifier)
+                let count = after.events.count
+                XCTAssertThrowsError(try SeriesExceptionsUndo.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar, in: after)) { error in
+                    XCTAssertTrue(error is OccurrenceSlotWallClockRefusal, "\(error)")
+                    XCTAssertEqual(UndoFailureDisposition.of(error), .restore, "the entry is kept")
+                }
+                XCTAssertEqual(after.events.count, count, "nothing written, \(zone.identifier)")
+            }
             XCTAssertEqual(after.events.filter { UndoPostState.sameInstant($0.start, slots[2]) }.count, 1, "one event there, \(zone.identifier)")
         }
     }

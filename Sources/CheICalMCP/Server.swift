@@ -1626,26 +1626,33 @@ class CheICalMCPServer {
     static let batchFollowingOccurrencesDeletedNote = "The rows in following_occurrences_deleted deleted an occurrence and the later occurrences of its series with span 'future'. Those deletes cannot be undone, and undo refuses this call's record and drops it, so none of this call's rows is restored."
     static let batchPreviewThroughOccurrenceNote = "This row deletes the series from its first occurrence (occurrence_id), edited on its own, with span 'future'. That delete cannot be undone."
 
-    /// #539 step 6: what a whole-series delete adds when the occurrences edited on their own that it
-    /// recorded include ones the series' rule does not place (`SeriesExceptionsPlanner.unplacedEdits`):
-    /// a forecast, read at the delete; the restore decides. In `delete_event`'s answer and in a row of
-    /// `rules_alone_on_undo` of `delete_events_batch`.
-    static func rulesAloneUndoNote(unplacedEdits: Int) -> String {
-        "Undo is expected to bring this series back from its rules alone: " + rulesAloneReason(unplacedEdits)
+    /// #539 step 6: what a whole-series delete adds when its undo is expected to apply none of the
+    /// recorded exceptions (`RulesAloneOnUndo`): a forecast, read at the delete; the restore decides. In
+    /// `delete_event`'s answer and in a row of `rules_alone_on_undo` of `delete_events_batch`.
+    static func rulesAloneUndoNote(_ forecast: RulesAloneOnUndo) -> String {
+        "Undo is expected to bring this series back from its rules alone: " + rulesAloneReason(forecast)
     }
 
     /// #539 step 6: the dry-run row's counterpart, read before anything is deleted.
-    static func batchPreviewRulesAloneNote(unplacedEdits: Int) -> String {
-        "Undo of this row would be expected to bring the series back from its rules alone: " + rulesAloneReason(unplacedEdits)
+    static func batchPreviewRulesAloneNote(_ forecast: RulesAloneOnUndo) -> String {
+        "Undo of this row would be expected to bring the series back from its rules alone: " + rulesAloneReason(forecast)
     }
 
-    private static func rulesAloneReason(_ unplacedEdits: Int) -> String {
-        "\(unplacedEdits) occurrence(s) edited on their own cannot be placed on the series' rule as it was read at the delete (no slot or two slots match their original time, the slot had an occurrence not edited on its own, it falls outside the checked window, two take the same slot, or one has a recorded time that can be wall-clock time or an instant while the series' first occurrence was not a plain occurrence at the delete or the delete reached the series through a later occurrence), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back."
+    /// PR #558 round 3: the reason, by the forecast's cause.
+    private static func rulesAloneReason(_ forecast: RulesAloneOnUndo) -> String {
+        if forecast.floatingEdit {
+            return "the series has no time zone and \(forecast.edits) of its occurrences were edited on their own. " + floatingEditReason
+        }
+        return "\(forecast.edits) occurrence(s) edited on their own have a recorded original time that is no slot of the series' rule as it was read at the delete (for example the series was moved after they were edited), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back."
     }
+
+    /// PR #558 round 3: why a series with no time zone and an occurrence edited on its own comes back from
+    /// its rules alone; the forecast's half of `UndoOperation.seriesFloatingEditNote`.
+    static let floatingEditReason = "The original slot of an occurrence of a series with no time zone edited on its own cannot be read reliably (its recorded time can be wall-clock time or an instant), so undo applies none of the recorded exceptions: the series comes back with the occurrences its rules give, without the edits and deletions made to single occurrences."
 
     /// #539 step 6: the rows of `rules_alone_on_undo`, each with its note.
     static func rulesAloneRows(_ rows: [RulesAloneForecast.Row]) -> [[String: Any]] {
-        rows.map { ["event_id": $0.identifier, "undo_note": rulesAloneUndoNote(unplacedEdits: $0.unplacedEdits)] }
+        rows.map { ["event_id": $0.identifier, "undo_note": rulesAloneUndoNote($0.forecast)] }
     }
 
     private func handleDeleteEvent(arguments: [String: Value]) async throws -> String {
@@ -1669,7 +1676,7 @@ class CheICalMCPServer {
                 response["occurrence_id"] = occurrence
                 response["undo_note"] = Self.seriesDeletedThroughOccurrenceNote
             case .series(let unplacedEdits):
-                if unplacedEdits > 0 { response["undo_note"] = Self.rulesAloneUndoNote(unplacedEdits: unplacedEdits) }
+                if let unplacedEdits { response["undo_note"] = Self.rulesAloneUndoNote(unplacedEdits) }
             }
             return try actionResult(response)
         }
@@ -1678,7 +1685,7 @@ class CheICalMCPServer {
         let unplacedEdits = try await eventDeletionSource.deleteEvent(identifier: eventId, span: span, occurrenceDate: occurrenceDate)
         var response: [String: Any] = ["action": "deleted", "id": eventId, "span": spanStr]
         // #539 step 6: span future from the first occurrence that removed the whole series.
-        if unplacedEdits > 0 { response["undo_note"] = Self.rulesAloneUndoNote(unplacedEdits: unplacedEdits) }
+        if let unplacedEdits { response["undo_note"] = Self.rulesAloneUndoNote(unplacedEdits) }
         return try actionResult(response)
     }
 
@@ -3402,7 +3409,7 @@ class CheICalMCPServer {
                     if spanAll {
                         // #539 step 6: asked before the row counts as gone, as the real call resolves it.
                         let unplacedEdits = await eventBatchDeletionSource.previewUndoForecast(identifier: id, goneInTheCall: gone)
-                        if unplacedEdits > 0 { deletion["undo_note"] = Self.batchPreviewRulesAloneNote(unplacedEdits: unplacedEdits) }
+                        if let unplacedEdits { deletion["undo_note"] = Self.batchPreviewRulesAloneNote(unplacedEdits) }
                         gone.insert(id)
                     } else {
                         // It resolves before the call; when an earlier row's cut reaches it, the real

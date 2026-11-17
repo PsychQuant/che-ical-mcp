@@ -2,11 +2,13 @@ import EventKit
 import XCTest
 @testable import CheICalMCP
 
-/// PR #558 round 2 (findings H1, H4, H5; ruling I): the undo of a whole-series delete of a series with no
-/// time zone, over a matrix of shapes, through the production capture (`SeriesExceptionsUndo.capture`), the
-/// production resolution of a series whose first occurrence is gone or edited
-/// (`FirstRemainingOccurrence.resolve`, `pick`, `earliestEdited`) and the production undo arm
-/// (`SeriesExceptionsUndo.undoDeleteEvent`) on the in-memory store.
+/// PR #558 rounds 2 and 3 (findings H1, H4, H5, J1, J2): the undo of a whole-series delete of a series with
+/// no time zone, over a matrix of shapes, through the production capture (`SeriesExceptionsUndo.capture`),
+/// the production resolution of a series whose first occurrence is gone or edited
+/// (`FirstRemainingOccurrence.resolve`, `pick`) and the production undo arm
+/// (`SeriesExceptionsUndo.undoDeleteEvent`) on the in-memory store. Modelled by the test, not production:
+/// whether the series object refreshes, the recreated series' slots (`seriesSlots`), and what a delete
+/// through a stand-in leaves (two models below).
 ///
 /// A cell: a host at a fixed UTC offset (no daylight saving), a daily or weekly series of six occurrences
 /// at 06:00 or 22:00, one occurrence retitled while the series had no time zone (its `/RID=` digits are
@@ -32,14 +34,16 @@ import XCTest
 ///
 /// For every cell with a restorable capture:
 /// - no two events share a start after the undo;
-/// - an undo that says it applied no exception leaves the rules-alone calendar: the recreated series'
-///   slots, untitled, and what the delete left;
-/// - an undo that applied the exceptions leaves the calendar as it was before the delete, except that a
-///   first occurrence deleted or edited on its own is kept from the rule when the answer says so; and its
-///   counts are what happened (an occurrence counted as deleted on its own stayed deleted is a slot of the
-///   recreated series that had no event before the delete, each one-off counted is written);
-/// - a cell whose records have one reading (a host at offset 0) restores as `main` did;
-/// - a cell that must apply (no move, the first occurrence plain) applies.
+/// - a cell whose record holds a record of two readings (a host not at offset 0) applies nothing (PR #558
+///   round 3: the placement withdrawn): the rules-alone calendar (the recreated series' slots, untitled, and
+///   what the delete left), counts of 0, and the answer's own reason (`seriesFloatingEditNote`). Those where
+///   `main`'s restore of the same record leaves the calendar as before the delete are counted apart: there
+///   this PR loses an edit `main` kept (finding J10, the mild direction, forecast at the delete);
+/// - a cell whose records have one reading (a host at offset 0) restores as `main` did; where `main` itself
+///   leaves a calendar the absolute checks reject (#560's shape) it is counted apart, and otherwise an undo
+///   that applied the exceptions leaves the calendar as it was before the delete (the first occurrence kept
+///   from the rule when the answer says so) with true counts;
+/// - a one-reading cell that must apply (no move, the first occurrence plain) applies.
 final class FloatingSeriesUndoMatrixTests: XCTestCase {
     private let hour: TimeInterval = 3_600
     private let day: TimeInterval = 86_400
@@ -84,6 +88,9 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         /// checks reject (a stale `/RID=` after a move by a whole period, read at offset 0: #560's shape on a
         /// series with no time zone). Counted apart; it is not this PR's path.
         var asOnMain: [String] = []
+        /// A two-reading cell where `main`'s restore of the same record leaves the calendar as before the
+        /// delete, while this PR restores from the rules alone (J10).
+        var mainKeptTheEdit = false
     }
 
     // MARK: - building a cell
@@ -140,14 +147,14 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             stored: object, refresh: { _ in cell.route == .seriesObject || firstIsPlain },
             standIn: { _ in FirstRemainingOccurrence.pick(candidates, identifier: "S").map { index in store.events[index] } })
         guard let resolved else {
-            // #428: through the first edited occurrence, which records no restorable capture.
-            _ = FirstRemainingOccurrence.earliestEdited(candidates, identifier: "S", zone: host)
+            // #428: through the first edited occurrence, which records no restorable capture. Not modelled
+            // further: whether that route is taken (`earliestEdited`) or the delete is refused, no undo restores.
             return Run(kind: .notRestorable)
         }
         let now = cell.yearsBefore > 0 ? original[0].addingTimeInterval(Double(cell.yearsBefore) * 365 * day)
                                        : min(original[0], moved[0]).addingTimeInterval(-30 * day)
         let target = resolved.event
-        let capture = SeriesExceptionsUndo.capture(of: target, in: store, now: now, zone: host, viaStandIn: resolved.viaStandIn)
+        let capture = SeriesExceptionsUndo.capture(of: target, in: store, now: now, zone: host)
         guard let exceptions = capture else { return Run(kind: .noCapture) }
         let start = store.startDate(of: target)
         let ruleSlots = moved.filter { $0 >= start }
@@ -178,6 +185,19 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             run.failures = issues
             return run
         }
+        if twoReadings {
+            // PR #558 round 3: nothing applied, the rules-alone calendar, counts of 0, and the reason said.
+            run.kind = restore.notApplied ? .twoNotApplied : .twoApplied
+            if !restore.notApplied || !restore.floatingEdit { fail("two readings, answer \(restore)") }
+            if final != rulesAlone { fail("left \(final), rules alone \(rulesAlone)") }
+            if restore.stayedDeleted != 0 || restore.oneOffs != 0 { fail("counts \(restore)") }
+            if !text.hasSuffix(". " + UndoOperation.seriesFloatingEditNote) { fail("text: \(text)") }
+            run.failures = issues
+            // J10: `main`'s restore of the same record on the same recreated series.
+            let main = restoreAtStoreLevel(exceptions, slots: ruleSlots, zone: host, onMain: true)
+            run.mainKeptTheEdit = (main.left + left).sorted() == before
+            return run
+        }
         if restore.notApplied {
             if final != rulesAlone { fail("said rules alone, left \(final), rules alone \(rulesAlone)") }
             if !text.contains("Restored from the series rules alone") { fail("text: \(text)") }
@@ -193,8 +213,6 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             }
             if final != expected { fail("applied, left \(final), before \(before), answer \(restore)") }
             if restore.firstOccurrenceKeptFromRule == anchorWasPlain, anchorInWindow { fail("first kept flag \(restore.firstOccurrenceKeptFromRule)") }
-            // Ruling I: with a record of two readings, a first slot kept from the rule only outside every window.
-            if twoReadings, restore.firstOccurrenceKeptFromRule, anchorInWindow { fail("two readings applied with the first slot not plain") }
             // The counts: a slot of the recreated series removed with no event there before stayed deleted;
             // each one-off counted was written.
             let recreatedID = after.events.first { $0.hasRules }?.id
@@ -205,18 +223,15 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             if restore.stayedDeleted != stayed { fail("stayedDeleted \(restore.stayedDeleted), true \(stayed)") }
             if restore.oneOffs != oneOffs { fail("oneOffs \(restore.oneOffs), written \(oneOffs)") }
         }
-        if twoReadings {
-            run.kind = restore.notApplied ? .twoNotApplied : .twoApplied
+        // One reading: `main`'s restore of the same record on the same recreated series.
+        let current = restoreAtStoreLevel(exceptions, slots: ruleSlots, zone: host, onMain: false)
+        let main = restoreAtStoreLevel(exceptions, slots: ruleSlots, zone: host, onMain: true)
+        if current.answer != main.answer || current.left != main.left {
+            run.failures = issues + ["\(cell.label): one reading, \(current.answer) where main \(main.answer)"]
+        } else if mustApply {
             run.failures = issues
         } else {
-            // One reading: `main`'s restore of the same record on the same recreated series.
-            let current = restoreAtStoreLevel(exceptions, slots: ruleSlots, zone: host, onMain: false)
-            let main = restoreAtStoreLevel(exceptions, slots: ruleSlots, zone: host, onMain: true)
-            if current.answer != main.answer || current.left != main.left {
-                run.failures = issues + ["\(cell.label): one reading, \(current.answer) where main \(main.answer)"]
-            } else {
-                run.asOnMain = issues
-            }
+            run.asOnMain = issues
         }
         return run
     }
@@ -320,57 +335,74 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         var kinds: [String: Int] = [:]
         var twoReadingFailures = 0
         var asOnMain = 0
+        var mainKeptTheEdit = 0
+        var mainKeptByShape: [String: Int] = [:]
         let all = cells()
         for cell in all {
-            // No move and the first occurrence plain: the edit must come back on every build.
+            // No move and the first occurrence plain: with one reading the edit must come back.
             let mustApply = cell.move == 0 && cell.edited != 0 && !cell.deleted.contains(0)
             let run = try run(cell, mustApply: mustApply)
             kinds["\(run.kind)", default: 0] += 1
             failures += run.failures
             if !run.asOnMain.isEmpty { asOnMain += 1 }
+            if run.mainKeptTheEdit {
+                mainKeptTheEdit += 1
+                let offset = TimeInterval(cell.host.secondsFromGMT())
+                let move = cell.move == offset ? "move +offset" : cell.move == -offset ? "move -offset" : "move \(cell.move / 3_600) h"
+                mainKeptByShape[move, default: 0] += 1
+            }
             if !run.failures.isEmpty, run.kind == .twoApplied || run.kind == .twoNotApplied { twoReadingFailures += 1 }
         }
         let redLabels = Set(failures.map { $0.components(separatedBy: ": ")[0] })
         let redCells = redLabels.count
         let byRoute = Dictionary(grouping: redLabels) { label in label.components(separatedBy: ", ").last ?? "" }.mapValues(\.count)
+        print("MATRIX main kept the edit by move \(mainKeptByShape.sorted { $0.key < $1.key })")
         print("MATRIX red by route \(byRoute.sorted { $0.key < $1.key })")
-        print("MATRIX cells \(all.count) kinds \(kinds.sorted { $0.key < $1.key }) red \(redCells) two-reading red \(twoReadingFailures) one-reading as on main but rejected \(asOnMain)")
+        print("MATRIX cells \(all.count) kinds \(kinds.sorted { $0.key < $1.key }) red \(redCells) two-reading red \(twoReadingFailures) one-reading as on main but rejected \(asOnMain) two-reading where main kept the edit \(mainKeptTheEdit)")
         XCTAssertEqual(redCells, 0, failures.prefix(12).joined(separator: "\n"))
-        // The totals of the round's record (PR #558 round 2): a change of the restore that moves a cell from
-        // one outcome to another shows here.
-        XCTAssertEqual(all.count, 7812)
+        // The totals of the round's record (PR #558 round 3, with J1's 72 window-edge cells): a change of the
+        // restore that moves a cell from one outcome to another shows here.
+        XCTAssertEqual(all.count, 7884)
         XCTAssertEqual(kinds["notRestorable"], 1188)
-        XCTAssertEqual(kinds["oneReading"], 1044)
-        XCTAssertEqual(kinds["twoApplied"], 1236)
-        XCTAssertEqual(kinds["twoNotApplied"], 4344)
-        XCTAssertEqual(asOnMain, 452)
+        XCTAssertEqual(kinds["oneReading"], 1056)
+        XCTAssertNil(kinds["twoApplied"], "no record of two readings is applied")
+        XCTAssertEqual(kinds["twoNotApplied"], 5640)
+        XCTAssertEqual(asOnMain, 464)
+        // J10: where `main`'s instant reading of a stale `/RID=` happened to name the moved slot (the series moved by about
+        // the host's offset, or a period plus or minus it, after the edit), `main` kept the edit and this PR does not.
+        XCTAssertEqual(mainKeptTheEdit, 638)
     }
 
     // MARK: - named cells
 
     /// H1 (verify round 2, Codex): the second occurrence edited, the series moved one day later, the new
     /// first occurrence deleted on its own; the series object refreshes. The stale record's wall-clock
-    /// reading is the first slot, which held no plain occurrence: placed there before ruling I, its true
-    /// slot was removed and no one-off written (the occurrence lost).
+    /// reading is the first slot, which held no plain occurrence: placed there in round 1, its true slot was
+    /// removed and no one-off written (the occurrence lost). Now the series comes back from its rules alone.
     // spec-example: undo-history-discard / H1
     func testH1TheEditedOccurrenceIsNotLostWhenTheFirstWasDeleted() throws {
         let cell = Cell(host: TimeZone(secondsFromGMT: 8 * 3600)!, step: day, hourOfDay: 6, edited: 1, move: day, deleted: [0], route: .seriesObject)
-        XCTAssertEqual(try run(cell).failures, [])
+        let run = try run(cell)
+        XCTAssertEqual(run.failures, [])
+        XCTAssertEqual(run.kind, .twoNotApplied)
     }
 
     /// H4, H5: the first occurrence edited, the series moved one day earlier, the occurrence now on the second
-    /// slot (the stale record's wall-clock reading) deleted on its own; the series object refreshes. Before
-    /// ruling I the record was placed there and the first slot came back from the rule too: two events.
+    /// slot (the stale record's wall-clock reading) deleted on its own; the series object refreshes. In round 1
+    /// the record was placed there and the first slot came back from the rule too: two events.
     func testH4NoSecondEventWhenTheFirstWasEditedAndMovedEarlier() throws {
         let cell = Cell(host: TimeZone(secondsFromGMT: 8 * 3600)!, step: day, hourOfDay: 6, edited: 0, move: -day, deleted: [1], route: .seriesObject)
-        XCTAssertEqual(try run(cell).failures, [])
+        let run = try run(cell)
+        XCTAssertEqual(run.failures, [])
+        XCTAssertEqual(run.kind, .twoNotApplied)
     }
 
-    /// The shape of the 40 cells ruling I (b) alone left red (device cell SA): the first occurrence edited, the
-    /// series moved two days earlier, the slot the stale record's wall-clock reading names deleted on its own;
-    /// on iCloud a stand-in is accepted (the record's instant reading falls after it), so the recreated series
-    /// starts at a kept slot. Ruling I (a): through a stand-in, nothing is applied.
-    func testSATheStandInRouteAppliesNothingForAStaleRecord() throws {
+    /// The shape of the 40 cells round 2's ruling I (b) alone left red: the first occurrence edited, the series
+    /// moved two days earlier, the slot the stale record's wall-clock reading names deleted on its own; on
+    /// iCloud a stand-in is accepted (the record's instant reading falls after it), so the recreated series
+    /// starts at a kept slot. Not the device cell SA of #561 (the second occurrence edited, two occurrences
+    /// deleted, the new first among them), which this matrix does not model (J9). Nothing is applied.
+    func testTheStandInRouteAppliesNothingForAStaleRecord() throws {
         for leaves in [Leaves.nothing, .earlier] {
             let cell = Cell(host: TimeZone(secondsFromGMT: 8 * 3600)!, step: day, hourOfDay: 6, edited: 0, move: -2 * day, deleted: [2],
                             route: .standIn(leaves))
@@ -396,23 +428,24 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
                 for cell in [late, early] {
                     let run = try run(cell)
                     XCTAssertEqual(run.failures, [], cell.label)
+                    XCTAssertEqual(run.kind, .twoNotApplied, cell.label)
                 }
             }
         }
     }
 
-    /// A series begun five years before the delete, its first occurrence outside every window (#319): an
-    /// occurrence edited while it had no time zone, not moved, comes back as a one-off. Ruling I (b) asks the
-    /// first slot only inside a window; outside one it would apply nothing for every such series.
-    func testASeriesBegunBeforeTheWindowStillGetsItsEditBack() throws {
-        for host in hosts where host.secondsFromGMT() != 0 {
-            for route in [Route.seriesObject, .standIn(.nothing)] {
-                let cell = Cell(host: host, step: 7 * day, hourOfDay: 6, edited: 5 * 52 + 2, move: 0, deleted: [5 * 52 + 4], route: route,
-                                count: 5 * 52 + 20, yearsBefore: 5)
-                let run = try run(cell, mustApply: true)
-                XCTAssertEqual(run.failures, [], cell.label)
-                XCTAssertEqual(run.kind, .twoApplied, cell.label)
-            }
+    /// A series begun five years before the delete, its first occurrence outside every window (#319), an
+    /// occurrence edited while it had no time zone, not moved: on a host not at offset 0 (two readings) the
+    /// series comes back from its rules alone, the edit lost; at offset 0 (one reading) the edit comes back as
+    /// a one-off, as before #539.
+    func testASeriesBegunBeforeTheWindowGetsItsEditBackOnlyWithOneReading() throws {
+        for host in hosts {
+            let cell = Cell(host: host, step: 7 * day, hourOfDay: 6, edited: 5 * 52 + 2, move: 0, deleted: [5 * 52 + 4], route: .seriesObject,
+                            count: 5 * 52 + 20, yearsBefore: 5)
+            let oneReading = host.secondsFromGMT() == 0
+            let run = try run(cell, mustApply: oneReading)
+            XCTAssertEqual(run.failures, [], cell.label)
+            XCTAssertEqual(run.kind, oneReading ? .oneReading : .twoNotApplied, cell.label)
         }
     }
 }

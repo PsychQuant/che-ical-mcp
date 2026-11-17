@@ -125,34 +125,46 @@ struct DeletedEventSnapshots {
     }
 }
 
+/// #539 step 6: what a whole-series delete forecasts for its undo, read before the removal
+/// (`EventKitManager.unplacedEditsAtDelete`): how many recorded occurrences edited on their own the
+/// restore is expected not to apply, and why. PR #558 round 3: `floatingEdit` when the series had no
+/// time zone and the capture holds an edit whose recorded time has two readings
+/// (`SeriesExceptionsPlanner.holdsAFloatingEdit`: every recorded edit is counted); otherwise records whose
+/// recorded slot is no slot of the rule as read at the delete (`SeriesExceptionsPlanner.unplacedEdits`).
+/// Never made with 0 edits: no forecast is nil.
+struct RulesAloneOnUndo: Equatable, Sendable {
+    let edits: Int
+    let floatingEdit: Bool
+}
+
 /// #539 step 6: which deletes of one call forecast that their undo brings a series back from its
-/// rules alone. The count (`SeriesExceptionsPlanner.unplacedEdits`) is read before the removal; it
-/// leaves only with a record of the whole series (`.deleteEvent`), since an occurrence's delete or a
-/// delete of an occurrence and the following ones does not recreate a series. In a batch, a member
-/// whose record refuses the whole call's undo (`batchMemberUndoRefusal`) means that undo restores no
-/// row, so then no row forecasts anything, recorded before it or after.
+/// rules alone. The forecast (`RulesAloneOnUndo`) is read before the removal; it leaves only with a
+/// record of the whole series (`.deleteEvent`), since an occurrence's delete or a delete of an
+/// occurrence and the following ones does not recreate a series. In a batch, a member whose record
+/// refuses the whole call's undo (`batchMemberUndoRefusal`) means that undo restores no row, so then no
+/// row forecasts anything, recorded before it or after.
 struct RulesAloneForecast {
     struct Row: Equatable, Sendable {
         let identifier: String
-        let unplacedEdits: Int
+        let forecast: RulesAloneOnUndo
     }
 
     private var rows: [Row] = []
     private var undoRefused = false
 
-    mutating func recorded(_ record: UndoOperation, identifier: String, unplacedEdits: Int) {
+    mutating func recorded(_ record: UndoOperation, identifier: String, unplacedEdits: RulesAloneOnUndo?) {
         if record.batchMemberUndoRefusal != nil { undoRefused = true }
-        if case .deleteEvent = record, unplacedEdits > 0 { rows.append(Row(identifier: identifier, unplacedEdits: unplacedEdits)) }
+        if case .deleteEvent = record, let unplacedEdits { rows.append(Row(identifier: identifier, forecast: unplacedEdits)) }
     }
 
     /// The rows in the order recorded; empty when the call's undo would be refused.
     var expected: [Row] { undoRefused ? [] : rows }
 
-    /// `delete_event`: the count of the one record it made.
-    static func unplacedEdits(of record: UndoOperation, unplacedEdits: Int) -> Int {
+    /// `delete_event`: the forecast of the one record it made.
+    static func expected(of record: UndoOperation, unplacedEdits: RulesAloneOnUndo?) -> RulesAloneOnUndo? {
         var forecast = RulesAloneForecast()
         forecast.recorded(record, identifier: "", unplacedEdits: unplacedEdits)
-        return forecast.expected.first?.unplacedEdits ?? 0
+        return forecast.expected.first?.forecast
     }
 }
 
@@ -348,8 +360,9 @@ extension UndoOperation {
         }
     }
 
-    /// PR #558 round 2 (ruling I): a restore stopped by the series' first slot (`Outcome.firstSlotNotPlain`).
-    static let seriesFirstSlotNotPlainNote = "Restored from the series rules alone: the series had no time zone, an occurrence edited on its own has a recorded time that can be wall-clock time or an instant, and the series' first occurrence was not a plain occurrence when the series was deleted (it was deleted or edited on its own, or the delete reached the series through a later occurrence), so which slot that edit belongs to cannot be shown and none of the recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
+    /// PR #558 round 3: a restore stopped by a floating edit (`Outcome.floatingEdit`): the series had no
+    /// time zone and an occurrence of it edited on its own has a recorded time of two readings.
+    static let seriesFloatingEditNote = "Restored from the series rules alone: the series had no time zone and an occurrence of it was edited on its own, whose original slot cannot be read reliably (its recorded time can be wall-clock time or an instant), so none of the recorded exceptions was applied: the series comes back with the occurrences its rules give, without the edits and deletions made to single occurrences"
 
     /// #285: what a restore that put the series' exceptions back says, with counts. The window
     /// limit is stated because an exception outside it was never listed. #319: by its instants, with
@@ -358,8 +371,8 @@ extension UndoOperation {
         if outcome.endsBeforeStart {
             return "Restored from the series rules alone: an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of the recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
         }
-        if outcome.firstSlotNotPlain {
-            return seriesFirstSlotNotPlainNote
+        if outcome.floatingEdit {
+            return seriesFloatingEditNote
         }
         if outcome.notApplied {
             return "Restored from the series rules alone: the recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"

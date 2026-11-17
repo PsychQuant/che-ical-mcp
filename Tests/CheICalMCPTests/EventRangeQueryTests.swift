@@ -611,16 +611,11 @@ final class EventRangeQueryTests: XCTestCase {
             "SeriesExceptionsStoreSource.swift: range: DateInterval,",
         ], "the requirement and the EventKit adapter only")
         XCTAssertEqual(calls.sorted(), [
-            "SeriesExceptionsUndo.swift: margin,",
             "SeriesExceptionsUndo.swift: range,",
             "SeriesExceptionsUndo.swift: window,",
-        ], "a listing range of a recorded window, a recorded window (PR #494 round 4: one per window), or a margin of 14 hours beside one (#539)")
-        // #539: the margins are `placementMargins`, 14 hours on each side of a recorded window.
-        let undoCode = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/SeriesExceptionsUndo.swift"), encoding: .utf8))
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"for margin in SeriesExceptionsPlanner\.placementMargins\(for: exceptions\.windows\) \{\s*for occurrence in store\.events\(in: margin, inCalendarOf: restored\)"#, in: undoCode).count, 1)
+        ], "a listing range of a recorded window, or a recorded window (PR #494 round 4: one per window)")
         let undo = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/SeriesExceptionsUndo.swift"), encoding: .utf8))
-        // PR #558 round 2: the listing of the delete's capture is `captureListed`; `capture` adds the stand-in fact.
-        let capture = try XCTUnwrap(SourcePins.body(of: "private static func captureListed<", in: undo))
+        let capture = try XCTUnwrap(SourcePins.body(of: "static func capture<", in: undo))
         let observed = try XCTUnwrap(SourcePins.body(of: "private static func observedOccurrences<", in: undo))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"for range in ranges \{\s*for occurrence in store\.events\(in: range, inCalendarOf: series\)"#, in: observed).count, 1,
                        "one query per range it is given")

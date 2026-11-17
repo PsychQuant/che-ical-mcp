@@ -46,14 +46,14 @@ protocol EventBatchDeletionSource: Sendable {
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
                               goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow
     /// #539 step 6: for a dry-run row with span `all` that deletes (`previewEventDeletion` answered
-    /// `.deletes`), the count the real call's record would carry (`EventKitManager.unplacedEditsAtDelete`),
-    /// 0 for a one-off or when it cannot be read. Read-only: the capture and the first slot only list.
-    func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> Int
+    /// `.deletes`), the forecast the real call's record would carry (`EventKitManager.unplacedEditsAtDelete`),
+    /// nil for a one-off or when it cannot be read. Read-only: the capture and the first slot only list.
+    func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> RulesAloneOnUndo?
 }
 
 extension EventBatchDeletionSource {
-    /// A double that does not model the forecast answers 0; `EventKitManager` answers its own.
-    func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> Int { 0 }
+    /// A double that does not model the forecast answers nil; `EventKitManager` answers its own.
+    func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> RulesAloneOnUndo? { nil }
 }
 
 extension EventKitManager: EventBatchDeletionSource {
@@ -95,12 +95,12 @@ extension EventKitManager: EventBatchDeletionSource {
 
     /// #539 step 6: resolved as `previewEventDeletion` resolves a row with span `all`, and captured as
     /// `deleteEventSeriesBatch` captures it before its removal.
-    func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> Int {
+    func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> RulesAloneOnUndo? {
         guard (try? await ensureCalendarAccess()) != nil,
               let resolved = try? freshEventWithOrigin(
                 id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: .thisEvent, wholeSeries: true),
                 goneInTheCall: goneInTheCall),
-              resolved.event.hasRecurrenceRules else { return 0 }
-        return unplacedEditsAtDelete(captureSeriesExceptions(of: resolved.event, viaStandIn: resolved.viaStandIn), of: resolved.event, id: identifier, viaStandIn: resolved.viaStandIn)
+              resolved.event.hasRecurrenceRules else { return nil }
+        return unplacedEditsAtDelete(captureSeriesExceptions(of: resolved.event), of: resolved.event, id: identifier, viaStandIn: resolved.viaStandIn)
     }
 }

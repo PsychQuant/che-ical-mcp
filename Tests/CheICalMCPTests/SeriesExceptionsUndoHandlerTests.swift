@@ -153,8 +153,8 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
             XCTAssertEqual(SourcePins.ranges(of: call + "store)", in: body).count, 1, declaration)
             XCTAssertEqual(SourcePins.ranges(of: call + "seriesExceptionsStore)", in: body).count, 1, declaration)
         }
-        let capture = try XCTUnwrap(SourcePins.body(of: "func captureSeriesExceptions(of series: EKEvent, viaStandIn: Bool)", in: source))
-        XCTAssertEqual(SourcePins.ranges(of: "SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore, viaStandIn: viaStandIn)", in: capture).count, 1)
+        let capture = try XCTUnwrap(SourcePins.body(of: "func captureSeriesExceptions(of series: EKEvent)", in: source))
+        XCTAssertEqual(SourcePins.ranges(of: "SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore)", in: capture).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "seriesExceptionsStoreOverride", in: capture).count, 0, "the capture never reads the override")
         let store = try XCTUnwrap(SourcePins.body(of: "var seriesExceptionsStore: EventKitSeriesExceptionsStore", in: source))
         XCTAssertEqual(SourcePins.ranges(of: "EventKitSeriesExceptionsStore(eventStore: eventStore,", in: store).count, 1)

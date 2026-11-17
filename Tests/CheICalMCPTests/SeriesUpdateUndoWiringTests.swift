@@ -40,7 +40,7 @@ final class SeriesUpdateUndoWiringTests: XCTestCase {
         try assertOrder(["SeriesUpdateUndo.recordable(",
                          "markNeedsRefresh()",
                          "refreshIfNeeded()",
-                         "captureSeriesExceptions(of: series, viaStandIn: viaStandIn)",
+                         "captureSeriesExceptions(of: series)",
                          "SeriesUpdateUndo.covers(",
                          "wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn)",
                          "SeriesUpdateUndo.firstSlotRecordable(baseline: first.baseline, slot: first.slot)",

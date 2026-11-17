@@ -17,13 +17,13 @@ private actor DeletionFake: EventDeletionSource {
         if identifier == "denied" { throw EventKitError.accessDenied(type: "calendar") }
         return TestZones.eventZone(differingFromHostAt: TestZones.noonUTC("2026-12-06"))
     }
-    func deleteEvent(identifier: String, span: EKSpan, occurrenceDate: Date?) async throws -> Int {
+    func deleteEvent(identifier: String, span: EKSpan, occurrenceDate: Date?) async throws -> RulesAloneOnUndo? {
         deletes.append(Delete(identifier: identifier, span: span, occurrenceDate: occurrenceDate))
-        return 0
+        return nil
     }
     func deleteEventSeries(identifier: String) async throws -> SeriesDeleteRoute {
         seriesDeletes.append(identifier)
-        return identifier == "first-edited" ? .firstEditedOccurrence(id: "first-edited/RID=1") : .series(unplacedEdits: 0)
+        return identifier == "first-edited" ? .firstEditedOccurrence(id: "first-edited/RID=1") : .series(unplacedEdits: nil)
     }
 }
 
