@@ -746,6 +746,8 @@ gh release create vX.Y.Z mcpb/server/CheICalMCP mcpb/server/CheICalMCP.sha256 mc
 
 `make release-signed` runs `scripts/build-mcpb.sh`, which after creating the universal binary calls `scripts/sign-and-notarize.sh`. The signing script does pre-flight checks (cert + notarytool profile) and fails fast with friendly messages if anything's missing. Notarization typically takes 1–15 minutes (`notarytool submit --wait` blocks until Apple finishes).
 
+After the release, merge the commit that folded `[Unreleased]` into the new version's section of `CHANGELOG.md` and `plugin/CHANGELOG.md` (the commit the tag points to) back into `main` with a merge commit, so the tag is reachable from `main` and `[Unreleased]` there holds only what was merged after it (#528).
+
 **Verification** after build (run all three to confirm end-to-end):
 
 ```bash

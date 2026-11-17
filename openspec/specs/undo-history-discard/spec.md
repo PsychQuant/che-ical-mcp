@@ -242,9 +242,11 @@ The undo of an `update_event` on a one-off event, with or without `keep_later_ed
 
 
 <!-- @trace
-source: idd-538-fix1
-updated: 2026-11-17
+source: idd-docs-verify-leftovers
+updated: 2026-11-18
 code:
+  - README_zh-TW.md
+  - README.md
   - CHANGELOG.md
 -->
 
@@ -344,8 +346,10 @@ When the undo of a whole series' delete brought at least one occurrence edited o
 - **THEN** each restored member's older records name its new identifier right after that member was written, and the members not restored keep their records and identifiers
 
 <!-- @trace
-source: idd-538-fix1
-updated: 2026-11-17
+source: idd-docs-verify-leftovers
+updated: 2026-11-18
 code:
+  - README_zh-TW.md
+  - README.md
   - CHANGELOG.md
 -->

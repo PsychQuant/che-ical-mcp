@@ -684,6 +684,8 @@ gh release create vX.Y.Z mcpb/server/CheICalMCP mcpb/server/CheICalMCP.sha256 mc
 
 `make release-signed` 會跑 `scripts/build-mcpb.sh`，建完 universal binary 之後呼叫 `scripts/sign-and-notarize.sh`。簽章 script 會做 pre-flight 檢查（憑證 + notarytool 設定檔），缺東西會 fail-fast 並給出友善訊息。公證通常需要 1–15 分鐘（`notarytool submit --wait` 會 block 直到 Apple 完成）。
 
+發布之後，把 `CHANGELOG.md` 與 `plugin/CHANGELOG.md` 摺疊 `[Unreleased]` 成新版本那一段的 commit（tag 指向的那個）以 merge commit 合併回 `main`，讓 tag 從 `main` 走得到，`main` 的 `[Unreleased]` 也只留之後合併的條目（#528）。
+
 **Build 後驗證**（三個都跑來確認 end-to-end 沒問題）：
 
 ```bash

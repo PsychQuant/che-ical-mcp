@@ -96,6 +96,16 @@ The search SHALL run only after the lookup resolved nothing, and before anything
 - **WHEN** the five texts are built for each one alone and for both
 - **THEN** the only date in each is `2026-12-21`, and `2026-12-14` is in none
 
+
+<!-- @trace
+source: idd-docs-verify-leftovers
+updated: 2026-11-18
+code:
+  - README_zh-TW.md
+  - README.md
+  - CHANGELOG.md
+-->
+
 ---
 ### Requirement: Several edited occurrences are all listed
 
@@ -177,6 +187,16 @@ In a timed series with no time zone, the delete refusal SHALL say that the delet
 - **GIVEN** the same series and occurrence, requested by 2026-12-26
 - **WHEN** the span `future` update text is built
 - **THEN** it equals the text built for a series in `Asia/Taipei` with the same occurrence and day
+
+
+<!-- @trace
+source: idd-docs-verify-leftovers
+updated: 2026-11-18
+code:
+  - README_zh-TW.md
+  - README.md
+  - CHANGELOG.md
+-->
 
 ---
 ### Requirement: Move row names event_ids and the start day
