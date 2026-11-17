@@ -1980,13 +1980,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
     }
 
-    func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws {
+    @discardableResult
+    func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws -> RulesAloneOnUndo? {
         try await ensureCalendarAccess()
 
-        guard let masterEvent = try freshEventWithOrigin(
-            id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
+        guard let resolved = try freshEventWithOrigin(
+            id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span)) else {
             throw notFoundError(id: identifier)
         }
+        let masterEvent = resolved.event
         // #416: as in updateEvent; the delete removed the occurrence the id names, not that day's.
         if DetachedOccurrenceSpan.refusesOccurrenceDate(
             identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: false,
@@ -2004,25 +2006,31 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // Non-recurring events operate on master directly. #244: the snapshots and the facts the
         // record is classified by are taken before the removal.
         let snapshots: DeletedEventSnapshots
+        // #539 step 6: the forecast of a whole-series delete, from its capture, before the removal.
+        var unplacedEdits: RulesAloneOnUndo?
         if hadRules, let date = occurrenceDate {
             guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent)) else {
                 // #532, as in updateEvent.
                 throw occurrenceMissError(series: masterEvent, id: identifier, on: date, call: .delete(futureSpan: span == .futureEvents))
             }
             snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
-                                              seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) })
+                                              seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) },
+                                              seriesFloating: { self.seriesIsFloating(of: $0) })
+            unplacedEdits = unplacedEditsAtDelete(snapshots.series.exceptions, of: masterEvent, id: identifier, viaStandIn: resolved.viaStandIn)
             try eventStore.remove(occurrence, span: span)
         } else if hadRules {
             throw EventKitError.invalidTimeRange(
                 message: "For recurring events, occurrence_date is required to identify which occurrence to delete."
             )
         } else {
-            snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent)
+            snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent, seriesFloating: { self.seriesIsFloating(of: $0) })
             try eventStore.remove(masterEvent, span: span)
         }
         markNeedsRefresh()
         let kind = snapshots.kind(span: span, seriesResolves: { seriesResolves(identifier: identifier) })
-        await CalendarUndoManager.shared.record(snapshots.record(for: kind))
+        let record = snapshots.record(for: kind)
+        await CalendarUndoManager.shared.record(record)
+        return RulesAloneForecast.expected(of: record, unplacedEdits: unplacedEdits)
     }
 
     /// Delete an entire recurring event series by removing from the earliest occurrence.
@@ -2031,7 +2039,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func deleteEventSeries(identifier: String) async throws -> SeriesDeleteRoute {
         try await ensureCalendarAccess()
 
-        guard let event = try freshEvent(id: identifier) else {
+        guard let resolved = try freshEventWithOrigin(id: identifier) else {
             // #428: as in updateEvent. Only span 'all' gets here (`handleDeleteEvent`). From the
             // occurrence that comes first, span future removed every occurrence on iCloud, open-ended
             // series and further edited occurrences included (2026-11-08), and its record cannot be
@@ -2042,6 +2050,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
             throw notFoundError(id: identifier)
         }
+        let event = resolved.event
         // #416: through an occurrence edited on its own this removes that occurrence only (device,
         // iCloud: it has no recurrence rules of its own), while the answer says the series.
         if let refusal = try seriesDeleteRefusal(event, id: identifier) {
@@ -2055,7 +2064,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #185 — snapshot BEFORE removal (the rules as value snapshots since #191, so undo
         // rebuilds the whole series), consistent with single deleteEvent.
         // #285: a series' exceptions are listed before the removal takes them away.
-        let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })
+        let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) },
+                                                           seriesFloating: { self.seriesIsFloating(of: $0) })
+        // #539 step 6: the forecast, from the capture, before the removal.
+        let unplacedEdits = unplacedEditsAtDelete(snapshot.exceptions, of: event, id: identifier, viaStandIn: resolved.viaStandIn)
         // #538: read before the removal.
         let removedID = DeleteUndoFollow.removedIdentifier(eventIdentifier: event.eventIdentifier, hasRules: event.hasRecurrenceRules)
         if event.hasRecurrenceRules {
@@ -2065,7 +2077,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
         markNeedsRefresh()
         await CalendarUndoManager.shared.record(.deleteEvent(id: removedID, snapshot: snapshot))
-        return .series
+        return .series(unplacedEdits: unplacedEdits)
     }
 
     /// #436 (PR #465 verify r1): what the batch's route through the first occurrence refuses, as
@@ -2096,12 +2108,14 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var undoOperations: [UndoOperation] = []
         var throughFirstOccurrence: [(identifier: String, occurrenceID: String)] = []
         var refusingMarker: UndoOperation?
+        // #539 step 6: the rows whose undo is expected to restore a series from its rules alone.
+        var forecast = RulesAloneForecast()
 
         for id in identifiers {
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEventSeries, so the
                 // snapshot undo recreates is not a stale copy; not found stays a per-row failure.
-                guard let event = try freshEvent(id: id) else {
+                guard let resolved = try freshEventWithOrigin(id: id) else {
                     // #436: as in deleteEventSeries: through the
                     // occurrence that comes first, with span future, which reaches every occurrence left.
                     if let first = try firstEditedOccurrenceID(of: id),
@@ -2110,7 +2124,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                             failures.append((id, refusal))
                             continue
                         }
-                        let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence)
+                        let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence, seriesFloating: { self.seriesIsFloating(of: $0) })
                         try eventStore.remove(occurrence, span: .futureEvents)
                         successCount += 1
                         throughFirstOccurrence.append((identifier: id, occurrenceID: first.id))
@@ -2124,12 +2138,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((id, notFoundReason(id: id)))
                     continue
                 }
+                let event = resolved.event
                 // #416: as in deleteEventSeries; a row refused, the others go on. By date range too (#427).
                 if let refusal = try seriesDeleteRefusal(event, id: id, namedInTheCall: Set(identifiers), batch: true) {
                     failures.append((id, refusal))
                     continue
                 }
-                let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })
+                let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) },
+                                                                   seriesFloating: { self.seriesIsFloating(of: $0) })
+                let unplacedEdits = unplacedEditsAtDelete(snapshot.exceptions, of: event, id: id, viaStandIn: resolved.viaStandIn)
                 // #538: read before the removal.
                 let removedID = DeleteUndoFollow.removedIdentifier(eventIdentifier: event.eventIdentifier, hasRules: event.hasRecurrenceRules)
                 if event.hasRecurrenceRules {
@@ -2139,6 +2156,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 }
                 successCount += 1
                 undoOperations.append(.deleteEvent(id: removedID, snapshot: snapshot))
+                forecast.recorded(.deleteEvent(id: removedID, snapshot: snapshot), identifier: id, unplacedEdits: unplacedEdits)
             } catch {
                 let code = EventKitErrorSanitizer.writeFailureLog(
                     handler: "deleteEventsBatch",
@@ -2162,7 +2180,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             successCount: successCount,
             failedCount: failures.count,
             failures: failures,
-            throughFirstOccurrence: throughFirstOccurrence
+            throughFirstOccurrence: throughFirstOccurrence,
+            rulesAloneOnUndo: forecast.expected
         )
     }
 
@@ -2306,6 +2325,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         var sequence = BatchRowSequence(span: span)
         var coveredCount = 0
         var followingOccurrencesDeleted: [String] = []
+        // #539 step 6: the rows whose undo is expected to restore a series from its rules alone; none
+        // when a recorded row makes the call's undo refuse.
+        var forecast = RulesAloneForecast()
         // #452 review r1 items 1-2: by event_ids a row an earlier cut reaches counts as already removed
         // only when it resolved before the call; a stale or mistyped id fails as not found.
         if span == .futureEvents {
@@ -2334,24 +2356,29 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             }
             do {
                 // #236 (PR #259 round 3, finding 1): refreshed, like deleteEvent.
-                guard let masterEvent = try freshEventWithOrigin(
-                    id: item.identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span))?.event else {
+                guard let resolvedRow = try freshEventWithOrigin(
+                    id: item.identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span)) else {
                     _ = BatchRowSequence.settle(
                         sequence.notFound(identifier: item.identifier, listed: item.occurrenceDate,
                                           reason: { notFoundReason(id: item.identifier) }),
                         identifier: item.identifier, failures: &failures, coveredCount: &coveredCount)
                     continue
                 }
+                let masterEvent = resolvedRow.event
                 let hadRules = masterEvent.hasRecurrenceRules
 
                 let snapshots: DeletedEventSnapshots
+                var unplacedEdits: RulesAloneOnUndo?
                 if hadRules, let date = item.occurrenceDate {
                     guard let occurrence = findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone, slot: slot) else {
                         failures.append((item.identifier, "No occurrence found on specified date"))
                         continue
                     }
                     snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
-                                                      seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) })
+                                                      seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) },
+                                                      seriesFloating: { self.seriesIsFloating(of: $0) })
+                    unplacedEdits = unplacedEditsAtDelete(snapshots.series.exceptions, of: masterEvent, id: item.identifier,
+                                                          viaStandIn: resolvedRow.viaStandIn)
                     let removedStart = occurrence.startDate, removedSlot = occurrence.occurrenceDate
                     try eventStore.remove(occurrence, span: span)
                     if let removedStart {
@@ -2362,7 +2389,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((item.identifier, Self.batchOccurrenceDateRequired))
                     continue
                 } else {
-                    snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent)
+                    snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent, seriesFloating: { self.seriesIsFloating(of: $0) })
                     let removedStart = masterEvent.startDate, removedSlot = masterEvent.occurrenceDate
                     try eventStore.remove(masterEvent, span: span)
                     // An occurrence edited on its own reads back without rules; with span future its
@@ -2380,6 +2407,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 let kind = snapshots.kind(span: span, seriesResolves: { seriesResolves(identifier: item.identifier) })
                 if kind != .wholeEvent || undoSeenWholeIdentifiers.insert(item.identifier).inserted {
                     undoOperations.append(snapshots.record(for: kind))
+                    forecast.recorded(snapshots.record(for: kind), identifier: item.identifier, unplacedEdits: unplacedEdits)
                 }
             } catch {
                 let code = EventKitErrorSanitizer.writeFailureLog(
@@ -2402,7 +2430,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             failedCount: failures.count,
             failures: failures,
             coveredCount: coveredCount,
-            followingOccurrencesDeleted: followingOccurrencesDeleted
+            followingOccurrencesDeleted: followingOccurrencesDeleted,
+            rulesAloneOnUndo: forecast.expected
         )
     }
 
@@ -2630,7 +2659,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // the copy was given.
             // #321: a split occurrence is tied to its series, which its undo's slot check compares.
             let copied = EventSnapshot(from: subject, includeRecurrence: false, alarms: planned.alarms)
-            let snapshot = isSplit ? copied.withOccurrenceOrigin(OccurrenceOrigin.of(subject)) : copied
+            let snapshot = isSplit ? copied.withOccurrenceOrigin(OccurrenceOrigin.of(subject, floating: self.seriesIsFloating(of: master))) : copied
             let copy = Self.makeCopy(of: subject, alarms: planned.alarms, in: targetCalendar, store: self.eventStore)
             let outcome = try EventCopyOperation.execute(source: snapshot, saveCopy: {
                 // A refused copy names its location, email or sound alarms; the source is removed
@@ -4322,6 +4351,9 @@ struct BatchDeleteResult {
     /// with span future. That delete cannot be undone, so it is kept out of the batch's undo record
     /// (which it would make refused as a whole) and reported per row instead.
     var throughFirstOccurrence: [(identifier: String, occurrenceID: String)] = []
+    /// #539 step 6: the rows whose undo is expected to bring a series back from its rules alone
+    /// (`RulesAloneForecast`).
+    var rulesAloneOnUndo: [RulesAloneForecast.Row] = []
 }
 
 struct DuplicatePair: Sendable {

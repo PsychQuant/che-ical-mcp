@@ -26,6 +26,36 @@ extension EventKitManager {
         SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore)
     }
 
+    /// PR #558 round 2 (ruling J): whether the series of `event` has no time zone, for an occurrence's
+    /// origin (`OccurrenceOrigin.seriesIsFloating`): through an occurrence's own identifier, the series
+    /// object stored under the part before `/RID=`; nil (one reading) when it cannot be read.
+    func seriesIsFloating(of event: EKEvent) -> Bool {
+        OccurrenceOrigin.seriesIsFloating(eventIdentifier: event.eventIdentifier, ownFloating: OccurrenceOrigin.isFloating(event),
+                                          seriesFloating: { id in ((try? self.storedEvent(id: id)) ?? nil).map(OccurrenceOrigin.isFloating) })
+    }
+
+    /// #539 step 6: the forecast of a whole-series delete, read before the removal: how many of the
+    /// occurrences edited on their own that `exceptions` (this delete's capture) recorded the restore is
+    /// expected not to apply (`SeriesExceptionsPlanner.unplacedEdits`), and why; nil for none.
+    /// PR #558 round 3: when the capture holds a floating edit (`SeriesExceptionsPlanner.holdsAFloatingEdit`),
+    /// every recorded edited occurrence, through a stand-in too, since the restore applies none of them.
+    /// Otherwise the rule is expanded from the first slot #503's check proves (`wholeSeriesBaseline`), in
+    /// the zone its verdict expands in, and only when that slot is a plain first occurrence at its own
+    /// start (`.stored`): through a stand-in, or with a first occurrence edited on its own, nil, as when the
+    /// expander cannot tell. The series is listed for it only when the capture recorded an edited occurrence.
+    func unplacedEditsAtDelete(_ exceptions: SeriesExceptions?, of series: EKEvent, id: String, viaStandIn: Bool) -> RulesAloneOnUndo? {
+        guard let exceptions, !exceptions.detached.isEmpty else { return nil }
+        if SeriesExceptionsPlanner.holdsAFloatingEdit(exceptions) {
+            return RulesAloneOnUndo(edits: exceptions.detached.count, floatingEdit: true)
+        }
+        let first = wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn)
+        guard first.baseline == .stored else { return nil }
+        let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
+        let edits = SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
+                                                          firstSlot: first.slot, calendar: .gregorian(in: zone)) ?? 0
+        return edits > 0 ? RulesAloneOnUndo(edits: edits, floatingEdit: false) : nil
+    }
+
     /// The `.deleteEvent` undo arm (`SeriesExceptionsUndo.recreateDeletedEvent`).
     /// `kind` words a missing calendar: `.undoMoveByCopy` for the source of a move by copy (#466).
     /// #538: `removedID` is the identifier the record holds, nil for the source of a move by copy
@@ -75,7 +105,7 @@ extension EventKitManager {
                                                                       on store: Store) async throws
         -> (text: String, outcome: UndoEventOutcome?, newID: String?) {
         let calendar = try await store.restoreCalendar(for: snapshot, kind: kind)
-        return try SeriesExceptionsUndo.recreateDeletedEvent(snapshot, calendar: calendar, in: store)
+        return try SeriesExceptionsUndo.recreateDeletedEvent(snapshot, calendar: calendar, kind: kind, in: store)
     }
 
     /// The occurrence's calendar is read once, before the slot check and the write (#269 verify).
@@ -83,6 +113,6 @@ extension EventKitManager {
                                                                           kind: EventRestoreKind,
                                                                           on store: Store) async throws -> (text: String, outcome: UndoEventOutcome) {
         let calendar = try await store.restoreCalendar(for: snapshot, kind: kind)
-        return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, in: store)
+        return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, kind: kind, in: store)
     }
 }

@@ -340,18 +340,21 @@ final class UndoCalendarMissingTests: XCTestCase {
         let readDelete = try body("private func undoDeletedEvent<", in: wrappers)
         // #466 (PR #474 round 2): the kind is passed in, so the source of a move by copy is refused in
         // a move's words; the delete arms take the defaults, pinned below.
-        XCTAssertTrue(readDelete.contains("let calendar = try await store.restoreCalendar(for: snapshot, kind: kind) return try SeriesExceptionsUndo.recreateDeletedEvent(snapshot, calendar: calendar, in: store)"), readDelete)
+        XCTAssertTrue(readDelete.contains("let calendar = try await store.restoreCalendar(for: snapshot, kind: kind) return try SeriesExceptionsUndo.recreateDeletedEvent(snapshot, calendar: calendar, kind: kind, in: store)"), readDelete)
         let wrapperSource = SourcePins.code(try SourcePins.source(wrappers))
         XCTAssertEqual(SourcePins.ranges(of: "func undoDeletedEvent(_ snapshot: EventSnapshot, removedID: String?, kind: EventRestoreKind = .recreateDeleted)", in: wrapperSource).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "kind: EventRestoreKind = .recreateDeletedOccurrence)", in: wrapperSource).count, 1)
         let readOccurrence = try body("private func undoDeletedOccurrence<", in: wrappers)
-        XCTAssertTrue(readOccurrence.contains("let calendar = try await store.restoreCalendar(for: snapshot, kind: kind) return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, in: store)"), readOccurrence)
+        XCTAssertTrue(readOccurrence.contains("let calendar = try await store.restoreCalendar(for: snapshot, kind: kind) return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, kind: kind, in: store)"), readOccurrence)
         let seam = "EventKit/SeriesExceptionsUndo.swift"
         let undoDelete = try body("static func recreateDeletedEvent<", in: seam)
         XCTAssertTrue(undoDelete.contains("let event = store.makeEvent() store.apply(snapshot, to: event, calendar: calendar) try store.save(event)"), undoDelete)
         let undoOccurrence = try body("static func undoDeleteOccurrence<", in: seam)
-        // #321: the guard reads the recorded origin, in the calendar read above.
-        XCTAssertTrue(undoOccurrence.contains("if let origin = snapshot.occurrenceOrigin, seriesHoldsSlot(origin, length: slotLength(of: snapshot), calendar: calendar, in: store) {"), undoOccurrence)
+        // #321: the guard reads the recorded origin, in the calendar read above (PR #558 round 1: through
+        // `slotCheck`, which also takes the kind for the refusal's words).
+        XCTAssertTrue(undoOccurrence.contains("if let origin = snapshot.occurrenceOrigin, let answer = try slotCheck(snapshot, origin, kind: kind, calendar: calendar, in: store) {"), undoOccurrence)
+        let slotCheck = try body("private static func slotCheck<", in: seam)
+        XCTAssertTrue(slotCheck.contains("switch seriesHoldsSlot(origin, length: slotLength(of: snapshot), calendar: calendar, in: store) {"), slotCheck)
         XCTAssertTrue(undoOccurrence.contains("store.apply(snapshot, to: event, calendar: calendar)"), undoOccurrence)
         let production = try body("var seriesExceptionsStore: EventKitSeriesExceptionsStore", in: "EventKit/EventKitManager+SeriesExceptions.swift")
         XCTAssertTrue(production.contains("restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },"), production)
