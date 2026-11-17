@@ -619,7 +619,8 @@ final class EventRangeQueryTests: XCTestCase {
         let undoCode = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/SeriesExceptionsUndo.swift"), encoding: .utf8))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"for margin in SeriesExceptionsPlanner\.placementMargins\(for: exceptions\.windows\) \{\s*for occurrence in store\.events\(in: margin, inCalendarOf: restored\)"#, in: undoCode).count, 1)
         let undo = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/SeriesExceptionsUndo.swift"), encoding: .utf8))
-        let capture = try XCTUnwrap(SourcePins.body(of: "static func capture<", in: undo))
+        // PR #558 round 2: the listing of the delete's capture is `captureListed`; `capture` adds the stand-in fact.
+        let capture = try XCTUnwrap(SourcePins.body(of: "private static func captureListed<", in: undo))
         let observed = try XCTUnwrap(SourcePins.body(of: "private static func observedOccurrences<", in: undo))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"for range in ranges \{\s*for occurrence in store\.events\(in: range, inCalendarOf: series\)"#, in: observed).count, 1,
                        "one query per range it is given")
