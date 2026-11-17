@@ -42,8 +42,10 @@ struct DetachedOccurrence {
     let slot: Date
     /// The occurrence's own fields, without recurrence rules.
     let snapshot: EventSnapshot
-    /// #539: every instant `slot` can be (`SlotReadings`): one for an all-day occurrence or one
-    /// without a `/RID=`; for a timed `/RID=`, also its wall-clock reading in the capturing zone.
+    /// #539: every instant `slot` can be (`SlotReadings`): one for an all-day occurrence, one
+    /// without a `/RID=`, and one of a series that had a time zone when it was captured (PR #558
+    /// round 1, ruling A); for a timed `/RID=` of a series without one, also its wall-clock reading in
+    /// the capturing zone.
     let readings: SlotReadings
 
     init(slot: Date, snapshot: EventSnapshot, readings: SlotReadings? = nil) {
@@ -194,10 +196,13 @@ enum SeriesExceptionsPlanner {
     }
 
     /// #539: the readings of an occurrence's slot (`SlotReadings.of`), the instant one being
-    /// `ruleSlot(of:zone:)`.
-    static func slotReadings(of occurrence: ObservedOccurrence, zone: TimeZone = .current) -> SlotReadings {
-        SlotReadings.of(eventIdentifier: occurrence.ids.eventIdentifier, externalIdentifier: occurrence.ids.externalIdentifier,
-                        occurrenceDate: occurrence.occurrenceDate, isAllDay: occurrence.snapshot.isAllDay, zone: zone)
+    /// `ruleSlot(of:zone:)`. PR #558 round 1 (ruling A): the wall-clock reading only when `floating`,
+    /// the occurrence's series having no time zone when it is read; otherwise the instant alone, as
+    /// before #539.
+    static func slotReadings(of occurrence: ObservedOccurrence, zone: TimeZone = .current, floating: Bool = false) -> SlotReadings {
+        guard floating else { return SlotReadings(instant: ruleSlot(of: occurrence, zone: zone)) }
+        return SlotReadings.of(eventIdentifier: occurrence.ids.eventIdentifier, externalIdentifier: occurrence.ids.externalIdentifier,
+                               occurrenceDate: occurrence.occurrenceDate, isAllDay: occurrence.snapshot.isAllDay, zone: zone)
             ?? SlotReadings(instant: ruleSlot(of: occurrence, zone: zone))
     }
 
@@ -225,14 +230,17 @@ enum SeriesExceptionsPlanner {
     /// reading was tested: an occurrence edited while its series had no time zone, whose true slot is
     /// inside the window and whose instant reading is outside, was not recorded, and its slot was then
     /// removed from the recreated series as one deleted on its own.
+    /// PR #558 round 1 (ruling A): the two readings only when `floating`, the series having no time
+    /// zone when it is read (`SeriesExceptionsStoreSource.isFloating`); otherwise each record has the
+    /// instant reading alone and this is the capture of before #539.
     static func capture(_ observed: [ObservedOccurrence], of series: UndoPostState.OccurrenceIDs,
-                        windows: [DateInterval], zone: TimeZone = .current) -> SeriesExceptions? {
+                        windows: [DateInterval], zone: TimeZone = .current, floating: Bool = false) -> SeriesExceptions? {
         guard let first = windows.first else { return nil }
         var kept: [Date] = []
         var detached: [DetachedOccurrence] = []
         for occurrence in observed where UndoPostState.isOccurrence(occurrence.ids, of: series) {
             if occurrence.isDetached {
-                let readings = Self.slotReadings(of: occurrence, zone: zone)
+                let readings = Self.slotReadings(of: occurrence, zone: zone, floating: floating)
                 if readings.all.contains(where: { Self.inWindows($0, windows) }) {
                     detached.append(DetachedOccurrence(slot: readings.instant, snapshot: occurrence.snapshot, readings: readings))
                 }
@@ -297,8 +305,8 @@ enum SeriesExceptionsPlanner {
     /// on undo (round 2, B). Occurrences found only in the margins do not count (round 3: the
     /// margin queries always find an open-ended series' own occurrences).
     static func capture(_ observed: [ObservedOccurrence], of series: UndoPostState.OccurrenceIDs,
-                        window: DateInterval, zone: TimeZone = .current) -> SeriesExceptions? {
-        capture(observed, of: series, windows: [window], zone: zone)
+                        window: DateInterval, zone: TimeZone = .current, floating: Bool = false) -> SeriesExceptions? {
+        capture(observed, of: series, windows: [window], zone: zone, floating: floating)
     }
 
     /// #539: the ranges the restore lists the recreated series over besides the windows, to place a
@@ -322,30 +330,61 @@ enum SeriesExceptionsPlanner {
         }
     }
 
-    /// #539: each recorded occurrence edited on its own, with its slot set to the one reading that is a
-    /// slot of the recreated series (`SlotReadings.place`, among `slots`: what the restore listed over
-    /// the windows and their margins). A record placed outside every window is dropped: its slot is
-    /// left to the rule, as before #539 for an occurrence whose slot is outside the window. A record
-    /// with one reading is kept as it is (the restore's consistency check decides it, as before).
-    /// Nil when a record with two readings cannot be placed (neither is a slot, or both are): then
-    /// nothing is applied. All or nothing: a record left out would have its true slot removed as
-    /// surplus, which loses the occurrence, not only its edit.
-    /// The records keep their order (the capture sorted them by their instant reading; the readings of
-    /// records at least 23 hours apart keep that order). With no record of two readings the record is
-    /// returned as it is, so such a restore is what it was before #539.
-    static func placeDetached(_ exceptions: SeriesExceptions, among slots: [Date]) -> SeriesExceptions? {
-        guard exceptions.detached.contains(where: { $0.readings.wallClock != nil }) else { return exceptions }
-        let set = InstantSet(slots)
+    /// PR #558 round 1 (rulings B, C, D): where the records are placed among `slots`, and how many
+    /// cannot be. A record of two readings is placed on the one reading that is a slot
+    /// (`SlotReadings.place`); it is not placed when neither or both are, when that slot held an
+    /// occurrence not edited on its own at the capture (a kept slot: no slot has both, so the reading
+    /// is the wrong one, as for an edited occurrence whose `/RID=` stayed at its slot from before a
+    /// whole-series time move, #539 cell N1), or when that slot is outside every window. With any record
+    /// of two readings, two records on one slot are not placed either. A record of one reading is kept
+    /// as it is (the restore's consistency check decides it, as before #539), and with no record of two
+    /// readings every record is, so such a placement is what the restore saw before #539.
+    struct Placement {
+        /// The records placed, in their recorded order, each with its slot set to the reading placed.
+        let placed: [DetachedOccurrence]
+        /// How many records cannot be placed.
+        let unplaced: Int
+    }
+
+    static func placement(_ exceptions: SeriesExceptions, among slots: InstantSet) -> Placement {
+        guard exceptions.detached.contains(where: { $0.readings.wallClock != nil }) else {
+            return Placement(placed: exceptions.detached, unplaced: 0)
+        }
+        let kept = InstantSet(exceptions.keptSlots)
         var placed: [DetachedOccurrence] = []
+        var unplaced = 0
         for record in exceptions.detached {
             guard record.readings.wallClock != nil else { placed.append(record); continue }
-            guard let slot = record.readings.place(among: set) else { return nil }
-            if inWindows(slot, exceptions.windows) {
-                placed.append(DetachedOccurrence(slot: slot, snapshot: record.snapshot, readings: record.readings))
+            guard let slot = record.readings.place(among: slots), !kept.contains(slot), inWindows(slot, exceptions.windows) else {
+                unplaced += 1
+                continue
             }
+            placed.append(DetachedOccurrence(slot: slot, snapshot: record.snapshot, readings: record.readings))
         }
+        // Ruling D: a slot taken by two records holds neither.
+        let shared = placed.filter { record in placed.filter { UndoPostState.sameInstant($0.slot, record.slot) }.count > 1 }.count
+        guard shared > 0 else { return Placement(placed: placed, unplaced: unplaced) }
+        let alone = placed.filter { record in placed.filter { UndoPostState.sameInstant($0.slot, record.slot) }.count == 1 }
+        return Placement(placed: alone, unplaced: unplaced + shared)
+    }
+
+    /// #539: the recorded occurrences edited on their own, each with its slot set to the one reading
+    /// that is a slot of the recreated series (`placement`, among `slots`: what the restore listed over
+    /// the windows and their margins). Nil when a record cannot be placed (PR #558 round 1, rulings B, C,
+    /// D): then nothing is applied. All or nothing: a record left out would have its true slot removed
+    /// as surplus, which loses the occurrence, not only its edit; a record placed on another slot would
+    /// have that slot's hidden occurrence removed (cell S1). Before round 1 a record placed outside every
+    /// window was dropped and the rest applied; the true slot of such a record may be inside a window
+    /// with its other reading, so that removed it. The records keep their order (the capture sorted them
+    /// by their instant reading; the readings of records at least 23 hours apart keep that order). With
+    /// no record of two readings the record is returned as it is, so such a restore is what it was
+    /// before #539.
+    static func placeDetached(_ exceptions: SeriesExceptions, among slots: [Date]) -> SeriesExceptions? {
+        guard exceptions.detached.contains(where: { $0.readings.wallClock != nil }) else { return exceptions }
+        let placement = placement(exceptions, among: InstantSet(slots))
+        guard placement.unplaced == 0 else { return nil }
         var result = SeriesExceptions(window: exceptions.window, keptSlots: exceptions.keptSlots,
-                                      detached: placed, extraWindows: exceptions.extraWindows)
+                                      detached: placement.placed, extraWindows: exceptions.extraWindows)
         result.seriesStartsBeforeWindow = exceptions.seriesStartsBeforeWindow
         result.seriesContinuesAfterWindow = exceptions.seriesContinuesAfterWindow
         result.seriesMayContinueAfterWindow = exceptions.seriesMayContinueAfterWindow
@@ -353,16 +392,19 @@ enum SeriesExceptionsPlanner {
     }
 
     /// #539 step 6: how many of the recorded occurrences edited on their own the series' rule does not
-    /// place, read at the delete, before anything is removed: each record's readings
-    /// (`SlotReadings.place`) against the slots the rule gives from `firstSlot` (`DeletedOccurrenceCheck`'s
-    /// expander, in `calendar`'s zone) up to `SlotReadings.largestOffset` past the last window, so a
-    /// record whose slot lies just outside a window, which the restore drops, is placed and not counted.
-    /// A record with one reading counts when that reading is no slot, as the restore's consistency
-    /// check would not apply it either. A count above 0 forecasts that undo restores the series from its
-    /// rules alone; the restore itself places against the recreated series and decides.
+    /// place, read at the delete, before anything is removed: the records placed as the restore places
+    /// them (`placement`, rulings B, C, D) against the slots the rule gives from `firstSlot`
+    /// (`DeletedOccurrenceCheck`'s expander, in `calendar`'s zone) up to `SlotReadings.largestOffset`
+    /// past the last window, so a record placed just outside a window is counted. A record with one
+    /// reading counts when that reading is no slot, as the restore's consistency check would not apply
+    /// it either. A count above 0 forecasts that undo restores the series from its rules alone; the
+    /// restore itself places against the recreated series and decides. A record that ends before it
+    /// starts is not counted (`endsBeforeItStarts`; the delete gives no note for it).
     /// Nil when the expander cannot tell, so the delete says nothing rather than guess: not exactly one
     /// rule, no first slot (a stand-in, or a first occurrence edited on its own), a rule the expander
-    /// does not follow, or more slots than it takes.
+    /// does not follow, more slots than it takes, or (PR #558 round 1, ruling G, the #503 verdict's own
+    /// guard) a recorded occurrence not edited on its own that is no slot of the expander, so the
+    /// expander is wrong here.
     static func unplacedEdits(_ exceptions: SeriesExceptions, rules: [DeletedOccurrenceCheck.Rule], firstSlot: Date?,
                               calendar: Calendar) -> Int? {
         guard !exceptions.detached.isEmpty else { return 0 }
@@ -371,19 +413,23 @@ enum SeriesExceptionsPlanner {
                                                                          until: end.addingTimeInterval(SlotReadings.largestOffset),
                                                                          calendar: calendar) else { return nil }
         let set = InstantSet(slots)
-        return exceptions.detached.filter { $0.readings.place(among: set) == nil }.count
+        guard exceptions.keptSlots.allSatisfy(set.contains) else { return nil }
+        let placement = placement(exceptions, among: set)
+        let oneReadingOffRule = placement.placed.filter { $0.readings.wallClock == nil && !set.contains($0.slot) }.count
+        return placement.unplaced + oneReadingOffRule
     }
 
-    /// #539 (device cell DS1, iCloud, 2026-11-17): whether a placed record of two readings ends before
-    /// it starts. A floating occurrence whose wall-clock times fall across a daylight-saving gap of the
-    /// reading zone (02:30 to 03:00 on 2027-03-14 at America/Los_Angeles) was listed from 03:30 to 03:00:
-    /// both readings put it on its slot, and its one-off failed to save (EKErrorDatesInverted), so the
-    /// undo rolled back and restored nothing. Such a record stops the restore instead (fail closed: the
-    /// series comes back from its rules, as before #539, when the record was not placed). Read after
-    /// `placeDetached`, which drops a record placed outside every window, so only one the restore would
-    /// write counts; a record of one reading is not checked, as it was not before #539.
+    /// #539 (device cell DS1, iCloud, 2026-11-17): whether a placed record ends before it starts. A
+    /// floating occurrence whose wall-clock times fall across a daylight-saving gap of the reading zone
+    /// (02:30 to 03:00 on 2027-03-14 at America/Los_Angeles) was listed from 03:30 to 03:00: both readings
+    /// put it on its slot, and its one-off failed to save (EKErrorDatesInverted), so the undo rolled back
+    /// and restored nothing. Such a record stops the restore instead (fail closed: the series comes back
+    /// from its rules). Read after `placeDetached`, so only a record the restore would write counts.
+    /// PR #558 round 1 (ruling E, F7): every such record, whatever its number of readings; a record of
+    /// one reading (a host at offset 0 before the spring change, Europe/London) failed the same way
+    /// before.
     static func endsBeforeItStarts(_ placed: SeriesExceptions) -> Bool {
-        placed.detached.contains { $0.readings.wallClock != nil && $0.snapshot.endDate < $0.snapshot.startDate }
+        placed.detached.contains { $0.snapshot.endDate < $0.snapshot.startDate }
     }
 
     /// The slots of the recreated series (`generated`) that undo must remove: inside the window
@@ -583,28 +629,24 @@ struct OccurrenceOrigin: Equatable {
     /// #321 r1: the occurrence was edited on its own before its delete (detached, or a `/RID=`
     /// identifier): a series that holds its slot holds it without that edit.
     var edited: Bool = false
-    /// #539: every instant the slot can be (`SlotReadings`); `[slot]` unless the occurrence carries a
-    /// timed `/RID=`, which may have been written while its series had no time zone.
-    var readings: [Date]
-
-    init(series: UndoPostState.OccurrenceIDs, slot: Date, edited: Bool = false, readings: [Date]? = nil) {
-        self.series = series
-        self.slot = slot
-        self.edited = edited
-        self.readings = readings ?? [slot]
-    }
+    /// #539: the wall-clock reading of the slot (`SlotReadings.wallClock`), taken only for an
+    /// occurrence of a series that had no time zone when it was read (PR #558 round 1, ruling A); nil
+    /// otherwise, and for an all-day occurrence or one without a `/RID=`.
+    var wallClock: Date? = nil
 
     /// From an occurrence's identifiers: the series is the part before a `/RID=` suffix
     /// (`DetachedOccurrenceSpan.seriesIdentifier`), the slot the rule slot (`UndoPostState.ruleSlot`:
     /// the RID when there is one, otherwise `occurrenceDate`). Nil without either: nothing ties the
-    /// occurrence to its series, and the guard cannot decide.
+    /// occurrence to its series, and the guard cannot decide. `floating`: the series had no time zone
+    /// when the occurrence was read, so a timed `/RID=` is also read as wall-clock time (`SlotReadings`).
     static func of(eventIdentifier: String?, externalIdentifier: String?, occurrenceDate: Date?, isAllDay: Bool,
-                   isDetached: Bool = false, zone: TimeZone = .current) -> OccurrenceOrigin? {
+                   isDetached: Bool = false, floating: Bool = false, zone: TimeZone = .current) -> OccurrenceOrigin? {
         guard let series = seriesIDs(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier),
               let readings = SlotReadings.of(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
                                              occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone) else { return nil }
         let rid = UndoPostState.originalSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier, occurrenceDate: nil)
-        return OccurrenceOrigin(series: series, slot: readings.instant, edited: isDetached || rid != nil, readings: readings.all)
+        return OccurrenceOrigin(series: series, slot: readings.instant, edited: isDetached || rid != nil,
+                                wallClock: floating ? readings.wallClock : nil)
     }
 
     /// The identifiers of the series an occurrence belongs to: each without its `/RID=` suffix.
@@ -659,52 +701,63 @@ enum OccurrenceSlotGuard {
     /// #321: an event listed at the slot: its identifiers and the slot its rule gave it.
     struct SeriesHolder: Equatable {
         let ids: UndoPostState.OccurrenceIDs
-        /// The instant reading of the holder's slot.
+        /// The instant reading of the holder's slot (`UndoPostState.ruleSlot`).
         let slot: Date
-        /// #539: every instant the holder's slot can be (`SlotReadings`); `[slot]` for an occurrence
-        /// that is not edited on its own (its `occurrenceDate`, a true instant).
-        var readings: [Date]
-
-        init(ids: UndoPostState.OccurrenceIDs, slot: Date, readings: [Date]? = nil) {
-            self.ids = ids
-            self.slot = slot
-            self.readings = readings ?? [slot]
-        }
+        /// PR #558 round 1 (ruling F): the holder is edited on its own (detached, or a `/RID=`
+        /// identifier), so its `slot` is read from digits that may be wall-clock time; it is compared
+        /// by that instant reading only, as before #539. A holder not edited on its own has its
+        /// `occurrenceDate`, a true instant.
+        var edited: Bool = false
     }
 
-    /// #321: true when one of `holders` is an occurrence of the recorded series, or of a series
-    /// undo recreated from it (`recreated`), at the recorded rule slot (to the second). Tied by
-    /// identifier (`UndoPostState.isOccurrence`), never by title: before #321 any recurring event
-    /// with the title at that second held the slot, an unrelated series included, and an occurrence
-    /// retitled or moved before its delete was compared by its edit. A one-off at the slot does not
-    /// count: it is not what the series' restore brings back, and refusing to write beside it would
-    /// hide a real second write.
+    /// PR #558 round 1 (ruling F): what the guard answers.
+    enum Answer: Equatable {
+        /// No occurrence of the series is at the slot: the occurrence is written as a one-off.
+        case free
+        /// An occurrence of the series is at the instant reading of the slot: nothing is written and
+        /// the record is used up, as before #539.
+        case held
+        /// Only an occurrence of the series not edited on its own is at the wall-clock reading of the
+        /// slot. Which reading is the slot cannot be told here (#539: the digits of an occurrence edited
+        /// while its series had no time zone are wall-clock time, those of one edited while it had a
+        /// zone are an instant, and a series can hold both, cell R2), so the undo writes nothing and is
+        /// refused with the record kept (`OccurrenceSlotWallClockRefusal`).
+        case heldAtWallClockOnly
+    }
+
+    /// #321: the answer for the recorded slot among `holders`: only an occurrence of the recorded
+    /// series, or of a series undo recreated from it (`recreated`), counts, tied by identifier
+    /// (`UndoPostState.isOccurrence`), never by title: before #321 any recurring event with the title
+    /// at that second held the slot, an unrelated series included, and an occurrence retitled or moved
+    /// before its delete was compared by its edit. A one-off at the slot does not count: it is not what
+    /// the series' restore brings back, and refusing to write beside it would hide a real second write.
     ///
-    /// #539: "at the slot" compares every reading of the origin with every reading of the holder
-    /// (`SlotReadings`). An occurrence edited while its series had no time zone carries a `/RID=`
-    /// that is its slot's wall-clock time written as UTC; read only as an instant it is off by the
-    /// host's offset, so a plain occurrence at the true slot was not seen and the undo wrote a second
-    /// event beside it (#539 cell MA, iCloud, 2026-11-13). Comparing both readings cannot answer
-    /// "held" for a slot the series does not hold:
-    /// - only an occurrence of the same series (or of one undo recreated from it) counts, tied by
-    ///   identifier, so another series with an occurrence at the wrong reading holds nothing;
-    /// - within one series, the two readings of one `/RID=` lie the host's offset apart (at most 14
-    ///   hours, `SlotReadings.largestOffset`), and no two slots of one rule are closer than 23 hours
-    ///   (daily, weekly or monthly on adjacent days, across a spring change), so the wrong reading is
-    ///   no slot of that series;
-    /// - a holder that is itself edited on its own is compared reading to reading: the same `/RID=`
-    ///   digits give the same readings.
-    /// Where the true slot is one of the two readings (what iCloud and Google write through EventKit,
-    /// measured for #539), a holder at the true slot is seen and no holder at either reading means
-    /// the slot is empty. A `/RID=` in a unit not seen yet is where it was before #539.
+    /// #539 and PR #558 round 1 (ruling F): `held` when such an occurrence is at the instant reading of
+    /// the origin's slot (to the second), as before #539; `heldAtWallClockOnly` when only one not edited
+    /// on its own is at the origin's wall-clock reading (`OccurrenceOrigin.wallClock`, taken only for an
+    /// occurrence of a series without a time zone). An edited holder is compared by its instant reading
+    /// only: two readings compared with two readings can meet where neither occurrence's slot is (a
+    /// `/RID=` of each kind on adjacent days at a host 12 hours from UTC, PR #558 verify F1, F4). So the
+    /// guard answers `held` only where it did before #539, and the new case writes nothing and keeps the
+    /// record. Not covered: a holder edited on its own whose digits are wall-clock time, at the true slot
+    /// of an origin whose digits are wall-clock time too, is compared at its instant reading, as before
+    /// #539, and the one-off may be written beside it.
+    static func answer(_ origin: OccurrenceOrigin, recreatedAs recreated: [UndoPostState.OccurrenceIDs],
+                       by holders: [SeriesHolder]) -> Answer {
+        let series = [origin.series] + recreated
+        let ofSeries = holders.filter { holder in series.contains { UndoPostState.isOccurrence(holder.ids, of: $0) } }
+        if ofSeries.contains(where: { UndoPostState.sameInstant($0.slot, origin.slot) }) { return .held }
+        if let wallClock = origin.wallClock,
+           ofSeries.contains(where: { !$0.edited && UndoPostState.sameInstant($0.slot, wallClock) }) {
+            return .heldAtWallClockOnly
+        }
+        return .free
+    }
+
+    /// #321: true when `answer` is `held` (the answer of before #539).
     static func isHeld(_ origin: OccurrenceOrigin, recreatedAs recreated: [UndoPostState.OccurrenceIDs],
                        by holders: [SeriesHolder]) -> Bool {
-        let series = [origin.series] + recreated
-        let originReadings = InstantSet(origin.readings)
-        return holders.contains { holder in
-            holder.readings.contains(where: originReadings.contains)
-                && series.contains { UndoPostState.isOccurrence(holder.ids, of: $0) }
-        }
+        answer(origin, recreatedAs: recreated, by: holders) == .held
     }
 
     /// The range the slot's holders are listed over: the slot for the occurrence's length (at
@@ -731,11 +784,9 @@ enum OccurrenceSlotGuard {
         let hasSlotSuffix = UndoPostState.originalSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
                                                        occurrenceDate: nil) != nil
         guard hasRecurrenceRules || isDetached || hasSlotSuffix else { return nil }
-        // #539: with the wall-clock reading of a timed `/RID=` beside the instant one.
-        let readings = SlotReadings.of(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
-                                       occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone)
-            ?? SlotReadings(instant: startDate)
         return SeriesHolder(ids: .init(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier),
-                            slot: readings.instant, readings: readings.all)
+                            slot: UndoPostState.ruleSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
+                                                         occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone) ?? startDate,
+                            edited: isDetached || hasSlotSuffix)
     }
 }

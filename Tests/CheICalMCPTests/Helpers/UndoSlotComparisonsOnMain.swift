@@ -219,3 +219,29 @@ extension SeriesUpdateUndo {
         return result
     }
 }
+
+/// #539 fix round 1 (PR #558 verify F8): the capture of a whole-series delete's exceptions as it was
+/// on `main` at bdcb8f9e, before #539 gave an edited occurrence's `/RID=` a second reading. Copied
+/// without a change but its name (`ruleSlot(of:)` with the host zone is what `main` called). The
+/// copy is the old behaviour on purpose; `ZonedSeriesUndoOnMainTests` runs it beside the current
+/// capture over series that have a time zone.
+extension SeriesExceptionsPlanner {
+    static func captureOnMain(_ observed: [ObservedOccurrence], of series: UndoPostState.OccurrenceIDs,
+                              windows: [DateInterval]) -> SeriesExceptions? {
+        guard let first = windows.first else { return nil }
+        var kept: [Date] = []
+        var detached: [DetachedOccurrence] = []
+        for occurrence in observed where UndoPostState.isOccurrence(occurrence.ids, of: series) {
+            if occurrence.isDetached {
+                let slot = Self.ruleSlot(of: occurrence)
+                if Self.inWindows(slot, windows) { detached.append(DetachedOccurrence(slot: slot, snapshot: occurrence.snapshot)) }
+            } else {
+                let slot = occurrence.occurrenceDate ?? occurrence.startDate
+                if Self.inWindows(slot, windows) { kept.append(slot) }
+            }
+        }
+        guard !kept.isEmpty || !detached.isEmpty else { return nil }
+        return SeriesExceptions(window: first, keptSlots: kept.sorted(), detached: detached.sorted { $0.slot < $1.slot },
+                                extraWindows: Array(windows.dropFirst()))
+    }
+}

@@ -168,14 +168,20 @@ final class SeriesExceptionsTests: XCTestCase {
             XCTAssertEqual(result?.keptSlots, [at(slot1)], zone.identifier)
             XCTAssertEqual(result?.detached.isEmpty, true, zone.identifier)
         }
-        // East of UTC its wall-clock reading (8 hours earlier at +08:00) is inside, so it is recorded;
-        // the restore places it on its slot at the window end and drops it, leaving it to the rule.
+        // East of UTC, on a series with a time zone, it has the instant reading only (PR #558 round 1,
+        // ruling A): not recorded, as before #539.
         let taipei = TimeZone(identifier: "Asia/Taipei")!
-        let east = SeriesExceptionsPlanner.capture([inside, plain, edited], of: series, window: window, zone: taipei)
+        let zoned = SeriesExceptionsPlanner.capture([inside, plain, edited], of: series, window: window, zone: taipei)
+        XCTAssertEqual(zoned?.keptSlots, [at(slot1)])
+        XCTAssertEqual(zoned?.detached.isEmpty, true)
+        // On a series without one its wall-clock reading (8 hours earlier at +08:00) is inside, so it is
+        // recorded; placed on its slot at the window end, outside, it applies nothing (ruling C). Rewritten
+        // in round 1: round 0 dropped it and applied the rest.
+        let east = SeriesExceptionsPlanner.capture([inside, plain, edited], of: series, window: window, zone: taipei, floating: true)
         XCTAssertEqual(east?.keptSlots, [at(slot1)])
         XCTAssertEqual(east?.detached.map(\.slot), [at(atEnd)])
-        let placed = east.flatMap { SeriesExceptionsPlanner.placeDetached($0, among: [at(slot1), at(atEnd)]) }
-        XCTAssertEqual(placed?.detached.isEmpty, true, "placed at the window end, outside: dropped")
+        XCTAssertNil(east.flatMap { SeriesExceptionsPlanner.placeDetached($0, among: [at(slot1), at(atEnd)]) },
+                     "placed at the window end, outside: nothing applied")
     }
 
     func testAListingThatOnlyReachedTheMarginsIsNotAListing() {

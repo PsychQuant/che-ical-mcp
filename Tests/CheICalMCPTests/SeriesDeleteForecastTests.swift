@@ -38,7 +38,11 @@ final class SeriesDeleteForecastTests: XCTestCase {
         occurrence.occurrenceDate = occurrence.start
     }
 
-    private func weekly(from first: Date, count: Int) -> [Date] { (0..<count).map { first.addingTimeInterval(Double($0) * 7 * day) } }
+    /// Weekly slots at the same local time in `zone` (a weekly rule's slots across a daylight-saving
+    /// change, as the expander gives them).
+    private func weekly(from first: Date, count: Int, in zone: TimeZone = TimeZone(identifier: "UTC")!) -> [Date] {
+        (0..<count).map { Calendar.gregorian(in: zone).date(byAdding: .day, value: 7 * $0, to: first)! }
+    }
 
     private func rule(_ frequency: EKRecurrenceFrequency = .weekly, count: Int = 0, end: Date? = nil,
                       daysOfWeek: [Int] = [], otherParts: Bool = false) -> DeletedOccurrenceCheck.Rule {
@@ -47,10 +51,11 @@ final class SeriesDeleteForecastTests: XCTestCase {
     }
 
     /// The capture of a six-week series from `slots[0]`, with `edits` applied, as the delete records it.
-    private func captured(_ slots: [Date], zone: TimeZone, file: StaticString = #filePath, line: UInt = #line,
+    /// `floating`: the series has no time zone (PR #558 round 1, ruling A: only then two readings).
+    private func captured(_ slots: [Date], zone: TimeZone, floating: Bool = true, file: StaticString = #filePath, line: UInt = #line,
                           edits: ([FakeSeriesExceptionsStore.Event]) -> Void) throws -> SeriesExceptions {
         let store = FakeSeriesExceptionsStore()
-        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots)
+        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots, floating: floating)
         edits(occurrences)
         return try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: slots[0].addingTimeInterval(-30 * day), zone: zone),
                              file: file, line: line)
@@ -63,22 +68,27 @@ final class SeriesDeleteForecastTests: XCTestCase {
     // spec-example: undo-history-discard / no note once the edit is placed
     func testAFloatingSeriesWithEditsIsPlacedInEveryHostZone() throws {
         for zone in [taipei, losAngeles, utc] {
-            let slots = weekly(from: date(2027, 2, 11, 10, in: zone), count: 6)
+            let slots = weekly(from: date(2027, 2, 11, 10, in: zone), count: 6, in: zone)
             let exceptions = try captured(slots, zone: zone) { occurrences in
                 edit(occurrences[2], rid: floatingRID(slots[2], in: zone), title: "Retitled")
                 edit(occurrences[3], rid: floatingRID(slots[3], in: zone), title: "Moved", moved: 3600)
             }
             XCTAssertEqual(exceptions.detached.count, 2, zone.identifier)
-            XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0],
-                                                                calendar: .gregorian(in: zone)), 0, zone.identifier)
+            let count = try XCTUnwrap(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0],
+                                                                            calendar: .gregorian(in: zone)), zone.identifier)
+            XCTAssertEqual(count, 0, zone.identifier)
+            // The answer has no undo_note: delete_event gives it only for a count above 0 (the record's
+            // count, `RulesAloneForecast.unplacedEdits`; the handler half is
+            // `SeriesDeleteForecastHandlerTests.testSpanAllWithEveryEditPlacedHasNoNote`).
+            XCTAssertEqual(RulesAloneForecast.unplacedEdits(of: wholeSeries(), unplacedEdits: count), 0, zone.identifier)
         }
     }
 
     /// Z1's shape: the edits were made while the series kept its zone, so the instant reading is the slot.
     func testAZonedSeriesWithEditsIsPlaced() throws {
         for zone in [taipei, losAngeles] {
-            let slots = weekly(from: date(2027, 2, 11, 9, in: zone), count: 6)
-            let exceptions = try captured(slots, zone: zone) { occurrences in
+            let slots = weekly(from: date(2027, 2, 11, 9, in: zone), count: 6, in: zone)
+            let exceptions = try captured(slots, zone: zone, floating: false) { occurrences in
                 edit(occurrences[2], rid: zonedRID(slots[2]), title: "Retitled")
                 edit(occurrences[3], rid: zonedRID(slots[3]), title: "Moved", moved: 3600)
             }
@@ -140,22 +150,57 @@ final class SeriesDeleteForecastTests: XCTestCase {
                                                           calendar: calendar), "too many slots")
     }
 
-    /// A zoned record whose true slot is just past the window's end, recorded by its wall-clock reading:
-    /// the restore places it outside the window and drops it, so it is placed, not counted. The rule is
-    /// expanded past the window's end by the largest offset to see that slot.
-    func testARecordPlacedOutsideTheWindowIsNotCounted() throws {
+    /// An open weekly series begun years before the delete, an occurrence edited on its own just before
+    /// the window's start (4 hours, a host at +08:00). Floating, its instant reading is inside the
+    /// window, so it is recorded, and it is placed on its true slot outside the window: the restore then
+    /// applies nothing (PR #558 round 1, ruling C), so it is counted (round 0 dropped it and did not count
+    /// it). Zoned, it has one reading, outside the window, and is not recorded, as before #539.
+    func testARecordPlacedOutsideTheWindowIsCounted() throws {
         let now = date(2026, 11, 16, 9, in: taipei)
         let window = SeriesExceptionsPlanner.deleteWindow(firstStart: now.addingTimeInterval(-3000 * day), end: .open, deletedAt: now).window
-        let edge = window.end.addingTimeInterval(4 * 3600)
+        let edge = window.start.addingTimeInterval(-4 * 3600)
         let slots = (-260...260).map { edge.addingTimeInterval(Double($0) * 7 * day) }
-        let store = FakeSeriesExceptionsStore()
-        store.seriesEnd = .open
-        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots)
-        edit(occurrences[260], rid: zonedRID(slots[260]), title: "Past the edge")
-        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now, zone: taipei))
-        XCTAssertEqual(exceptions.detached.count, 1, "recorded by its wall-clock reading, inside the window")
-        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule()], firstSlot: slots[0],
-                                                            calendar: .gregorian(in: taipei)), 0)
+        for floating in [true, false] {
+            let store = FakeSeriesExceptionsStore()
+            store.seriesEnd = .open
+            let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots, floating: floating)
+            edit(occurrences[260], rid: floating ? floatingRID(slots[260], in: taipei) : zonedRID(slots[260]), title: "Before the edge")
+            let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now, zone: taipei))
+            XCTAssertEqual(exceptions.detached.count, floating ? 1 : 0, "recorded by its instant reading only when floating")
+            XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule()], firstSlot: slots[0],
+                                                                calendar: .gregorian(in: taipei)), floating ? 1 : 0)
+        }
+    }
+
+    /// Rulings B and D in the forecast, as in the restore (`SeriesExceptionsPlanner.placement`): a record of
+    /// two readings whose one slot reading is a kept slot, and two records placed on one slot, are counted.
+    func testARecordOnAKeptSlotAndTwoRecordsOnOneSlotAreCounted() {
+        let calendar = Calendar.gregorian(in: taipei)
+        let slots = weekly(from: date(2027, 2, 11, 10, in: taipei), count: 6)
+        let window = DateInterval(start: slots[0].addingTimeInterval(-day), end: slots[5].addingTimeInterval(day))
+        func record(_ readings: SlotReadings) -> DetachedOccurrence {
+            DetachedOccurrence(slot: readings.instant, snapshot: UndoSnapshotFixtures.event(title: "Edited", startDate: slots[2]), readings: readings)
+        }
+        let hours: TimeInterval = 3600
+        let onKept = SeriesExceptions(window: window, keptSlots: slots.filter { $0 != slots[2] },
+                                      detached: [record(SlotReadings(instant: slots[1].addingTimeInterval(8 * hours), wallClock: slots[1]))])
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(onKept, rules: [rule(count: 6)], firstSlot: slots[0], calendar: calendar), 1)
+        let shared = SeriesExceptions(window: window, keptSlots: [slots[0], slots[1], slots[4], slots[5]],
+                                      detached: [record(SlotReadings(instant: slots[2].addingTimeInterval(8 * hours), wallClock: slots[2])),
+                                                 record(SlotReadings(instant: slots[2], wallClock: slots[2].addingTimeInterval(-8 * hours)))])
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(shared, rules: [rule(count: 6)], firstSlot: slots[0], calendar: calendar), 2)
+    }
+
+    /// Ruling G (the #503 verdict's own guard): a recorded occurrence not edited on its own that is no
+    /// slot of the expander means the expander is wrong here, so no forecast.
+    func testAKeptSlotOffTheExpanderGivesNoForecast() throws {
+        let slots = weekly(from: date(2027, 2, 11, 10, in: taipei), count: 6)
+        let exceptions = try captured(slots, zone: taipei) { occurrences in
+            edit(occurrences[2], rid: floatingRID(slots[2].addingTimeInterval(3 * 3600), in: taipei), title: "Off the rule")
+            occurrences[4].occurrenceDate = slots[4].addingTimeInterval(3600)
+        }
+        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0],
+                                                          calendar: .gregorian(in: taipei)))
     }
 
     /// The daylight-saving cells of the plan, on a host at America/Los_Angeles: an occurrence of a
@@ -180,6 +225,23 @@ final class SeriesDeleteForecastTests: XCTestCase {
             XCTAssertEqual(exceptions.detached.first?.readings.wallClock, slots[2], "Foundation's instant for that wall-clock time")
             XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: first, calendar: calendar), 0)
         }
+    }
+
+    /// Verify F33: the note does not count a record that is placed but ends before it starts (DS1's shape:
+    /// listed from 03:30 to 03:00 PDT); the restore stops for it and says so, the delete gives no note.
+    func testAPlacedRecordThatEndsBeforeItStartsIsNotCounted() throws {
+        let calendar = Calendar.gregorian(in: losAngeles)
+        let first = date(2027, 2, 28, 2, 30, in: losAngeles)
+        let expected = try XCTUnwrap(DeletedOccurrenceCheck.expectedSlots(of: rule(count: 6), firstStart: first,
+                                                                         until: first.addingTimeInterval(60 * day), calendar: calendar))
+        let slots = Array(expected.prefix(6))
+        let exceptions = try captured(slots, zone: losAngeles) { occurrences in
+            edit(occurrences[2], rid: floatingRID(DateComponents(year: 2027, month: 3, day: 14, hour: 2, minute: 30, second: 0)),
+                 title: "Edited on the change")
+            occurrences[2].end = slots[2].addingTimeInterval(-30 * 60)
+        }
+        XCTAssertLessThan(try XCTUnwrap(exceptions.detached.first).snapshot.endDate, try XCTUnwrap(exceptions.detached.first).snapshot.startDate)
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: first, calendar: calendar), 0)
     }
 
     // MARK: - RulesAloneForecast

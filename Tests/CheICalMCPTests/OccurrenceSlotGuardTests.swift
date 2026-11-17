@@ -137,10 +137,12 @@ final class OccurrenceSlotGuardTests: XCTestCase {
         return utc.date(from: local.dateComponents([.year, .month, .day, .hour, .minute, .second], from: slot))!
     }
 
-    /// The argument of `isHeld`'s doc comment as a test: on hosts at the widest offsets (+14:00,
-    /// -12:00) and an odd one (+05:45), for a daily series and a weekly one on adjacent days, with a
-    /// zone and without one, the wrong reading of every occurrence's `/RID=` is no slot of the rule,
-    /// so a plain occurrence of the series never holds it; the right reading always is held.
+    /// On hosts at the widest offsets (+14:00, -12:00) and an odd one (+05:45), for a daily series and a
+    /// weekly one on adjacent days, an occurrence of a series without a time zone: its wrong reading is
+    /// no slot of the rule, so a plain occurrence at another slot never holds it. A plain occurrence at
+    /// its true slot holds it at the instant reading (`held`) when its digits are an instant, and only at
+    /// the wall-clock reading (`heldAtWallClockOnly`: refused, PR #558 round 1, ruling F) when its digits
+    /// are wall-clock time. Rewritten in round 1: before it, both answered held.
     func testTheWrongReadingIsNoSlotOfTheSeriesAtTheWidestOffsets() throws {
         let zones = ["Pacific/Kiritimati", "Etc/GMT+12", "Asia/Kathmandu"].map { TimeZone(identifier: $0)! }
         let ids = UndoPostState.OccurrenceIDs(eventIdentifier: "S", externalIdentifier: "UID-S")
@@ -156,16 +158,18 @@ final class OccurrenceSlotGuardTests: XCTestCase {
                                                                               until: first.addingTimeInterval(400 * 86_400), calendar: calendar))
                 let holders = slots.map { OccurrenceSlotGuard.SeriesHolder(ids: ids, slot: $0) }
                 for slot in slots {
-                    for digits in [slot, floatingDigits(slot, in: zone)] {
+                    for (digits, atTrue) in [(slot, OccurrenceSlotGuard.Answer.held), (floatingDigits(slot, in: zone), .heldAtWallClockOnly)] {
                         let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S" + rid(digits), externalIdentifier: nil,
-                                                                       occurrenceDate: nil, isAllDay: false, isDetached: true, zone: zone))
-                        let wrong = origin.readings.filter { !UndoPostState.sameInstant($0, slot) }
-                        XCTAssertEqual(wrong.count, 1, "\(zone.identifier): two readings, one of them the slot")
-                        XCTAssertFalse(wrong.contains { w in slots.contains { UndoPostState.sameInstant($0, w) } },
+                                                                       occurrenceDate: nil, isAllDay: false, isDetached: true, floating: true, zone: zone))
+                        let wrong = [origin.slot] + (origin.wallClock.map { [$0] } ?? []).filter { !UndoPostState.sameInstant($0, slot) }
+                        let wrongReadings = wrong.filter { !UndoPostState.sameInstant($0, slot) }
+                        XCTAssertEqual(wrongReadings.count, 1, "\(zone.identifier): two readings, one of them the slot")
+                        XCTAssertFalse(wrongReadings.contains { w in slots.contains { UndoPostState.sameInstant($0, w) } },
                                        "\(zone.identifier) \(rule.frequency.rawValue): the wrong reading is no slot")
-                        XCTAssertTrue(OccurrenceSlotGuard.isHeld(origin, recreatedAs: [], by: holders.filter { UndoPostState.sameInstant($0.slot, slot) }))
-                        XCTAssertFalse(OccurrenceSlotGuard.isHeld(origin, recreatedAs: [], by: holders.filter { !UndoPostState.sameInstant($0.slot, slot) }),
-                                       "\(zone.identifier) \(rule.frequency.rawValue): no other occurrence of the series holds it")
+                        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: holders.filter { UndoPostState.sameInstant($0.slot, slot) }),
+                                       atTrue)
+                        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: holders.filter { !UndoPostState.sameInstant($0.slot, slot) }),
+                                       .free, "\(zone.identifier) \(rule.frequency.rawValue): no other occurrence of the series holds it")
                     }
                 }
             }
@@ -180,26 +184,90 @@ final class OccurrenceSlotGuardTests: XCTestCase {
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = zone
         let slot = calendar.date(from: DateComponents(year: 2027, month: 2, day: 25, hour: 10))!
         let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S" + rid(floatingDigits(slot, in: zone)), externalIdentifier: nil,
-                                                       occurrenceDate: nil, isAllDay: false, isDetached: true, zone: zone))
+                                                       occurrenceDate: nil, isAllDay: false, isDetached: true, floating: true, zone: zone))
         let other = UndoPostState.OccurrenceIDs(eventIdentifier: "T", externalIdentifier: "UID-T")
         let atWrong = OccurrenceSlotGuard.SeriesHolder(ids: other, slot: origin.slot)
         let atTrue = OccurrenceSlotGuard.SeriesHolder(ids: other, slot: slot)
-        XCTAssertFalse(OccurrenceSlotGuard.isHeld(origin, recreatedAs: [], by: [atWrong, atTrue]))
+        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: [atWrong, atTrue]), .free)
     }
 
-    /// Two edited occurrences are compared by their readings: the same `/RID=` digits hold.
+    /// Two edited occurrences are compared by their instant readings: the same `/RID=` digits hold.
     func testAnEditedHolderWithTheSameRIDHolds() throws {
         let zone = TimeZone(identifier: "Asia/Taipei")!
         let digits = Date(timeIntervalSinceReferenceDate: 793_965_600)
         let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S" + rid(digits), externalIdentifier: nil, occurrenceDate: nil,
-                                                       isAllDay: false, isDetached: true, zone: zone))
+                                                       isAllDay: false, isDetached: true, floating: true, zone: zone))
         let holder = try XCTUnwrap(OccurrenceSlotGuard.holder(eventIdentifier: "S" + rid(digits), externalIdentifier: nil,
                                                               occurrenceDate: digits.addingTimeInterval(3600), isAllDay: false,
                                                               startDate: digits.addingTimeInterval(3600), hasRecurrenceRules: false,
                                                               isDetached: true, zone: zone))
-        XCTAssertEqual(holder.readings.count, 2)
-        XCTAssertTrue(OccurrenceSlotGuard.isHeld(origin, recreatedAs: [], by: [holder]))
-        XCTAssertFalse(OccurrenceSlotGuard.isHeld(origin, recreatedAs: [], by: [OccurrenceSlotGuard.SeriesHolder(
-            ids: .init(eventIdentifier: "S", externalIdentifier: nil), slot: digits.addingTimeInterval(86_400))]))
+        XCTAssertTrue(holder.edited)
+        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: [holder]), .held)
+        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: [OccurrenceSlotGuard.SeriesHolder(
+            ids: .init(eventIdentifier: "S", externalIdentifier: nil), slot: digits.addingTimeInterval(86_400))]), .free)
+    }
+
+    // MARK: - PR #558 round 1 (ruling F)
+
+    /// Verify F1, F4: a host at Pacific/Fiji (+12:00), a daily series that holds a `/RID=` of each kind.
+    /// The origin's true slot is 2 January 00:00Z and its digits an instant (edited while the series had a
+    /// zone), so its wall-clock reading is 1 January 12:00Z; the holder, the occurrence of 1 January
+    /// 00:00Z edited after `clear_timezone`, has digits 1 January 12:00 written as UTC, an instant reading
+    /// of 1 January 12:00Z. The two wrong readings meet. An edited holder is compared by its instant
+    /// reading with the origin's instant reading only, so the slot is free and the one-off is written, as
+    /// before #539 (round 0 answered held: nothing written, the entry gone, the occurrence deleted).
+    func testTwoWrongReadingsOfAdjacentDaysDoNotHold() throws {
+        let fiji = TimeZone(identifier: "Pacific/Fiji")!
+        let trueSlot = Date(timeIntervalSince1970: 1_798_848_000)   // 2027-01-02T00:00:00Z
+        let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S" + rid(trueSlot), externalIdentifier: nil, occurrenceDate: nil,
+                                                       isAllDay: false, isDetached: true, floating: true, zone: fiji))
+        XCTAssertEqual(origin.wallClock, trueSlot.addingTimeInterval(-12 * 3600))
+        let holderSlot = trueSlot.addingTimeInterval(-86_400)
+        let holder = try XCTUnwrap(OccurrenceSlotGuard.holder(eventIdentifier: "S" + rid(floatingDigits(holderSlot, in: fiji)), externalIdentifier: nil,
+                                                              occurrenceDate: holderSlot, isAllDay: false, startDate: holderSlot,
+                                                              hasRecurrenceRules: false, isDetached: true, zone: fiji))
+        XCTAssertEqual(holder.slot, origin.wallClock, "the two wrong readings meet")
+        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: [holder]), .free)
+        XCTAssertFalse(OccurrenceSlotGuard.isHeld(origin, recreatedAs: [], by: [holder]))
+    }
+
+    /// Ruling F: a plain occurrence at the instant reading holds the slot whatever else is listed; one at
+    /// the wall-clock reading alone gives `heldAtWallClockOnly`; an edited one there gives `free`.
+    func testTheAnswerOfEachHolderKind() throws {
+        let zone = TimeZone(identifier: "Asia/Taipei")!
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = zone
+        let slot = calendar.date(from: DateComponents(year: 2027, month: 2, day: 25, hour: 10))!
+        let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S" + rid(floatingDigits(slot, in: zone)), externalIdentifier: nil,
+                                                       occurrenceDate: nil, isAllDay: false, isDetached: true, floating: true, zone: zone))
+        let ids = UndoPostState.OccurrenceIDs(eventIdentifier: "S", externalIdentifier: nil)
+        let plainAtWall = OccurrenceSlotGuard.SeriesHolder(ids: ids, slot: slot)
+        let plainAtInstant = OccurrenceSlotGuard.SeriesHolder(ids: ids, slot: origin.slot)
+        let editedAtWall = OccurrenceSlotGuard.SeriesHolder(ids: ids, slot: slot, edited: true)
+        let editedAtInstant = OccurrenceSlotGuard.SeriesHolder(ids: ids, slot: origin.slot, edited: true)
+        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: [plainAtWall]), .heldAtWallClockOnly)
+        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: [plainAtWall, plainAtInstant]), .held)
+        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: [editedAtWall]), .free)
+        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: [editedAtInstant]), .held)
+        // A series undo recreated from the recorded one counts as it.
+        let recreated = UndoPostState.OccurrenceIDs(eventIdentifier: "R", externalIdentifier: nil)
+        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [recreated],
+                                                  by: [OccurrenceSlotGuard.SeriesHolder(ids: recreated, slot: slot)]), .heldAtWallClockOnly)
+    }
+
+    /// Ruling A: an origin of a series that had a time zone has no wall-clock reading, so a plain
+    /// occurrence there never holds it; the instant reading is compared as before #539.
+    func testAZonedOriginHasTheInstantReadingOnly() throws {
+        let zone = TimeZone(identifier: "Asia/Taipei")!
+        let digits = Date(timeIntervalSinceReferenceDate: 825_631_200)   // S1's /RID=
+        let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S" + rid(digits), externalIdentifier: nil, occurrenceDate: nil,
+                                                       isAllDay: false, isDetached: true, zone: zone))
+        XCTAssertNil(origin.wallClock)
+        let wallClock = digits.addingTimeInterval(-8 * 3600)
+        XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [],
+                                                  by: [OccurrenceSlotGuard.SeriesHolder(ids: .init(eventIdentifier: "S", externalIdentifier: nil),
+                                                                                        slot: wallClock)]), .free)
+        let floating = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S" + rid(digits), externalIdentifier: nil, occurrenceDate: nil,
+                                                         isAllDay: false, isDetached: true, floating: true, zone: zone))
+        XCTAssertEqual(floating.wallClock, wallClock)
     }
 }

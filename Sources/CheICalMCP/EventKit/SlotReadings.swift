@@ -12,8 +12,17 @@ import Foundation
 /// The identifier does not say which, so a timed `/RID=` has two readings: `instant`, and `wallClock`,
 /// the same digits taken as year, month, day, hour, minute and second in `zone` (the zone this
 /// process places a floating event in). A reading counts only once it is placed on a slot the
-/// series' rule gives (`place(among:)`); a reader with no rule slots at hand keeps `instant`, which is
-/// what `UndoPostState.ruleSlot` gave before #539.
+/// series' rule gives (`place(among:)`).
+///
+/// PR #558 verify round 1 (ruling A): only an occurrence of a series that has no time zone when it is
+/// read gets both (`SeriesExceptionsPlanner.capture`, `OccurrenceOrigin.of`, each told by its caller).
+/// After a whole-series time move an edited occurrence keeps its `/RID=` at the old slot (#539 cell
+/// N1), so on a series with a time zone the digits read as wall-clock time could be a slot of the moved
+/// series where the instant is none, and the restore and the #321 check took that slot (cell S1,
+/// iCloud, 2026-11-17: an occurrence lost, and an undo that wrote nothing). An occurrence of a zoned
+/// series keeps the instant alone, as `UndoPostState.ruleSlot` gave it before #539. An occurrence
+/// edited while its series had no time zone, in a series that reads a zone again before the delete
+/// (seen on a Google calendar for #541), is then read as an instant, as before #539.
 ///
 /// An all-day occurrence keeps its one reading (`UndoPostState.ruleSlot`'s local day), and so does an
 /// occurrence without a `/RID=` (its `occurrenceDate`). On a host at offset 0 when the slot falls
@@ -80,11 +89,4 @@ struct SlotReadings: Equatable {
 
     func place(among slots: [Date]) -> Date? { place(among: InstantSet(slots)) }
 
-    /// The placed reading when `slots` are at hand and exactly one reading is among them, otherwise
-    /// `instant`: what a reader that changes with #539 but must stay as it was where nothing can be
-    /// placed takes (`differsFromSeries`, `originalDay`, the #509 rule-end check).
-    func slot(placedAmong slots: [Date]?) -> Date {
-        guard let slots else { return instant }
-        return place(among: slots) ?? instant
-    }
 }

@@ -68,7 +68,7 @@ extension EventKitManager {
                                                                       on store: Store) async throws
         -> (text: String, outcome: UndoEventOutcome?) {
         let calendar = try await store.restoreCalendar(for: snapshot, kind: kind)
-        return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: calendar, in: store)
+        return try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: calendar, kind: kind, in: store)
     }
 
     /// The occurrence's calendar is read once, before the slot check and the write (#269 verify).
@@ -76,6 +76,6 @@ extension EventKitManager {
                                                                           kind: EventRestoreKind,
                                                                           on store: Store) async throws -> (text: String, outcome: UndoEventOutcome) {
         let calendar = try await store.restoreCalendar(for: snapshot, kind: kind)
-        return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, in: store)
+        return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, kind: kind, in: store)
     }
 }

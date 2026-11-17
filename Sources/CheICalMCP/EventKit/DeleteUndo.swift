@@ -1,3 +1,4 @@
+import CheMCPKit
 import EventKit
 import Foundation
 
@@ -97,7 +98,8 @@ struct DeletedEventSnapshots {
         let alarms = EventKitManager.copyOutAlarms(of: removed, isSplit: hadRules)
         // #321: the occurrence is tied to its series and rule slot, which its undo's guard compares.
         let removedSnapshot = EventSnapshot(from: removed, includeRecurrence: false, alarms: alarms.alarms)
-        occurrence = hadRules || isDetached ? removedSnapshot.withOccurrenceOrigin(OccurrenceOrigin.of(removed)) : removedSnapshot
+        occurrence = hadRules || isDetached
+            ? removedSnapshot.withOccurrenceOrigin(OccurrenceOrigin.of(removed, floating: OccurrenceOrigin.isFloating(series))) : removedSnapshot
         occurrenceNotCarriedOver = alarms.notCarriedOver
     }
 
@@ -160,15 +162,29 @@ extension EventSnapshot {
     static func recordingSeriesDelete(of event: EKEvent, capture: () -> SeriesExceptions?) -> EventSnapshot {
         let snapshot = EventSnapshot(from: event).withExceptions(event.hasRecurrenceRules ? capture() : nil)
             .withSeriesIdentity(event.hasRecurrenceRules ? OccurrenceOrigin.seriesIDs(of: event) : nil)
-        return !event.hasRecurrenceRules && event.isDetached ? snapshot.withOccurrenceOrigin(OccurrenceOrigin.of(event)) : snapshot
+        return !event.hasRecurrenceRules && event.isDetached
+            ? snapshot.withOccurrenceOrigin(OccurrenceOrigin.of(event, floating: OccurrenceOrigin.isFloating(event))) : snapshot
     }
 }
 
 extension OccurrenceOrigin {
     /// #321: the origin of `occurrence` as EventKit reads it (`of(eventIdentifier:...)`).
-    static func of(_ occurrence: EKEvent) -> OccurrenceOrigin? {
+    /// PR #558 round 1 (ruling A): `floating`, whether the series had no time zone when the delete or
+    /// move read it; the caller tells it from the event it resolved (`isFloating`).
+    static func of(_ occurrence: EKEvent, floating: Bool) -> OccurrenceOrigin? {
         of(eventIdentifier: occurrence.eventIdentifier, externalIdentifier: occurrence.calendarItemExternalIdentifier,
-           occurrenceDate: occurrence.occurrenceDate, isAllDay: occurrence.isAllDay, isDetached: occurrence.isDetached)
+           occurrenceDate: occurrence.occurrenceDate, isAllDay: occurrence.isAllDay, isDetached: occurrence.isDetached,
+           floating: floating)
+    }
+
+    /// PR #558 round 1 (ruling A): `event` is timed and has no time zone, so an edited occurrence's
+    /// `/RID=` of its series is also read as wall-clock time. Read on the series object where one is in
+    /// hand (the capture, a delete or move reached through the series' identifier), and on the
+    /// occurrence itself when it was addressed by its own identifier: on iCloud an occurrence's zone
+    /// read as its series' (#539 cells R2 and S1, every occurrence listed with the series' zone or
+    /// none, edited ones too).
+    static func isFloating(_ event: EKEvent) -> Bool {
+        !event.isAllDay && event.timeZone == nil
     }
 
     /// #321: the identifiers of the series `event` is, or belongs to (`seriesIDs(eventIdentifier:...)`).
@@ -397,3 +413,37 @@ extension EventKitManager {
         return EventRemovalKind.seriesResolves { try freshEvent(id: identifier) != nil }
     }
 }
+
+/// PR #558 round 1 (ruling F): the undo of an occurrence's delete, or of a split move's source, found
+/// only an occurrence of its series not edited on its own at the wall-clock reading of its recorded
+/// slot, and none at the instant reading (`OccurrenceSlotGuard.Answer.heldAtWallClockOnly`). The
+/// `/RID=` of an occurrence of a series without a time zone may be either (#539), so this server cannot
+/// tell whether the series holds the deleted occurrence's slot: a one-off could be a second event
+/// there (before #539 it was written), and answering "already restored" could leave the occurrence
+/// deleted with the record gone (PR #558 verify F6). Nothing is written and the record is kept
+/// (`UndoFailureDisposition.of` gives `.restore`: not an `UnrecoverableUndoError`); in a batch the
+/// member is kept with the members not yet restored (`batchUndoFailure`). Author-controlled text: fixed
+/// words, and the recorded title through `undoShownTitle`. That is the condition under which this type
+/// conforms to `TrustedErrorMessage`.
+struct OccurrenceSlotWallClockRefusal: LocalizedError, Sendable {
+    let message: String
+    var errorDescription: String? { message }
+
+    init(title: String, kind: EventRestoreKind) {
+        let shown = undoShownTitle(title)
+        let named = shown.isEmpty ? "" : " '\(shown)'"
+        let what: String
+        let kept: String
+        switch kind {
+        case .undoMoveByCopy, .moveBack:
+            what = "the move of an occurrence of\(named): its series had no time zone when it was moved"
+            kept = "nothing was written, the copy the move made stays in the calendar it was moved to, and this history entry was kept"
+        case .recreateDeleted, .recreateDeletedOccurrence, .revertUpdate:
+            what = "the deletion of an occurrence of\(named): its series had no time zone when it was deleted"
+            kept = "nothing was written and this history entry was kept"
+        }
+        message = "Cannot undo \(what), so its recorded time can be wall-clock time or an instant, and its series holds an occurrence at the time this Mac's time zone reads it as, but none at the instant. This server cannot tell whether that occurrence is at the deleted occurrence's slot (a one-off event beside it would be a second event there), so \(kept). To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id."
+    }
+}
+
+extension OccurrenceSlotWallClockRefusal: TrustedErrorMessage {}

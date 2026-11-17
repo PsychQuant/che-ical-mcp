@@ -29,6 +29,9 @@ final class SlotReadingsTests: XCTestCase {
         XCTAssertEqual(readings.instant, digits)
         XCTAssertEqual(readings.wallClock, date(2027, 2, 25, 10, in: taipei))
         XCTAssertEqual(readings.all, [digits, date(2027, 2, 25, 10, in: taipei)])
+        // Placed among the weekly slots at 10:00 local, the second is the one on the series' slot.
+        let weekly = (0..<6).map { date(2027, 2, 11, 10, in: taipei).addingTimeInterval(Double($0) * 7 * 86_400) }
+        XCTAssertEqual(readings.place(among: weekly), date(2027, 2, 25, 10, in: taipei))
     }
 
     /// West of UTC the wall-clock reading is later than the instant one (cell L1).
@@ -106,14 +109,6 @@ final class SlotReadingsTests: XCTestCase {
         let readings = SlotReadings(instant: at, wallClock: at.addingTimeInterval(0.3))
         XCTAssertNil(readings.wallClock)
         XCTAssertEqual(readings.place(among: [at]), at)
-    }
-
-    /// `slot(placedAmong:)`: the placed reading, else the instant one, and the instant one with no slots.
-    func testTheReaderFallbackIsTheInstantReading() {
-        let readings = SlotReadings(instant: date(2027, 2, 25, 10, in: utc), wallClock: date(2027, 2, 25, 10, in: taipei))
-        XCTAssertEqual(readings.slot(placedAmong: [date(2027, 2, 25, 10, in: taipei)]), date(2027, 2, 25, 10, in: taipei))
-        XCTAssertEqual(readings.slot(placedAmong: [date(2027, 3, 4, 10, in: taipei)]), readings.instant)
-        XCTAssertEqual(readings.slot(placedAmong: nil), readings.instant)
     }
 
     // MARK: - daylight-saving days in the host's zone (fail closed, not measured)

@@ -24,6 +24,9 @@ protocol SeriesExceptionsStoreSource {
     /// `SeriesExceptionsPlanner.deleteWindow`.
     func seriesEnd(of series: Event) -> SeriesExceptionsPlanner.SeriesEnd
     func startDate(of event: Event) -> Date
+    /// PR #558 round 1 (ruling A): whether `series` is timed and has no time zone as read now, so an
+    /// edited occurrence's `/RID=` is also read as wall-clock time (`SlotReadings`).
+    func isFloating(_ series: Event) -> Bool
     /// The slot the rules gave an occurrence: its `occurrenceDate`, else its start.
     func slot(of occurrence: Event) -> Date
     /// The occurrence as the capture records it.
@@ -107,6 +110,8 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
     }
 
     func startDate(of event: EKEvent) -> Date { event.startDate }
+
+    func isFloating(_ series: EKEvent) -> Bool { OccurrenceOrigin.isFloating(series) }
 
     func slot(of occurrence: EKEvent) -> Date { occurrence.occurrenceDate ?? occurrence.startDate }
 
