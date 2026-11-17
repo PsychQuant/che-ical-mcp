@@ -1364,8 +1364,8 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
     `start_time`、`end_time`、`timezone` 拒絕（`clear_timezone` 在 create 之後改的），不是找不到，也不是 #538 的 not-followed 訊息；紀錄保留。
 14. **SD**（裁定 I）：`clear_timezone` → 第 4 場改標題 → 第 1 場單獨刪除（span `this`）→ session：`delete_event` span `all`（iCloud 上系列物件
     不 refresh，經由 stand-in 刪除）：回應帶 `undo_note`（`1 occurrence(s) …`）→ `undo`：
-    `Restored from the series rules alone: the series had no time zone, …`，讀回從第 2 場起 5 場、都是系列的標題（第 1 場不回來：重建的系列從
-    stand-in 開始）。round 2 之前同一格把修改以一次性事件還原。
+    `Restored from the series rules alone: the series had no time zone, …`，讀回從第 2 場起到 `end_date` 的每一場、都是系列的標題（第 1 場不回來：
+    重建的系列從 stand-in 開始）。round 2 之前同一格把修改以一次性事件還原。
 
 2026-11-16 已在 iCloud 用 `83d2418a` 的簽章 release build、每格一個 stdio process 做過第 1 到 7 步，結果都如上。2026-11-17 用 `3587d72e`
 的簽章 release build（它的 `Sources/` 與 `95814269` 相同；round 0 的 head `4668699e` 在 `Sources/` 只多改了 `Server.swift` 裡 `delete_event` 與
@@ -1377,7 +1377,13 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 (b) 寫回一次性事件。round 1 修正後用 `6851a4b9` 的簽章 release build（到合併 `main` 之前的 commit 只改文件與測試）在 stdio process 上重做第 1 到 4、
 7（只有 L1）、8 到 12 步，結果都如上。與 `main`（`92d9b796`，#538）合併後（合併 commit `e3c10770` 改了 `Sources/`），用合併後 head `80e3179d` 的簽章 release build 重做第 1、2、4、9（只有 N1）、10（只有 DS1）、
 11、12 步並做第 13 步，以及 #538 gate 第 1、3 步（#538 Implementation Complete 編號的 sequence 1 與 8），結果都如上（第 3 步的第二次 undo 回 #538 的 not-followed 訊息、紀錄保留）；
-B1、N2、N3、DS2、R2、L1 只在合併前的 `6851a4b9` 做過。ROUND2_RESULTS **沒做、出版前要補或記成未量**：
+B1、N2、N3、DS2、R2、L1 只在合併前的 `6851a4b9` 做過。PR #558 round 2 修正後（2026-11-18），用 `ab1a94ec` 的 Developer ID 簽章 release build（這台機器連不到
+Apple 的時間戳記伺服器，以 `--timestamp=none` 簽章）在 stdio process 上重做第 1、2、4、9（只有 N1）、10（只有 DS1）、11、12、13 步並做第 14 步，以及
+#538 gate 第 1、3 步：第 1、2、4、9、11 步、第 14 步與 #538 的兩步都如上。第 10、12、13 步這次走的是放置的答案，不是 DS1 的：修改切換日那一場之後，
+store 在同一個時間（03:30 PDT）同時列出改過的場次與一個沒改過的場次（立即與 40 秒後都是），所以紀錄落在 kept slot 上（裁定 B），刪除帶 `undo_note`、
+undo 回 `the recorded exceptions did not match …`、讀回 6 場系列的標題；同一個形狀在 `adfc902e` 的簽章 build 上也一樣（所以是 store 這次的列法，
+不是這一輪的程式）；第 12 步的第二次 undo 照舊被拒絕、紀錄保留、`discard_id` 移除，第 13 步的第二次 undo 被 #236 以 `timezone` 拒絕、紀錄保留。
+**沒做、出版前要補或記成未量**：
 
 - 第 1 到 14 步在重啟後的 session MCP 上（第 7、10、12、13 步除外，它們要另一個主機時區的 server）。
 - 刪除時的預告：放得上去、但以這台 Mac 讀到的時間結束在開始之前的場次（時間落在夏令時間切換）也不給：刪除時沒有說明，undo 照規則重建這個系列（第 10 步的 DS1）。
