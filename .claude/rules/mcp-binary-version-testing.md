@@ -1335,7 +1335,7 @@ session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的
    `delete_events_batch`（`event_ids` 帶系列 ID，span `all`）→ `undo`：`Undone batch (1 operation)`，結尾是 `Older undo entries of a
    recurring event this batch recreated were not moved to its recreated series, because 1 of its occurrences …` → `undo`：第 3 步的
    flagged 文字，什麼都沒寫 → `discard_id` 移除。
-8. undo 能還原的整串修改（#263，R4）：在 session 上建每週 4 次、有結束日的系列 → `update_event` 用系列 ID、span `all` 只改 `title`
+8. undo 能還原的整串修改（#263，R4）：在 session 上建每週、`occurrence_count` 4 次的系列（2026-11-17 用這個形狀做過） → `update_event` 用系列 ID、span `all` 只改 `title`
    （`undo_history` 標成 `whole series; undo restores its title`）→ `delete_event` span `all` → `undo`（重建，沒有獨立事件）→ `undo`：
    #263 的紀錄沒有跟上，回答 not found、紀錄保留 → `discard_id` 移除 → `undo`：create 紀錄（已跟上）以 `title` 拒絕並保留（重建的系列
    是修改後的標題）→ `discard_id` 移除，系列用 `--cli` 刪掉。

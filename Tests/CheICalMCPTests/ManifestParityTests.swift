@@ -934,6 +934,8 @@ final class ManifestParityTests: XCTestCase {
         // #538 fix 1 (F22): which undos follow, in both texts, and the exceptions and the measurement in the summary.
         assertOnce("The undo of a delete_event of a one-off event or of a whole series, of a delete_reminder, or of one member of a batch delete writes the item again under a new identifier", in: undo.declared, "undo")
         assertOnce("the undo of such an entry that is not found answers that the series it names was recreated as a new one", in: undo.declared, "undo")
+        assertOnce("when one of them is an entry whose undo looks the series up", in: undo.declared, "undo")
+        assertOnce("whose entries that undo looks up are not moved, said in the answer when there are any", in: undo.summary, "manifest undo")
         assertOnce("the undo of a delete_event of a one-off event or a whole series, of a delete_reminder or of a batch member recreates the item under a new identifier (measured on iCloud) and older entries of it follow", in: undo.summary, "manifest undo")
         assertOnce("an entry of a whole-series update that undo could restore (#263) is not moved; and the undo of one occurrence's delete, a split move or a move by copy moves no entry (#538)", in: undo.summary, "manifest undo")
         for character in ["<", ">", "&"] {
