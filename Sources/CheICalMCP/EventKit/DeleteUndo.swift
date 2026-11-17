@@ -98,8 +98,7 @@ struct DeletedEventSnapshots {
         let alarms = EventKitManager.copyOutAlarms(of: removed, isSplit: hadRules)
         // #321: the occurrence is tied to its series and rule slot, which its undo's guard compares.
         let removedSnapshot = EventSnapshot(from: removed, includeRecurrence: false, alarms: alarms.alarms)
-        occurrence = hadRules || isDetached
-            ? removedSnapshot.withOccurrenceOrigin(OccurrenceOrigin.of(removed, floating: OccurrenceOrigin.isFloating(series))) : removedSnapshot
+        occurrence = hadRules || isDetached ? removedSnapshot.withOccurrenceOrigin(OccurrenceOrigin.of(removed, floating: OccurrenceOrigin.isFloating(series))) : removedSnapshot
         occurrenceNotCarriedOver = alarms.notCarriedOver
     }
 
@@ -162,8 +161,7 @@ extension EventSnapshot {
     static func recordingSeriesDelete(of event: EKEvent, capture: () -> SeriesExceptions?) -> EventSnapshot {
         let snapshot = EventSnapshot(from: event).withExceptions(event.hasRecurrenceRules ? capture() : nil)
             .withSeriesIdentity(event.hasRecurrenceRules ? OccurrenceOrigin.seriesIDs(of: event) : nil)
-        return !event.hasRecurrenceRules && event.isDetached
-            ? snapshot.withOccurrenceOrigin(OccurrenceOrigin.of(event, floating: OccurrenceOrigin.isFloating(event))) : snapshot
+        return !event.hasRecurrenceRules && event.isDetached ? snapshot.withOccurrenceOrigin(OccurrenceOrigin.of(event, floating: OccurrenceOrigin.isFloating(event))) : snapshot
     }
 }
 
@@ -173,8 +171,7 @@ extension OccurrenceOrigin {
     /// move read it; the caller tells it from the event it resolved (`isFloating`).
     static func of(_ occurrence: EKEvent, floating: Bool) -> OccurrenceOrigin? {
         of(eventIdentifier: occurrence.eventIdentifier, externalIdentifier: occurrence.calendarItemExternalIdentifier,
-           occurrenceDate: occurrence.occurrenceDate, isAllDay: occurrence.isAllDay, isDetached: occurrence.isDetached,
-           floating: floating)
+           occurrenceDate: occurrence.occurrenceDate, isAllDay: occurrence.isAllDay, isDetached: occurrence.isDetached, floating: floating)
     }
 
     /// PR #558 round 1 (ruling A): `event` is timed and has no time zone, so an edited occurrence's
