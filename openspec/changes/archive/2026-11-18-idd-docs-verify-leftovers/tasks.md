@@ -5,7 +5,7 @@
 ## 1. #528：release commit 合併回 main
 
 - [x] 1.1 以 merge commit 合併 `5547876c`；`CHANGELOG.md` 的 `[1.23.0] - 2026-11-08` 與 `git show 5547876c:CHANGELOG.md` 的同一段逐字相同，`[Unreleased]` 只留 `git log 5547876c..origin/main` 合併的條目，過時的 `[1.23.0] - 2026-11-01` 拿掉。合併帶進的 `README.md`、`README_zh-TW.md`、`plugin/README.md`、`plugin/CHANGELOG.md` 照協調者的決定（合併、四檔一併處理）：兩份 README 的 v1.23.0 列與 `plugin/README.md` 的 1.23.0 日期保留發布時的寫法；`plugin/README.md` 的 #364 那一行移到 1.23.0 下（發布的 plugin CHANGELOG 把它放在 [1.23.0]）；`plugin/CHANGELOG.md` 照 `CHANGELOG.md` 的規則。驗證：抽出兩邊的 `[1.23.0]` 一段比對；`git merge-base --is-ancestor v1.23.0 HEAD` 成立。
-- [x] 1.2 發布程序（兩份 README 的 Release Process／發布流程，Per-release flow 之後）加一句：摺疊 `[Unreleased]` 的 commit 要合併回 `main`。驗證：文件測試通過。
+- [x] 1.2 （2026-11-18 verify r1 改寫：句子改成打 tag 之前在 `main` 上經 PR 摺疊，並說明從分支打的 tag 合併回來需要 merge commit 與管理員略過。）發布程序（兩份 README 的 Release Process／發布流程，Per-release flow 之後）加一句：摺疊 `[Unreleased]` 的 commit 要合併回 `main`。驗證：文件測試通過。
 
 ## 2. #547、#554、#555：文字
 

@@ -209,6 +209,11 @@ final class MoveByCopyUndoTests: XCTestCase {
             XCTAssertTrue(text.contains("if it is still in the calendar it was moved to, the event is in both calendars")
                           || text.contains("check where it is"), text)
         }
+        // PR #562 verify r1 (K15): a copy given rules, deleted whole and brought back by its delete's
+        // undo with an edited occurrence as a separate event is not followed (#538), so the move's
+        // undo meets not found there too; the causes name that way.
+        let notFound = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .notFound)
+        XCTAssertTrue(notFound.contains("was not found under its recorded identifier (deleted, given a new identifier by its account, or, made a series, recreated as a new series by the undo of its delete)"), notFound)
         let changed = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .changed(["title", "alarms"]))
         XCTAssertTrue(changed.contains("was changed after the move (title, alarms)") && changed.contains("COPY-1"), changed)
         let moved = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .changed(["calendar", "title"]))

@@ -944,8 +944,8 @@ final class ManifestParityTests: XCTestCase {
         assertOnce("no entry follows a series whose edited occurrences came back as separate events; when entries of it whose undo looks it up remain (not when it reads back under its old identifier), the delete's undo says so", in: undo.summary, "manifest undo")
         // #559 (G6, G9, G15, G16, G32): the limit of entries named by an occurrence's own identifier is the #426 move's,
         // in both texts; the delete's undo is the one that says so; a recreated series under the removed identifier flags nothing.
-        assertOnce("entries naming the series by an occurrence's own identifier (a whole-series move made through it, #426) are neither moved nor flagged, and their undo answers the generic not-found", in: undo.summary, "manifest undo")
-        assertOnce("Entries that name the series by the own identifier of one of its occurrences (a whole-series move made through it, #426) are neither moved nor flagged, and their undo answers the generic not-found.", in: undo.declared, "undo")
+        assertOnce("entries naming the series by an occurrence's own identifier (a whole-series move made through it, #426) are neither moved nor flagged, and their undo answers the generic not-found while the removed identifier no longer resolves (as on iCloud);", in: undo.summary, "manifest undo")
+        assertOnce("Entries that name the series by the own identifier of one of its occurrences (a whole-series move made through it, #426) are neither moved nor flagged, and their undo answers the generic not-found while the removed identifier no longer resolves (as on iCloud).", in: undo.declared, "undo")
         assertOnce("the answer of the delete's undo (a batch undo's too) says so", in: undo.declared, "undo")
         assertOnce("when the recreated series reads back under the removed identifier, no entry is flagged and nothing is said.", in: undo.declared, "undo")
         XCTAssertFalse(undo.declared.contains("a whole-series move or an update made through it"), "#559 G15: such an update is a marker")

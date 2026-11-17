@@ -25,11 +25,16 @@
 `openspec/changes/archive/` 受 archive-first 保護，hook 拒絕編輯，所以更正寫在這裡，不改封存檔：
 
 - `2026-11-14-idd-484-update-calendar-identifier-follow/proposal.md` 的 Success Criteria「span `future` 的寫入不觸發改寫」：只對重複事件成立。一次性事件帶 span `future` 與 `calendar_name` 時，事件不重複，條件 2 成立，其餘條件也成立時會改寫（#554 第 5 項）。
-- `2026-11-17-idd-538-fix1/proposal.md`（Proposed Solution 的 R1）與 `tasks.md` 2.1 說 part-way 的文字「以 batch 句子結尾」：實際是 batch 句子放在失敗項目自己的錯誤之前，訊息以失敗項目的錯誤結尾（G8、G13）；位置現在由 `UndoBatchRestoreTests.testThePartWayTextCarriesTheBatchSentenceBeforeTheFailedItemsError` 檢查。
+- `2026-11-17-idd-538-fix1/proposal.md`（Proposed Solution 的 R1 與 Success Criteria 第一條）與 `tasks.md` 2.1 說 part-way 的文字「以 batch 句子結尾」：實際是 batch 句子放在失敗項目自己的錯誤之前，訊息以失敗項目的錯誤結尾（G8、G13）；位置現在由 `UndoBatchRestoreTests.testThePartWayTextCarriesTheBatchSentenceBeforeTheFailedItemsError` 檢查。
 - `2026-11-16-idd-538-recreated-item-records-follow/tasks.md` 4.2 在 fix1 那一輪原地改寫（`shared.` 改成 `undoHistory.`），沒有加日期註記（G12）。
-- `2026-11-16-idd-538-recreated-item-records-follow/proposal.md` 的 Impact 說修改的測試檔都是「機械性加上 `id`」：`EventUpdateFollowWiringTests`（呼叫點的計數 pin 從五處改成六處）、`ManifestParityTests`（新的 pin）、`SeriesExceptionsUndoTests`（新的測試）與 `UndoBatchWiringTests`（新的 pin）不只是加 `id`（G30）。
+- `2026-11-16-idd-538-recreated-item-records-follow/proposal.md` 的 Impact 說修改的測試檔都是「機械性加上 `id`」：`EventUpdateFollowWiringTests`（呼叫點的計數 pin 從五處改成六處）、`ManifestParityTests`（新的 pin）、`SeriesExceptionsUndoTests`（新的測試）與 `UndoBatchWiringTests`（新的 pin）不只是加 `id`（G30）；同一輪的 `NewObjectSaveTests`（`restoredReminderMessage` 的 pin 要求新的 `newID`）、`DeleteUndoTests`（pin 從 `undoDeleteEvent` 移到 `recreateDeletedEvent`）與 `SeriesExceptionsUndoHandlerTests`（pin 字串與一段註解）也不只是加 `id`（2026-11-18 PR #562 verify r1 K12 補上）。
 - `2026-11-17-idd-538-fix1/tasks.md` 4.0 說 `EventUpdateFollowWiringTests` 不改內容：fix1 那一輪改了它的一段註解（F21），斷言沒有改（G30）。
 - `2026-11-17-idd-538-fix1/proposal.md` 的 Impact 列了 `NewObjectSaveTests` 與 `UndoBatchRestoreTests`，那一輪沒有改它們；漏了改過的 `DeleteUndoTests` 與 `UndoBatchPartialRestoreTests`（G33）。
+
+## Verify round 1（2026-11-18，PR #562）
+
+- #528：`main` 開了 required linear history，merge commit 要管理員略過；PR 改成照現狀 squash 也對（內容正確），tag 能不能從 `main` 走到留給維護者決定，#528 保持開著。上面 Proposed Solution 與 tasks 1.2 的「合併回 `main`」那一句已改寫成：打 tag 之前在 `main` 上經 PR 摺疊 `[Unreleased]`（v1.20.0 到 v1.22.0 的做法）。
+- 其餘修正見 PR #562 的 Verify-fix (round 1) 留言。
 
 ## Non-Goals
 
@@ -53,3 +58,5 @@
   - 註解：`Sources/CheICalMCP/EventKit/EditedOccurrenceAddress.swift`（含 `leftBehind` 的文字）、`EventUpdateRecord.swift`、`EventKitManager.swift`
   - `Tests/CheICalMCPTests/`：`ManifestParityTests`、`EditedOccurrenceAddressTests`、`EditedOccurrenceAddressWiringTests`、`EventUpdateRecordTests`、`DeleteUndoFollowHistoryTests`、`DeleteUndoFollowHandlerTests`、`DeleteUndoFollowBatchMemberTests`（新檔）、`UndoBatchRestoreTests`、`SeriesExceptionsUndoTests`
   - `README.md`、`README_zh-TW.md`、`CHANGELOG.md`、`.claude/rules/mcp-binary-version-testing.md`
+  - #528 的合併：`plugin/CHANGELOG.md`、`plugin/README.md`（2026-11-18 PR #562 verify r1 K13 補上）
+  - verify 第 1 輪的修正：`CLAUDE.md`（測試命名表加 manager 層一列）、`Sources/CheICalMCP/EventKit/MoveByCopyUndo.swift`（副本找不到的原因多一個）、`Tests/CheICalMCPTests/MoveByCopyUndoTests.swift`、`Tests/CheICalMCPTests/DeleteUndoFollowHistoryTests.swift`（註解）

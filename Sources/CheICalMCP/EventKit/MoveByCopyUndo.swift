@@ -134,7 +134,7 @@ enum MoveByCopyUndo {
         case .noIdentifier:
             return restored + ". The move did not record the copy's identifier, so the copy was not looked up and nothing was removed; if it is still in the calendar it was moved to, the event is in both calendars: remove the copy there if it should go." + used
         case .notFound:
-            return restored + ". The copy the move made\(id) was not found under its recorded identifier (deleted, or given a new identifier by its account), so nothing was removed; if it is still in the calendar it was moved to, the event is in both calendars: remove the copy there if it should go." + used
+            return restored + ". The copy the move made\(id) was not found under its recorded identifier (deleted, given a new identifier by its account, or, made a series, recreated as a new series by the undo of its delete), so nothing was removed; if it is still in the calendar it was moved to, the event is in both calendars: remove the copy there if it should go." + used
         case .changed(let fields) where fields.contains("calendar"):
             return restored + ". The copy the move made\(id) was changed after the move (\(fields.joined(separator: ", "))), so it was not removed; it may be in another calendar now: check where it is, since the event may be in both calendars, and remove the copy if it should go." + used
         case .changed(let fields):

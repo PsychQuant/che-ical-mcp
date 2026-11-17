@@ -217,8 +217,9 @@ enum EditedOccurrenceAddress {
     /// #549, a known defect, measured on iCloud (2026-11-13): in a timed series with no time zone,
     /// a span `future` delete through the identifier of an edited occurrence deleted the later
     /// occurrences of the series, left that occurrence itself (edited in place or moved later)
-    /// and answered `deleted`. Said only for such a series, and only for the two shapes measured
-    /// (one moved earlier was not run, #555). This text and gate cell 8 change when #549 is fixed.
+    /// and answered `deleted`. Said for every such series, whatever the shape of the matched
+    /// occurrence; the text names the two shapes measured (one moved earlier was not run, #555).
+    /// This text and gate cell 8 change when #549 is fixed.
     static let leftBehind = "Known defect #549, measured on iCloud for an occurrence edited in place and one moved later: in a series with no time zone that call answers deleted while that occurrence itself stays."
 
     /// The refusal for `call`. `matches` holds at least one occurrence (`miss` asks only then). No

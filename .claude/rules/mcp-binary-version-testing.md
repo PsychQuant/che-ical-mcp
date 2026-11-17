@@ -172,7 +172,7 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
     （第一個剩下的場次）以 span `future` 整串刪掉，回 `deleted`，帶 `occurrence_id`（那個場次）與 `undo_note`（這筆刪除不能
     undo：undo 會拒絕並丟掉它的紀錄），讀回 0 個場次。這是 #428 的路（見〈場次自己的 id 上的 span all（#416）〉一節的
     「系列 id 走到第一場」）；#428 之前的 build 在這裡回 edited-before 的拒絕。2026-11-13 在 Google 的拋棄式日曆上用
-    `ba98641`（1.23.0）的 release build 以長駐 stdio server 量過一次（#547）；這個形狀在 iCloud 沒有用這個 build 量過。
+    `main` 在 `ba98641` 的 release build（`--version` 印 1.23.0，但它是 v1.23.0 切出之後的 `main`，含 #428；發布的 v1.23.0 不含 #428，在這一步會回 edited-before 拒絕）以長駐 stdio server 量過一次（#547）；這個形狀在 iCloud 沒有用這個 build 量過。
     **edited-after 形狀**：另建一個系列，用 `--cli` 刪第一個場次、再用 `--cli` 改第三個場次（在 stand-in 之後）的標題 →
     session `undo`：同樣的拒絕 → `discard_id` 移除 → 測試者自己 `delete_event` span `all`：**連被單獨改過的第三個場次也
     一起刪掉**。這是 `delete_event` 的預期行為（它不做 create-undo 的 `modified_occurrences` 檢查），不是 undo 的；也正是

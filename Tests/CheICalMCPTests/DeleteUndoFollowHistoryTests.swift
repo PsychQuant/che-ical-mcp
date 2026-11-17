@@ -151,7 +151,8 @@ final class DeleteUndoFollowHistoryTests: XCTestCase {
     /// spec-example: undo-history-discard / what is flagged
     ///
     /// The create, whole-series move and #263 update entries that name the series are flagged and
-    /// counted, on both stacks. Not flagged: the marker of an update that touched the series (#538
+    /// counted (all on the undo stack here; `testAnEntryOnTheRedoStackIsFlagged` shows the redo
+    /// stack, PR #562 verify r1). Not flagged: the marker of an update that touched the series (#538
     /// fix 1, R3: its undo is refused and the entry discarded before any lookup, so the flagged text
     /// never comes and `discard_id` is not needed), a delete record that holds the same string, and
     /// the entries of other events.
