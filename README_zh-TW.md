@@ -186,9 +186,9 @@ claude mcp add --scope user --transport stdio che-ical-mcp -- ~/bin/CheICalMCP
 
 **系列識別碼加上被單獨修改過的場次的日期（#532）：** `update_event`、`delete_event`（span `this` 或 `future` 帶 `occurrence_date`）與 `move_events_batch`（span `this` 帶日期）用系列 ID 加場次開始的那一天來找場次。單獨改過的場次有自己的 ID，這個查找找不到它，所以行事曆上那一天明明有場次，這些呼叫卻回 `Event not found`。沒被單獨修改過、在那一天開始的場次照舊找得到、照舊寫入。只有這個查找落空時，才會在那一天的事件裡，再找這個系列裡被單獨修改過、在那一天開始的場次。找到一個時，呼叫被拒絕、什麼都不寫；訊息說這個系列在那一天開始的一個場次被單獨修改過，所以系列識別碼加那一天指不到它，並給出它的 ID（`list_events` 顯示的那一個）：
 
-- span `this`（`update_event`、`delete_event`）：把那個 ID 當成 `event_id`，不帶 `occurrence_date`。
+- span `this`（`update_event`、`delete_event`）：把那個 ID 當成 `event_id`，不帶 `occurrence_date`。這個呼叫是在 iCloud 量的，那裡被單獨修改過的場次不回報自己的重複規則；回報的話，呼叫會要求 `occurrence_date`（Google 與 Exchange 沒有量）。
 - `update_event` 的 span `future`：經那個 ID 的 span `future` 只接受部分欄位（上面 #416 的清單），那次呼叫會說是哪些；其餘的，訊息指向對該場次用 span `this`，之後的場次用下一個沒被單獨修改過的場次加 span `future`，並以那條路的限制結尾：它不含 `all_day`、`clear_recurrence`、`calendar_name` 與 `clear_timezone`，那個 id 也被拒絕時，這個形狀沒有測過的做法。經那個 ID 的 span `future` 呼叫從該場次原本的日期開始，不是從它現在開始的那一天，而這個 server 讀不到那個日期。所以訊息不寫日期，寫出兩個方向：那個日期比要求的那一天早時，要求那一天之前的場次也會被寫到；比較晚時，要求那一天到那個日期之間的場次寫不到（在 iCloud 上用標題量過往後移與往前移的場次，以及沒有時區的系列裡往後移的場次）。
-- `delete_event` 的 span `future`：經那個 ID 的刪除從該場次原本的日期開始，這個 server 讀不到那個日期，而且不能 undo。訊息同樣寫出兩個方向：日期較早時，要求那一天之前的場次也會被刪；較晚時，要求那一天到那個日期之間的場次刪不到（兩種都在 iCloud 量過）。沒有時區的非全天系列，訊息還會點出一個已知缺陷（#549，iCloud 量到）：這個刪除會刪掉系列之後的場次、回應 `deleted`，卻留下被修改的那個場次本身。
+- `delete_event` 的 span `future`：經那個 ID 的刪除從該場次原本的日期開始，這個 server 讀不到那個日期，而且不能 undo。訊息同樣寫出兩個方向：日期較早時，要求那一天之前的場次也會被刪；較晚時，要求那一天到那個日期之間的場次刪不到（兩種都在 iCloud 量過）。沒有時區的非全天系列，訊息還會點出一個已知缺陷（#549，iCloud 量到的是原地修改與往後移的場次，往前移的沒有跑）：這個刪除會刪掉系列之後的場次、回應 `deleted`，卻留下被修改的那個場次本身。
 - 每一則 span `future` 的拒絕訊息，不論是哪個場次，都會寫出 #550 在 iCloud 量到的：store 把被修改的場次記在系列以外的時刻時（場次被修改之後才有時區的系列），經它的 ID 做 span `future` 的更新把之後的場次移到了另一天，對該場次用 span `this` 是測過的做法；經它的 ID 做 span `future` 的刪除，刪掉那個場次與之後的場次，規則在那一天的場次留著。這個 server 不讀 store 把場次記在哪個時刻，所以每次都寫。
 - `move_events_batch` 的一列：把那個 ID 放進 `event_ids`，`occurrence_dates` 的對應項填它開始的那一天。這一項是用場次自己的時區讀的，所以場次另有自己的時區時，那一天可能與系列時區的那一天不同；訊息會印出要填的日期。在 iCloud 上，被修改的場次讀回的是系列的時區或它被設定的時區，不論寫入與讀取的 process 在哪個時區，印出的日期每次都被接受；在 Google 行事曆上，這種場次回報的時區在不同次執行之間不一樣（#548，原因還沒分開），這個拒絕訊息沒有在那裡跑過。同一次呼叫的其他列照常執行。
 

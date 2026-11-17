@@ -776,18 +776,23 @@ final class ManifestParityTests: XCTestCase {
                 XCTAssertFalse(tool.declared.contains(gone), "\(name): \(gone)")
                 XCTAssertFalse(tool.summary.contains(gone), "\(name) summary: \(gone)")
             }
-            once("gives that occurrence's identifier (#532)", in: tool.declared, name)
-            // PR #545 verify round 2: the refusal needs an edited occurrence that belongs to the day; a day
-            // with no occurrence is not refused.
+            once("gives that occurrence's identifier (#532: only an occurrence whose identifier is the series' identifier followed by /RID= and digits is found, the shape read on iCloud and, through EventKit, on Google; an identifier that fails the echo check is not given, and the text points to list_events)", in: tool.declared, name)
+            XCTAssertFalse(tool.declared.contains("gives that occurrence's identifier (#532);"), "#555: the shape limit: \(name)")
+            // PR #545 verify round 2: the refusal needs an edited occurrence that starts on the day; a day
+            // with no occurrence is not refused. #555: it is found only in the identifier shape read on
+            // iCloud and Google, and the identifier is given only when it passes the echo check.
             once("does not reach an occurrence edited on its own: when no occurrence that was not edited on its own starts on that day and one edited on its own starts on it,", in: tool.summary, name)
             once(name == "move_events_batch" ? "(for a day with no occurrence, or one an edited occurrence was moved off, the row's error says so)" : "(a day with no occurrence, or one an edited occurrence was moved off, answers not found)", in: tool.summary, name)
-            XCTAssertTrue(tool.summary.contains("gives its identifier"), "\(name): \(tool.summary)")
+            once("found by an identifier of the series' id followed by /RID= and digits (the shape on iCloud and Google),", in: tool.summary, name)
+            once("gives its identifier, or points to list_events when it does not echo it", in: tool.summary, name)
         }
         let update = try descriptions(of: "update_event").declared
-        once("with span 'this' pass it as event_id without occurrence_date, and with span 'future' the refusal says which way is left and that a write through that identifier starts at that occurrence's original date, which this server does not read, so it can reach occurrences before that day and miss some after it; where the store recorded that occurrence at another time of day than the series, such a write moved the later occurrences to another day (#550).", in: update, "update_event")
+        once("with span 'this' pass it as event_id without occurrence_date (measured on iCloud, where an occurrence edited on its own reports no recurrence rule of its own; where one does, the call asks for occurrence_date; Google and Exchange were not measured), and with span 'future' the refusal says which way is left and that a write through that identifier starts at that occurrence's original date, which this server does not read, so it can reach occurrences before that day and miss some after it; where the store recorded that occurrence at another time of day than the series, such a write moved the later occurrences to another day (#550).", in: update, "update_event")
         once("When no occurrence is on that day, the error names the day as a date in the event's time zone, this Mac's for an event with none (#535).", in: update, "update_event")
         let delete = try descriptions(of: "delete_event").declared
-        once("with span 'future' a delete through it starts at that occurrence's original date, which this server does not read, so it can delete occurrences before that day and leave some after it, and cannot be undone; in a timed series with no time zone that delete answers deleted and leaves the edited occurrence itself, a known defect (#549).", in: delete, "delete_event")
+        once("with span 'this' pass it as event_id without occurrence_date (measured on iCloud, where an occurrence edited on its own reports no recurrence rule of its own; where one does, the call asks for occurrence_date; Google and Exchange were not measured), and with span 'future' a delete through it starts at that occurrence's original date, which this server does not read, so it can delete occurrences before that day and leave some after it, and cannot be undone; where the store recorded that occurrence at another time of day than the series, such a delete removed that occurrence and the later ones, and an occurrence the rule shows on its day stayed (#550); in a timed series with no time zone that delete answered deleted and left the edited occurrence itself, for one edited in place and for one moved later (the shapes measured), a known defect (#549).", in: delete, "delete_event")
+        // #555 item 1: the delete's span 'future' sentence carries #550, as every span 'future' refusal does.
+        once("(#550)", in: delete, "delete_event")
         once("When no occurrence is on that day, the error names the day as a date in the event's time zone, this Mac's for an event with none (#535).", in: delete, "delete_event")
         let move = try descriptions(of: "move_events_batch").declared
         once("to pass in event_ids with the day it starts, read in that occurrence's own time zone, as its occurrence_dates entry.", in: move, "move_events_batch")

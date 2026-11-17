@@ -89,8 +89,8 @@ enum EditedOccurrenceAddress {
     /// longer identifier with the same first characters is not) and it starts on the day, in the
     /// series' zone (this Mac's for a series with none, and for an all-day occurrence). The digits
     /// after `/RID=` are not read. On iCloud and Google (through EventKit, #320) every occurrence
-    /// edited on its own has that identifier, the stand-in of a series whose first occurrence was
-    /// deleted included (gate cell 7). An edited occurrence under an identifier of another shape,
+    /// edited on its own has that identifier, an edited occurrence of a series whose first occurrence
+    /// was deleted included (gate cell 7). An edited occurrence under an identifier of another shape,
     /// one tied to its series by the external identifier only, is not found (no such source was
     /// measured), and neither is one whose identifier is the series' own: the identifier would not
     /// address it. The caller then answers not found.
@@ -217,13 +217,14 @@ enum EditedOccurrenceAddress {
     /// #549, a known defect, measured on iCloud (2026-11-13): in a timed series with no time zone,
     /// a span `future` delete through the identifier of an edited occurrence deleted the later
     /// occurrences of the series, left that occurrence itself (edited in place or moved later)
-    /// and answered `deleted`. Said only for such a series, where it was measured. This text and
-    /// gate cell 8 change when #549 is fixed.
-    static let leftBehind = "Known defect #549, measured on iCloud: in a series with no time zone that call answers deleted while that occurrence itself stays."
+    /// and answered `deleted`. Said only for such a series, and only for the two shapes measured
+    /// (one moved earlier was not run, #555). This text and gate cell 8 change when #549 is fixed.
+    static let leftBehind = "Known defect #549, measured on iCloud for an occurrence edited in place and one moved later: in a series with no time zone that call answers deleted while that occurrence itself stays."
 
     /// The refusal for `call`. `matches` holds at least one occurrence (`miss` asks only then). No
     /// title, calendar name or account is in the text, and no `<`, `>` or `&` (#166). No date in it
-    /// is an original date: every date is the requested day or a start.
+    /// is an original date: every date is the requested day or a start, and a move row may also print
+    /// the day an occurrence starts in its own time zone.
     static func reason(for call: Call, matches: [Match], request: Request) -> String {
         let (zone, host, requestedDay) = (request.zone, request.host, request.day)
         let ending: String

@@ -127,6 +127,19 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
         }
     }
 
+    /// #555 item 8: each reading of the day is built from the event alone, through
+    /// `EditedOccurrenceAddress.Reading(_:)`, and nothing else is read in the loop. The pins above hold the
+    /// window, the predicate and the enumeration; without this one a slot read added inside the loop
+    /// (`occurrenceDate`, the external identifier, `isDetached`) would pass them all.
+    func testEachReadingOfTheDayIsBuiltFromTheEventAlone() throws {
+        let day = try body(of: "func dayReadings(")
+        let whole = "func dayReadings(containing date: Date, in timeZone: TimeZone?) -> [EditedOccurrenceAddress.Reading] { guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone) else { return [] } let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil) var readings: [EditedOccurrenceAddress.Reading] = [] eventStore.enumerateEvents(matching: predicate) { event, _ in readings.append(EditedOccurrenceAddress.Reading(event)) } return readings }"
+        XCTAssertEqual(day, whole)
+        for slot in ["occurrenceDate", "calendarItemExternalIdentifier", "isDetached", "/RID="] {
+            XCTAssertFalse(day.contains(slot), "dayReadings reads \(slot)")
+        }
+    }
+
     /// The lookup itself is as it was: by the exact identifier, for an occurrence starting on the day.
     func testTheLookupStillTestsTheExactIdentifier() throws {
         let find = try body(of: "func findOccurrence(")
