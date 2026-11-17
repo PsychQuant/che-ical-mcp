@@ -30,7 +30,7 @@ final class SlotReadingsDocsTests: XCTestCase {
                         "**The edits of a series with no time zone are not restored by this undo; #539 stays open for that.**",
                         "so the placement was withdrawn. On a Mac at offset 0 the two readings are one instant, and the edit is restored as before #539.",
                         "A series that has a time zone is read as an instant only, as before #539",
-                        "where `main` brings the edit back and this change does not",
+                        "brings the edit back and this change does not (read from the code and a matrix test)",
                         "Whether the occurrence's series has a time zone is read on the series (through the part of the occurrence's identifier before `/RID=`",
                         "the undo is refused, nothing is written and the entry is kept, since this server cannot tell which reading is the slot: give it up with `discard_id`.",
                         "after such a restore, undoing the earlier delete of an edited occurrence made through its own identifier (MA) was refused",
@@ -97,7 +97,7 @@ final class SlotReadingsDocsTests: XCTestCase {
                         "**Undo of a whole-series delete of a series with no time zone says why it brings the series back from its rules alone** (#539)",
                         "**The edits of a series with no time zone are not restored by this undo; #539 stays open for that.** PR #558 placed",
                         "A matrix test over 7,884 shapes",
-                        "638 of those shapes are ones where `main`",
+                        "570 of those shapes are ones where `main`",
                         "on a zoned series moved 16 hours later the same day, `delete_event` with span `all` carried the note and its undo restored from the rules alone too."], in: "CHANGELOG.md")
     }
 }

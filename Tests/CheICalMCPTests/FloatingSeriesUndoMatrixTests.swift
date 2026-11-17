@@ -89,7 +89,7 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         /// series with no time zone). Counted apart; it is not this PR's path.
         var asOnMain: [String] = []
         /// A two-reading cell where `main`'s restore of the same record leaves the calendar as before the
-        /// delete, while this PR restores from the rules alone (J10).
+        /// delete and this PR's rules-alone restore does not (J10).
         var mainKeptTheEdit = false
     }
 
@@ -195,7 +195,7 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             run.failures = issues
             // J10: `main`'s restore of the same record on the same recreated series.
             let main = restoreAtStoreLevel(exceptions, slots: ruleSlots, zone: host, onMain: true)
-            run.mainKeptTheEdit = (main.left + left).sorted() == before
+            run.mainKeptTheEdit = (main.left + left).sorted() == before && final != before
             return run
         }
         if restore.notApplied {
@@ -368,9 +368,9 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         XCTAssertNil(kinds["twoApplied"], "no record of two readings is applied")
         XCTAssertEqual(kinds["twoNotApplied"], 5640)
         XCTAssertEqual(asOnMain, 464)
-        // J10: where `main`'s instant reading of a stale `/RID=` happened to name the moved slot (the series moved by about
-        // the host's offset, or a period plus or minus it, after the edit), `main` kept the edit and this PR does not.
-        XCTAssertEqual(mainKeptTheEdit, 638)
+        // J10: where `main`'s restore, reading the stale `/RID=` as an instant, leaves the calendar as before the delete and
+        // this PR's does not (the series moved by plus or minus the host's offset, or a day minus it, after the edit).
+        XCTAssertEqual(mainKeptTheEdit, 570)
     }
 
     // MARK: - named cells
