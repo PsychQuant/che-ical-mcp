@@ -283,8 +283,8 @@ final class SeriesDeleteForecastTests: XCTestCase {
     /// The plan's texts (#539, "4. The note at the delete"), word for word.
     func testTheNotesSayTheForecastWithItsCount() {
         XCTAssertEqual(CheICalMCPServer.rulesAloneUndoNote(unplacedEdits: 2),
-                       "Undo is expected to bring this series back from its rules alone: 2 occurrence(s) edited on their own carry an original time that matches no slot of the series' rule as it was read at the delete, so undo cannot place their edits, and an occurrence deleted on its own earlier would come back with them.")
+                       "Undo is expected to bring this series back from its rules alone: 2 occurrence(s) edited on their own cannot be placed on the series' rule as it was read at the delete (no slot or two slots match their original time, the slot had an occurrence not edited on its own, it falls outside the checked window, or two take the same slot), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back.")
         XCTAssertEqual(CheICalMCPServer.batchPreviewRulesAloneNote(unplacedEdits: 1),
-                       "Undo of this row would be expected to bring the series back from its rules alone: 1 occurrence(s) edited on their own carry an original time that matches no slot of the series' rule as it was read at the delete, so undo cannot place their edits, and an occurrence deleted on its own earlier would come back with them.")
+                       "Undo of this row would be expected to bring the series back from its rules alone: 1 occurrence(s) edited on their own cannot be placed on the series' rule as it was read at the delete (no slot or two slots match their original time, the slot had an occurrence not edited on its own, it falls outside the checked window, or two take the same slot), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back.")
     }
 }
