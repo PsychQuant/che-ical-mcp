@@ -693,6 +693,9 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #539 (coordinator ruling 2026-11-17): the limit for DS1's shape, as each delete surface states it.
+    static let placedButEndsBeforeStart = "an occurrence that is placed but ends before it starts as this Mac reads it (its time falls in a daylight-saving change): the delete gives no note and the undo brings the series back from its rules alone"
+
     /// #539 step 6: the two delete tools say when their answer forecasts that undo restores a series
     /// from its rules alone, where the note is, and when there is none; both copies, once each.
     func testTheDeleteSurfacesSayWhenTheUndoIsForecastFromTheRulesAlone() throws {
@@ -700,10 +703,12 @@ final class ManifestParityTests: XCTestCase {
         let phrases = [
             "delete_event": ["the answer adds undo_note saying that undo is expected to bring the series back from its rules alone, with how many",
                              "That is a forecast made at the delete: the undo places the records on the recreated series and decides.",
-                             "There is no such note when the series' first occurrence is not a plain occurrence at its own start (edited or deleted on its own)"],
+                             "There is no such note when the series' first occurrence is not a plain occurrence at its own start (edited or deleted on its own)",
+                             Self.placedButEndsBeforeStart],
             "delete_events_batch": ["the real call lists each row with one not placed under rules_alone_on_undo, as event_id and undo_note",
-                                    "and lists none when a row of the call makes the call's undo refuse",
-                                    "The dry run with span all gives that undo_note in the series' row, before anything is deleted; the dry run with span future does not."]
+                                    "and lists none when a row of the call deleted an occurrence and the later occurrences of its series without removing the whole series, which makes the call's undo refuse",
+                                    Self.placedButEndsBeforeStart,
+                                    "The dry run forecasts only for rows with span all: it gives that undo_note in the series' row, before anything is deleted, and the dry run with span future gives none."]
         ]
         for (name, list) in phrases {
             let description = declared.first { $0.name == name }?.description ?? ""

@@ -6,6 +6,9 @@ import XCTest
 /// zone, and what `clear_timezone` leaves. Each phrase occurs exactly once in its document (a
 /// `contains()` pin survives a restatement that drifted, the repo's docs-pin rule).
 final class SlotReadingsDocsTests: XCTestCase {
+    /// #539 (coordinator ruling 2026-11-17): DS1's limit in Traditional Chinese, as the zh README and the gate say it.
+    static let placedButEndsBeforeStartZH = "放得上去、但以這台 Mac 讀到的時間結束在開始之前的場次（時間落在夏令時間切換）：刪除時沒有說明，undo 照規則重建這個系列"
+
     private func repoFile(_ relative: String) throws -> String {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -44,7 +47,8 @@ final class SlotReadingsDocsTests: XCTestCase {
                         "8. **B1**（`delete_events_batch`）",
                         "9. **預告（N1–N3）**",
                         "2026-11-17 用 `3587d72e`",
-                        "刪除時的預告不數放得上去、但結束在開始之前的紀錄",
+                        "刪除時的預告不數" + Self.placedButEndsBeforeStartZH + "（第 10 步的 DS1）",
+                        "它的 `Sources/` 與 head `95814269` 相同；之後的 commit 在 `Sources/` 只改了 `Server.swift` 裡 `delete_event` 與",
                         "的提案在 #553",
                         "#509 的規則結束檢查；計畫第 5 步、mutant 11）在 #557。"], in: ".claude/rules/mcp-binary-version-testing.md")
     }
@@ -54,12 +58,17 @@ final class SlotReadingsDocsTests: XCTestCase {
         try assertOnce(["**The forecast at the delete (#539):**",
                         "`delete_events_batch` lists such rows under `rules_alone_on_undo`, each with its `event_id` and `undo_note`",
                         "and its dry run with span \"future\" does not",
-                        "nor for a record that is placed but ends before it starts"], in: "README.md")
+                        "nor for " + ManifestParityTests.placedButEndsBeforeStart + " (the daylight-saving case above)",
+                        "as it did before #539 (read from the code; this shape was not run on main)"], in: "README.md")
         try assertOnce(["**刪除時的預告（#539）：**",
                         "`delete_events_batch` 把這種列放在 `rules_alone_on_undo`",
-                        "span \"future\" 的 dry run 不給"], in: "README_zh-TW.md")
+                        "span \"future\" 的 dry run 不給",
+                        Self.placedButEndsBeforeStartZH + "（上面的夏令時間情形）也不給說明",
+                        "（這是從程式讀出的，`main` 上沒有跑過這個形狀）"], in: "README_zh-TW.md")
         try assertOnce(["**A whole-series delete says when its undo is expected to restore the series from its rules alone** (#539)",
                         "(step 4, its mutant 10 and device cells MB and R1; proposed on #553)",
-                        "(step 5, mutant 11; #557)"], in: "CHANGELOG.md")
+                        "(step 5, mutant 11; #557)",
+                        "Not covered: " + ManifestParityTests.placedButEndsBeforeStart + ".",
+                        "as it did before #539 (read from the code; this shape was not run on main)"], in: "CHANGELOG.md")
     }
 }

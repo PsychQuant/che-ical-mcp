@@ -1339,12 +1339,13 @@ session MCP 上（行為探測確認是新 binary 之後）重做下面幾格，
     讀回那個時段只有一個事件、修改過的標題。
 
 2026-11-16 已在 iCloud 用 `83d2418a` 的簽章 release build、每格一個 stdio process 做過第 1 到 7 步，結果都如上。2026-11-17 用 `3587d72e`
-的簽章 release build（`Sources/` 與 PR 的 head 相同）在 stdio process 上重做第 1、2、4 步，並做了第 8 到 10 步，結果都如上；同一天較早用
+的簽章 release build（它的 `Sources/` 與 head `95814269` 相同；之後的 commit 在 `Sources/` 只改了 `Server.swift` 裡 `delete_event` 與
+`delete_events_batch` 的描述文字）在 stdio process 上重做第 1、2、4 步，並做了第 8 到 10 步，結果都如上；同一天較早用
 `cb3346ec` 做第 10 步的 DS1 時，那一場兩種讀法都放得上去，一次性事件存檔失敗（`eventkit_error_4`），undo 讓系列維持刪除，`3587d72e` 改成
 不套用例外、照規則重建（見上）。**沒做、出版前要補或記成未量**：
 
 - 第 1 到 10 步在重啟後的 session MCP 上（第 7、10 步除外）。
-- 刪除時的預告不數放得上去、但結束在開始之前的紀錄（第 10 步的 DS1）：這種系列刪除時沒有 `undo_note`，undo 照規則重建。
+- 刪除時的預告不數放得上去、但以這台 Mac 讀到的時間結束在開始之前的場次（時間落在夏令時間切換）：刪除時沒有說明，undo 照規則重建這個系列（第 10 步的 DS1）。
 - span `future` 的日期範圍 dry run 不給預告；`delete_events_batch` 用日期範圍、span `future` 刪掉整個系列的列，實際呼叫的 `rules_alone_on_undo` 沒有在裝置上看過。
 - split move（`move_events_batch` span `this`）在這種系列上的 undo（#466 走同一個檢查，沒有量）。
 - #321 gate 第 3、4 步在保有時區的系列上（#321 起一直欠著）。

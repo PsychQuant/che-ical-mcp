@@ -156,11 +156,19 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
         edit(occurrences[2], rid: "/RID=\(Int(nominal.timeIntervalSinceReferenceDate))", title: "Retitled")
         occurrences[2].end = slots[2].addingTimeInterval(-30 * 60)
 
-        let (outcome, after, _) = try deleteAndUndo(occurrences[0], in: store, slots: slots, now: slots[0].addingTimeInterval(-30 * day), zone: zone)
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: slots[0].addingTimeInterval(-30 * day), zone: zone))
+        let recorded = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: slots.count, startDate: slots[0]).withExceptions(exceptions)
+            .withSeriesIdentity(.init(eventIdentifier: "S", externalIdentifier: "X-S"))
+        let after = FakeSeriesExceptionsStore()
+        after.zone = zone
+        after.seriesSlots = slots
+        let (text, outcome) = try SeriesExceptionsUndo.undoDeleteEvent(recorded, calendar: recorded.calendarIdentifier, in: after)
 
         XCTAssertEqual(outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true)))
         XCTAssertEqual(after.starts(of: "E1"), slots)
         XCTAssertFalse(after.events.contains { $0.title == "Retitled" }, "nothing written for it")
+        // The text the undo returns, from the production arm.
+        XCTAssertTrue(text.hasSuffix(". Restored from the series rules alone: an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of the recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"), text)
     }
 
     /// The check reads only what the restore would write: a record of two readings that ends where it

@@ -144,6 +144,15 @@ final class SeriesDeleteForecastHandlerTests: XCTestCase {
         XCTAssertNil(answer["undo_note"])
     }
 
+    /// No row qualifies: the key is absent, not an empty list, with span future too.
+    func testTheRealSpanFutureCallWithoutAForecastHasNoForecastRows() async throws {
+        var args = range
+        args["span"] = .string("future"); args["dry_run"] = .bool(false)
+        let answer = try await batch(ForecastBatch(listed: daily("S", count: 3), result: BatchDeleteResult(successCount: 1, failedCount: 0, failures: [])), args)
+        XCTAssertNil(answer["rules_alone_on_undo"])
+        XCTAssertEqual(answer["succeeded"] as? Int, 1)
+    }
+
     // MARK: - delete_events_batch, the dry run
 
     func testTheDryRunWithSpanAllWritesTheNoteInTheSeriesRow() async throws {
