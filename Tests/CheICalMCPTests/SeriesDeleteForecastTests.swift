@@ -247,7 +247,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
     // MARK: - RulesAloneForecast
 
     private func wholeSeries(_ title: String = "Standup") -> UndoOperation {
-        .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: title, weeklyOccurrences: 6, startDate: Date(timeIntervalSinceReferenceDate: 0)))
+        .deleteEvent(id: "S", snapshot: UndoSnapshotFixtures.event(title: title, weeklyOccurrences: 6, startDate: Date(timeIntervalSinceReferenceDate: 0)))
     }
 
     /// Only a whole-series record with a count above 0 forecasts, in the order the rows were recorded.

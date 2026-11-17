@@ -21,11 +21,11 @@ final class UndoBatchRestoreTests: XCTestCase {
     // MARK: - B: where an undo recreates the item
 
     func testOnlyDeleteUndosRecreateAnItem() throws {
-        guard case .eventCalendar(let eventSnapshot)? = UndoOperation.deleteEvent(snapshot: event).restoreDestination(verb: .undo) else {
+        guard case .eventCalendar(let eventSnapshot)? = UndoOperation.deleteEvent(id: "", snapshot: event).restoreDestination(verb: .undo) else {
             return XCTFail("a delete-event undo recreates the event in its recorded calendar")
         }
         XCTAssertEqual(eventSnapshot.title, "Standup")
-        guard case .reminderList(let reminderSnapshot)? = UndoOperation.deleteReminder(snapshot: reminder).restoreDestination(verb: .undo) else {
+        guard case .reminderList(let reminderSnapshot)? = UndoOperation.deleteReminder(id: "", snapshot: reminder).restoreDestination(verb: .undo) else {
             return XCTFail("a delete-reminder undo recreates the reminder in a list")
         }
         XCTAssertEqual(reminderSnapshot.title, "Pay rent")
@@ -47,7 +47,7 @@ final class UndoBatchRestoreTests: XCTestCase {
             .updateReminder(id: "r", oldSnapshot: reminder, saved: reminder),
             .completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil,
                               title: "Pay rent", redoCompletionDate: nil, wasRecurring: false),
-            .batch([.deleteEvent(snapshot: event)]),
+            .batch([.deleteEvent(id: "", snapshot: event)]),
         ]
         for operation in others {
             XCTAssertNil(operation.restoreDestination(verb: .undo), operation.description)
@@ -56,9 +56,9 @@ final class UndoBatchRestoreTests: XCTestCase {
 
     /// Redo of a delete writes nothing (#247), so it has nothing to check.
     func testRedoHasNoDestinationToCheck() {
-        XCTAssertNil(UndoOperation.deleteEvent(snapshot: event).restoreDestination(verb: .redo))
+        XCTAssertNil(UndoOperation.deleteEvent(id: "", snapshot: event).restoreDestination(verb: .redo))
         XCTAssertNil(UndoOperation.deleteOccurrence(snapshot: event, notCarriedOver: []).restoreDestination(verb: .redo))
-        XCTAssertNil(UndoOperation.deleteReminder(snapshot: reminder).restoreDestination(verb: .redo))
+        XCTAssertNil(UndoOperation.deleteReminder(id: "", snapshot: reminder).restoreDestination(verb: .redo))
     }
 
     // MARK: - B: the refusal (PR #282 round 2, findings 1 and 5)
@@ -81,8 +81,8 @@ final class UndoBatchRestoreTests: XCTestCase {
     func testTheRefusalCountsWhatCouldBeRestoredAndNamesWhatIsMissing() {
         let rent = UndoSnapshotFixtures.reminder(title: "Pay rent")
         let milk = UndoSnapshotFixtures.reminder(title: "Milk")
-        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event), .deleteReminder(snapshot: rent),
-                                                      .deleteReminder(snapshot: milk)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteEvent(id: "", snapshot: event), .deleteReminder(id: "", snapshot: rent),
+                                                      .deleteReminder(id: "", snapshot: milk)], verb: .undo)
         let found = problems(destinations, eventCalendars: [(event.calendarIdentifier, "Work", true)])
         XCTAssertEqual(found.map(\.problem), [.missing, .missing])
 
@@ -97,8 +97,8 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// PR #282 round 4, finding 8: "the other 2 is in place" for more than one.
     func testTheRefusalCountsSeveralItemsInPlaceInThePlural() {
         let gone = UndoSnapshotFixtures.event(title: "Gone")
-        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: gone), .deleteEvent(snapshot: event),
-                                                      .deleteReminder(snapshot: reminder)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteEvent(id: "", snapshot: gone), .deleteEvent(id: "", snapshot: event),
+                                                      .deleteReminder(id: "", snapshot: reminder)], verb: .undo)
         let found = problems(destinations, eventCalendars: [(event.calendarIdentifier, "Work", true)],
                              reminderLists: [(reminder.calendarIdentifier, "Reminders", true)])
         XCTAssertEqual(found.map(\.destination.itemTitle), ["Gone"])
@@ -112,7 +112,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// them, which a batch that stops part-way contradicts. It is this check that refuses the whole
     /// batch; and an item whose calendar or list is in place may still fail at its save.
     func testTheRefusalSaysItIsThisCheckThatRefusesTheWholeBatch() {
-        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event), .deleteReminder(snapshot: reminder)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteEvent(id: "", snapshot: event), .deleteReminder(id: "", snapshot: reminder)], verb: .undo)
         let message = refusal(problems(destinations, eventCalendars: [(event.calendarIdentifier, "Work", true)]), total: 2)
         XCTAssertTrue(message.contains("this check refuses the whole batch when any item's calendar or list is missing or read-only"), message)
         XCTAssertFalse(message.contains("all of its items or none of them"), message)
@@ -120,7 +120,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     }
 
     func testARefusalOfEveryItemSaysNoneCouldBeRestored() {
-        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteEvent(id: "", snapshot: event)], verb: .undo)
         let message = refusal(problems(destinations), total: 1)
         XCTAssertTrue(message.contains("its 1 deleted item cannot be restored"), message)
         XCTAssertFalse(message.contains("The calendar or list of the other"), message)
@@ -131,7 +131,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// Finding 5: a calendar or list that is found but does not allow changes (a read-only shared
     /// or subscribed one) would fail at save, part-way through the batch; the pre-check refuses it.
     func testAReadOnlyDestinationIsRefusedBeforeAnyWrite() {
-        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event), .deleteReminder(snapshot: reminder)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteEvent(id: "", snapshot: event), .deleteReminder(id: "", snapshot: reminder)], verb: .undo)
         let found = problems(destinations, eventCalendars: [(event.calendarIdentifier, "Holidays", false)],
                              reminderLists: [(reminder.calendarIdentifier, "Reminders", true)])
         XCTAssertEqual(found.map(\.problem), [.readOnly])
@@ -148,7 +148,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     func testTheRefusalNamesNoCalendarListOrAccount() {
         let shared = UndoSnapshotFixtures.event(title: "Standup", calendarTitle: "Team Calendar (shared)")
         XCTAssertEqual(shared.calendarTitle, "Team Calendar (shared)", "precondition: the fixture records its calendar's title")
-        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: shared), .deleteReminder(snapshot: reminder)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteEvent(id: "", snapshot: shared), .deleteReminder(id: "", snapshot: reminder)], verb: .undo)
         let found = problems(destinations, reminderLists: [(reminder.calendarIdentifier, "Reminders", false)])
         let message = refusal(found, total: 2)
         XCTAssertFalse(message.contains("Team Calendar"), message)
@@ -160,14 +160,14 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// pass `undoShownTitle` like every other undo error.
     func testTheRefusalShowsTitlesLikeTheOtherUndoErrors() {
         let hidden = UndoSnapshotFixtures.event(title: "Stand\u{202E}up 'x'")
-        let message = refusal(problems(UndoRestoreDestination.of([.deleteEvent(snapshot: hidden)], verb: .undo)), total: 1)
+        let message = refusal(problems(UndoRestoreDestination.of([.deleteEvent(id: "", snapshot: hidden)], verb: .undo)), total: 1)
         XCTAssertTrue(message.contains("'Standup \u{2019}x\u{2019}'"), message)
         XCTAssertFalse(message.unicodeScalars.contains { $0.value == 0x202E }, message)
     }
 
     /// Kept like a not-found (#191, #236 D2): the user can recreate the calendar or give up.
     func testTheRefusalKeepsTheRecordAndReachesTheClientVerbatim() {
-        let findings = problems(UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo))
+        let findings = problems(UndoRestoreDestination.of([.deleteReminder(id: "", snapshot: reminder)], verb: .undo))
         let error: Error = UndoRestoreDestinationMissingError(findings: findings, total: 1)
         XCTAssertEqual(UndoFailureDisposition.of(error), .restore)
         XCTAssertTrue(error is TrustedErrorMessage)
@@ -178,9 +178,9 @@ final class UndoBatchRestoreTests: XCTestCase {
     func testTheDestinationsOfABatchAreGatheredOnceForAllItsMembers() {
         let gone = UndoSnapshotFixtures.event(title: "Gone")
         let members: [UndoOperation] = [
-            .deleteEvent(snapshot: gone),
+            .deleteEvent(id: "", snapshot: gone),
             .createEvent(id: "e", title: "Standup", created: event),
-            .batch([.deleteReminder(snapshot: reminder)]),
+            .batch([.deleteReminder(id: "", snapshot: reminder)]),
         ]
         let destinations = UndoRestoreDestination.of(members, verb: .undo)
         XCTAssertEqual(destinations.map(\.itemTitle), ["Gone", "Pay rent"])
@@ -190,8 +190,8 @@ final class UndoBatchRestoreTests: XCTestCase {
     func testEveryDestinationWithAProblemIsReportedInRecordOrder() {
         let gone = UndoSnapshotFixtures.event(title: "Gone")
         XCTAssertNotEqual(event.calendarIdentifier, gone.calendarIdentifier, "precondition: fixtures have distinct calendars")
-        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event), .deleteEvent(snapshot: gone),
-                                                      .deleteReminder(snapshot: reminder)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteEvent(id: "", snapshot: event), .deleteEvent(id: "", snapshot: gone),
+                                                      .deleteReminder(id: "", snapshot: reminder)], verb: .undo)
         let calendar: Container = (event.calendarIdentifier, event.calendarTitle, true)
         let list: Container = (reminder.calendarIdentifier, reminder.calendarTitle, true)
 
@@ -206,7 +206,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// first write, as the restore would refuse that member.
     func testAListWithTheRecordedTitleButAnotherIdentifierDoesNotPassThePreCheck() {
         XCTAssertFalse(reminder.calendarIdentifier.isEmpty)
-        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteReminder(id: "", snapshot: reminder)], verb: .undo)
 
         XCTAssertEqual(problems(destinations, reminderLists: [("other-account", reminder.calendarTitle, true)]).map(\.problem),
                        [.missing], "a same-titled list in another account must not pass the pre-check")
@@ -218,7 +218,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// The same for an event's calendar (`EventSnapshot.resolveCalendar`, #208).
     func testACalendarWithTheRecordedTitleButAnotherIdentifierDoesNotPassThePreCheck() {
         XCTAssertFalse(event.calendarIdentifier.isEmpty)
-        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteEvent(id: "", snapshot: event)], verb: .undo)
 
         XCTAssertEqual(problems(destinations, eventCalendars: [("other-account", event.calendarTitle, true)]).map(\.problem),
                        [.missing], "a same-titled calendar in another account must not pass the pre-check")
@@ -243,7 +243,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     }
 
     func testAListMissingFromAStaleViewIsFoundOnTheSecondRead() async throws {
-        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteReminder(id: "", snapshot: reminder)], verb: .undo)
         let reads = Reads()
         try await verify(destinations, reads: reads) { read in
             ([], read == 1 ? [] : [(self.reminder.calendarIdentifier, "Reminders", true)])
@@ -253,7 +253,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     }
 
     func testAListStillMissingAfterTheSecondReadIsRefused() async {
-        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteReminder(id: "", snapshot: reminder)], verb: .undo)
         let reads = Reads()
         do {
             try await verify(destinations, reads: reads) { _ in ([], []) }
@@ -268,7 +268,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     }
 
     func testEveryDestinationFoundOnTheFirstReadNeedsNoSecondRead() async throws {
-        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteReminder(id: "", snapshot: reminder)], verb: .undo)
         let reads = Reads()
         try await verify(destinations, reads: reads) { _ in ([], [(self.reminder.calendarIdentifier, "Reminders", true)]) }
         XCTAssertEqual(reads.count, 1)
@@ -279,7 +279,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// calendar's or list's write access can change elsewhere), so it is read once more like a
     /// missing one before the refusal.
     func testADestinationReadOnlyOnTheFirstReadAndWritableAfterTheRefreshPasses() async throws {
-        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteReminder(id: "", snapshot: reminder)], verb: .undo)
         let reads = Reads()
         try await verify(destinations, reads: reads) { read in
             ([], [(self.reminder.calendarIdentifier, "Shared", read > 1)])
@@ -289,7 +289,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     }
 
     func testADestinationStillReadOnlyAfterTheSecondReadIsRefused() async {
-        let destinations = UndoRestoreDestination.of([.deleteReminder(snapshot: reminder)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteReminder(id: "", snapshot: reminder)], verb: .undo)
         let reads = Reads()
         do {
             try await verify(destinations, reads: reads) { _ in ([], [(self.reminder.calendarIdentifier, "Shared", false)]) }
@@ -307,7 +307,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// only requested (EventKit syncs in the background), and what the first call's second read
     /// could not see yet, a retry may.
     func testEveryRefusedCallRefreshesAgain() async {
-        let destinations = UndoRestoreDestination.of([.deleteEvent(snapshot: event)], verb: .undo)
+        let destinations = UndoRestoreDestination.of([.deleteEvent(id: "", snapshot: event)], verb: .undo)
         let reads = Reads()
         for _ in 0..<2 {
             do {
@@ -328,15 +328,15 @@ final class UndoBatchRestoreTests: XCTestCase {
     private enum SaveFailed: Error { case failed }
 
     private func deleted(_ title: String) -> UndoOperation {
-        .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: title))
+        .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: title))
     }
 
     private func titles(_ operations: [UndoOperation]) -> [String] {
         operations.map { operation -> String in
             switch operation {
-            case .deleteEvent(let snapshot): return snapshot.title
+            case .deleteEvent(_, let snapshot): return snapshot.title
             case .deleteOccurrence(let snapshot, _): return "occ:" + snapshot.title
-            case .deleteReminder(let snapshot): return "rem:" + snapshot.title
+            case .deleteReminder(_, let snapshot): return "rem:" + snapshot.title
             case .batch(let members): return "[" + titles(members).joined(separator: ",") + "]"
             default: return operation.description
             }
@@ -370,7 +370,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     private static func simulatedEvents(_ member: UndoOperation) -> [UndoEventOutcome] {
         switch member {
         case .deleteOccurrence(_, let notCarriedOver): return [.occurrenceOneOff(notCarriedOver: notCarriedOver)]
-        case .deleteEvent(let snapshot):
+        case .deleteEvent(_, let snapshot):
             guard snapshot.restoresFromRules else { return [] }
             return snapshot.exceptions == nil ? [.seriesFromRules] : [.seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0))]
         case .batch(let members): return members.reversed().flatMap(simulatedEvents)
@@ -452,8 +452,8 @@ final class UndoBatchRestoreTests: XCTestCase {
     func testAnAllDayMemberSharingItsTitleIsNamedByItsDay() throws {
         let start = DateFormatter.machineReadable("yyyy-MM-dd", zone: .current).date(from: "2026-11-03")!
         let members: [UndoOperation] = [
-            .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Offsite", startDate: start, allDay: true)),
-            .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Offsite", startDate: start.addingTimeInterval(86_400), allDay: true)),
+            .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Offsite", startDate: start, allDay: true)),
+            .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Offsite", startDate: start.addingTimeInterval(86_400), allDay: true)),
         ]
         let partial = try partialError(members, completed: 1)
         XCTAssertTrue(partial.message.contains("The restore of 'Offsite' (starting 2026-11-03) may have left"), partial.message)
@@ -464,16 +464,16 @@ final class UndoBatchRestoreTests: XCTestCase {
     func testAFailedReminderSharingItsTitleIsNamedByItsDueDate() throws {
         let dated = DateComponents(year: 2026, month: 11, day: 3)
         let timed = DateComponents(year: 2026, month: 11, day: 4, hour: 9, minute: 30)
-        let partial = try partialError([.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: dated)),
-                                        .deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: timed))],
+        let partial = try partialError([.deleteReminder(id: "", snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: dated)),
+                                        .deleteReminder(id: "", snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: timed))],
                                        completed: 1)
         XCTAssertTrue(partial.message.contains("The restore of 'Pay rent' (due 2026-11-03) may have left"), partial.message)
-        let timedFails = try partialError([.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: timed)),
-                                           .deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: dated))],
+        let timedFails = try partialError([.deleteReminder(id: "", snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: timed)),
+                                           .deleteReminder(id: "", snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: dated))],
                                           completed: 1)
         XCTAssertTrue(timedFails.message.contains("The restore of 'Pay rent' (due 2026-11-04T09:30) may have left"), timedFails.message)
-        let undated = try partialError([.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent")),
-                                        .deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: dated))],
+        let undated = try partialError([.deleteReminder(id: "", snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent")),
+                                        .deleteReminder(id: "", snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent", due: dated))],
                                        completed: 1)
         XCTAssertTrue(undated.message.contains("The restore of 'Pay rent' may have left"), undated.message)
     }
@@ -635,7 +635,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// holds: a series restored before the failure is named in the partial error, not in the retry.
     func testASeriesRestoredBeforeAFailureIsDisclosedOnceAcrossTheRetry() async throws {
         let log = ExecutionLog()
-        let series = UndoOperation.deleteEvent(snapshot: Self.seriesFixture)
+        let series = UndoOperation.deleteEvent(id: "", snapshot: Self.seriesFixture)
         let first = await undoBatch([deleted("A"), series], log: log, failsOn: { $0 == "A" })
         let partial = try XCTUnwrap(first as? UndoBatchPartiallyUndoneError, "\(String(describing: first))")
         XCTAssertEqual(log.executed, ["Weekly"], "undo runs in reverse: the series, then A, which fails")
@@ -647,7 +647,7 @@ final class UndoBatchRestoreTests: XCTestCase {
 
     func testASeriesRestoredOnTheRetryIsDisclosedThenAndNotBefore() async throws {
         let log = ExecutionLog()
-        let series = UndoOperation.deleteEvent(snapshot: Self.seriesFixture)
+        let series = UndoOperation.deleteEvent(id: "", snapshot: Self.seriesFixture)
         let first = await undoBatch([series, deleted("B"), deleted("A")], log: log, failsOn: { $0 == "B" })
         let partial = try XCTUnwrap(first as? UndoBatchPartiallyUndoneError, "\(String(describing: first))")
         XCTAssertEqual(log.executed, ["A"])
@@ -876,9 +876,9 @@ final class UndoBatchRestoreTests: XCTestCase {
     /// batch records may not: two of them can write to one item, where the order matters.
     func testEveryKindABatchRecordsMayRunLastAndNoOtherKindMay() {
         let recorded: [UndoOperation] = [
-            .deleteEvent(snapshot: event), .deleteOccurrence(snapshot: event, notCarriedOver: []),
-            .deleteFollowingOccurrences(title: "Standup"), .deleteReminder(snapshot: reminder),
-            .batch([.deleteEvent(snapshot: event), .deleteReminder(snapshot: reminder)]),
+            .deleteEvent(id: "", snapshot: event), .deleteOccurrence(snapshot: event, notCarriedOver: []),
+            .deleteFollowingOccurrences(title: "Standup"), .deleteReminder(id: "", snapshot: reminder),
+            .batch([.deleteEvent(id: "", snapshot: event), .deleteReminder(id: "", snapshot: reminder)]),
         ]
         for operation in recorded { XCTAssertTrue(operation.mayRunLastAfterAFailure, operation.description) }
         let others: [UndoOperation] = [
@@ -896,7 +896,7 @@ final class UndoBatchRestoreTests: XCTestCase {
                                                                          rules: [], completionDate: nil),
                                        requestedCompleted: true, redoCompletionDate: nil),
             .moveByCopy(original: event, isSplit: true, notCarriedOver: [], copyID: "c", copy: event),
-            .batch([.deleteEvent(snapshot: event), edited("e")]),
+            .batch([.deleteEvent(id: "", snapshot: event), edited("e")]),
         ]
         for operation in others { XCTAssertFalse(operation.mayRunLastAfterAFailure, operation.description) }
     }
@@ -953,7 +953,7 @@ final class UndoBatchRestoreTests: XCTestCase {
 
     /// The reminder batch builder records only reminder deletes (#243).
     func testTheReminderBatchBuilderRecordsOnlyReminderDeletes() throws {
-        let record = try XCTUnwrap(UndoOperation.reminderBatchDelete([reminder, UndoSnapshotFixtures.reminder(title: "Milk")]))
+        let record = try XCTUnwrap(UndoOperation.reminderBatchDelete([(id: "R1", snapshot: reminder), (id: "R2", snapshot: UndoSnapshotFixtures.reminder(title: "Milk"))]))
         guard case .batch(let members) = record else { return XCTFail("\(record)") }
         XCTAssertEqual(members.count, 2)
         for member in members {
@@ -991,7 +991,7 @@ final class UndoBatchRestoreTests: XCTestCase {
                 let title = self.titles([member])[0]
                 if failsOn(title) { throw SaveFailed.failed }
                 if let nested = nestedDiffering[title] { return UndoMemberOutcome(text: title, differing: nested) }
-                guard case .deleteReminder(let snapshot) = member else { return UndoMemberOutcome(text: title, differing: []) }
+                guard case .deleteReminder(_, let snapshot) = member else { return UndoMemberOutcome(text: title, differing: []) }
                 return UndoMemberOutcome(text: title, differing: [UndoRestoredDifference(title: snapshot.title,
                                                                                         storeDiffers: differs[title] ?? [])])
             }, describe: { _ in "eventkit_error_1" })
@@ -1002,7 +1002,7 @@ final class UndoBatchRestoreTests: XCTestCase {
     }
 
     private func reminderDeleted(_ title: String) -> UndoOperation {
-        .deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: title))
+        .deleteReminder(id: "", snapshot: UndoSnapshotFixtures.reminder(title: title))
     }
 
     /// (a) A reminder restored as saved, and (b) one whose store holds fields differently: both
@@ -1245,7 +1245,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let exceptions = SeriesExceptions(
             window: DateInterval(start: exceptionsStart.addingTimeInterval(-exceptionsDay), end: exceptionsSlot(3).addingTimeInterval(exceptionsDay)),
             keptSlots: [exceptionsSlot(0), exceptionsSlot(1)], detached: [DetachedOccurrence(slot: exceptionsSlot(2), snapshot: edited)])
-        return .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: exceptionsStart)
+        return .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: exceptionsStart)
             .withExceptions(exceptions))
     }
 
@@ -1257,7 +1257,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let outcome = try await UndoBatchExecution.run(members, verb: .undo, check: { _ in }, restore: { member in
             let undone: (text: String, outcome: UndoEventOutcome?)
             switch member {
-            case .deleteEvent(let snapshot):
+            case .deleteEvent(_, let snapshot):
                 undone = try SeriesExceptionsUndo.undoDeleteEvent(snapshot, calendar: snapshot.calendarIdentifier, in: store)
             case .deleteOccurrence(let snapshot, let notCarriedOver):
                 undone = try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver,
@@ -1301,7 +1301,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: exceptionsStart, calendar: calendar)
             .withSeriesIdentity(seriesIDs)
 
-        let (_, events) = try await runOnStore([.deleteEvent(snapshot: occurrence), .deleteEvent(snapshot: series)], store)
+        let (_, events) = try await runOnStore([.deleteEvent(id: "", snapshot: occurrence), .deleteEvent(id: "", snapshot: series)], store)
 
         XCTAssertEqual(events, [.seriesFromRules, .editedOccurrenceAlreadyHeld], "round 2: as production records it (edited)")
         XCTAssertEqual(store.events.filter { $0.title == "Standup moved" }.count, 0, "no second copy of the occurrence")
@@ -1316,7 +1316,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let exceptions = SeriesExceptions(
             window: DateInterval(start: exceptionsStart.addingTimeInterval(-exceptionsDay), end: exceptionsSlot(3).addingTimeInterval(exceptionsDay)),
             keptSlots: [exceptionsSlot(0), exceptionsSlot(1).addingTimeInterval(1800)], detached: [])
-        return .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: title, weeklyOccurrences: 4, startDate: exceptionsStart)
+        return .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: title, weeklyOccurrences: 4, startDate: exceptionsStart)
             .withExceptions(exceptions))
     }
 
@@ -1325,7 +1325,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let exceptions = SeriesExceptions(
             window: DateInterval(start: exceptionsStart.addingTimeInterval(-exceptionsDay), end: exceptionsSlot(3).addingTimeInterval(exceptionsDay)),
             keptSlots: [exceptionsSlot(1), exceptionsSlot(2), exceptionsSlot(3)], detached: [])
-        return .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: title, weeklyOccurrences: 4, startDate: exceptionsStart)
+        return .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: title, weeklyOccurrences: 4, startDate: exceptionsStart)
             .withExceptions(exceptions))
     }
 
@@ -1429,7 +1429,7 @@ final class UndoBatchRestoreTests: XCTestCase {
         let store = FakeSeriesExceptionsStore()
         let members: [UndoOperation] = [
             .deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "A", startDate: exceptionsSlot(1)), notCarriedOver: []),
-            .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "B", startDate: exceptionsSlot(2)).withOccurrenceOrigin(nil)),
+            .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "B", startDate: exceptionsSlot(2)).withOccurrenceOrigin(nil)),
         ]
 
         let (_, events) = try await runOnStore(members, store)

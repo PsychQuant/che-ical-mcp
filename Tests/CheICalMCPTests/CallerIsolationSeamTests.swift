@@ -114,8 +114,8 @@ private actor BatchDescribeIsolationProbe {
     }
 
     func runAFailingUndo() async throws {
-        let members: [UndoOperation] = [.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "One")),
-                                        .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Two"))]
+        let members: [UndoOperation] = [.deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "One")),
+                                        .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Two"))]
         _ = try await UndoBatchExecution.run(
             members, verb: .undo,
             check: { _ in

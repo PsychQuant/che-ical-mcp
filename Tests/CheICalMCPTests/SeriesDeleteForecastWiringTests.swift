@@ -58,10 +58,10 @@ final class SeriesDeleteForecastWiringTests: XCTestCase {
                        "return RulesAloneForecast.unplacedEdits(of: record, unplacedEdits: unplacedEdits)"],
                       in: try body("func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws -> Int {"),
                       "delete_event")
-        assertInOrder(["await CalendarUndoManager.shared.record(.deleteEvent(snapshot: snapshot))", "return .series(unplacedEdits: unplacedEdits)"],
+        assertInOrder(["await CalendarUndoManager.shared.record(.deleteEvent(id: removedID, snapshot: snapshot))", "return .series(unplacedEdits: unplacedEdits)"],
                       in: try body("func deleteEventSeries(identifier: String) async throws -> SeriesDeleteRoute {"), "delete_event span all")
-        assertInOrder(["var forecast = RulesAloneForecast()", "undoSnapshots.append(snapshot)",
-                       "forecast.recorded(.deleteEvent(snapshot: snapshot), identifier: id, unplacedEdits: unplacedEdits)",
+        assertInOrder(["var forecast = RulesAloneForecast()", "undoOperations.append(.deleteEvent(id: removedID, snapshot: snapshot))",
+                       "forecast.recorded(.deleteEvent(id: removedID, snapshot: snapshot), identifier: id, unplacedEdits: unplacedEdits)",
                        "rulesAloneOnUndo: forecast.expected"],
                       in: try body("func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult {"), "batch span all")
         assertInOrder(["var forecast = RulesAloneForecast()",

@@ -74,7 +74,7 @@ final class SeriesCreateUndoTests: XCTestCase {
     func testOnlyACreateUndoProbesForAStandIn() {
         let move = UndoOperation.moveEvent(id: "S", fromCalendarIdentifier: "a", toCalendarIdentifier: "b",
                                            title: "Standup", isSeries: false)
-        let delete = UndoOperation.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Standup"))
+        let delete = UndoOperation.deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Standup"))
         var asked = 0
         for (operation, verb) in [(createOp, UndoHistoryVerb.redo), (move, .undo), (delete, .undo), (delete, .redo)] {
             XCTAssertNil(decide(operation, verb: verb, standIn: { asked += 1; return true }), "\(operation) \(verb)")

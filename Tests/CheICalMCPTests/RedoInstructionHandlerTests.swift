@@ -37,13 +37,13 @@ final class RedoInstructionHandlerTests: XCTestCase {
         let reminder = UndoSnapshotFixtures.reminder(title: "Pay rent")
         let operations: [UndoOperation] = [
             .createEvent(id: "e", title: "Standup", created: event),
-            .deleteEvent(snapshot: event),
+            .deleteEvent(id: "", snapshot: event),
             .updateEvent(id: "e", oldSnapshot: event, saved: event),
             .moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: false),
             .createReminder(id: "r", title: "Pay rent", created: reminder),
-            .deleteReminder(snapshot: reminder),
+            .deleteReminder(id: "", snapshot: reminder),
             .updateReminder(id: "r", oldSnapshot: reminder, saved: reminder),
-            .batch([.deleteEvent(snapshot: event), .deleteEvent(snapshot: event)]),
+            .batch([.deleteEvent(id: "", snapshot: event), .deleteEvent(id: "", snapshot: event)]),
         ]
         for operation in operations {
             let history = CalendarUndoManager()
@@ -90,7 +90,7 @@ final class RedoInstructionHandlerTests: XCTestCase {
     /// moves its record to the undo stack.
     func testTheRecordBeneathADroppedOneIsRedoneNext() async throws {
         let history = CalendarUndoManager()
-        await history.record(.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Standup")))
+        await history.record(.deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Standup")))
         await history.record(.completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil,
                                                title: "Pay rent", redoCompletionDate: nil, wasRecurring: false))
         let executor = SpyExecutor()
@@ -137,7 +137,7 @@ final class RedoInstructionHandlerTests: XCTestCase {
     /// nothing, so a client reading them after any `success: false` redo finds them.
     func testNothingToRedoReportsTheCountsToo() async throws {
         let history = CalendarUndoManager()
-        await history.record(.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Standup")))
+        await history.record(.deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Standup")))
         let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: SpyExecutor())
 
         let redo = try json(await server.handleToolCallForTesting(name: "redo", arguments: [:]))

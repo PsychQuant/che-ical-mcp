@@ -24,7 +24,7 @@ final class OccurrenceSlotWallClockRefusalTests: XCTestCase {
     /// `failsBeforeAnyWrite` does not name.
     func testInABatchTheRefusedMemberIsKept() throws {
         let occurrence = UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Third"), notCarriedOver: [])
-        let series = UndoOperation.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 6))
+        let series = UndoOperation.deleteEvent(id: "S", snapshot: UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 6))
         let failure = UndoOperation.batchUndoFailure(
             members: [occurrence, series], interrupted: .init(completed: 1, underlying: refusal),
             describe: { EventKitErrorSanitizer.writeFailureLog(handler: "undo", identifier: "batch member", error: $0) })

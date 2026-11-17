@@ -9,7 +9,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
 
     private func series(_ title: String = "Standup", withExceptions: Bool) -> UndoOperation {
         let snapshot = UndoSnapshotFixtures.event(title: title, weeklyOccurrences: 4)
-        return .deleteEvent(snapshot: withExceptions
+        return .deleteEvent(id: "", snapshot: withExceptions
                             ? snapshot.withExceptions(SeriesExceptions(window: window, keptSlots: [], detached: []))
                             : snapshot)
     }
@@ -184,7 +184,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
     func testTheHistoryLineNamesTheWindow() {
         let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4)
             .withExceptions(SeriesExceptions(window: aroundTheDelete, keptSlots: [], detached: []))
-        XCTAssertEqual(UndoOperation.deleteEvent(snapshot: snapshot).description,
+        XCTAssertEqual(UndoOperation.deleteEvent(id: "", snapshot: snapshot).description,
                        "Deleted event: Standup (undo recreates the series and its exceptions within the checked window (\(UndoOperation.windowRange(aroundTheDelete))): \(exceptionsListing))")
     }
 
@@ -290,7 +290,7 @@ final class SeriesExceptionsTextTests: XCTestCase {
         let snapshot = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4)
             .withExceptions(SeriesExceptions(window: aroundTheDelete, keptSlots: [], detached: [], extraWindows: [fromTheFirst]))
         let both = "\(UndoOperation.windowRange(aroundTheDelete)), and \(UndoOperation.windowRange(fromTheFirst))"
-        XCTAssertEqual(UndoOperation.deleteEvent(snapshot: snapshot).description,
+        XCTAssertEqual(UndoOperation.deleteEvent(id: "", snapshot: snapshot).description,
                        "Deleted event: Standup (undo recreates the series and its exceptions within the checked windows (\(both)): \(exceptionsListing))")
     }
 

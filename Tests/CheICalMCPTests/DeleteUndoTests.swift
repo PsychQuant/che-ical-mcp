@@ -138,7 +138,7 @@ final class DeleteUndoTests: XCTestCase {
                                           seriesExceptions: recordedExceptions(calls))
         XCTAssertEqual(calls.count, 1)
         XCTAssertEqual(whole.series.exceptions?.keptSlots, [firstStart], "the record carries what the capture returned")
-        guard case .deleteEvent(let snapshot) = whole.record(for: .wholeEvent) else { return XCTFail("whole-series record") }
+        guard case .deleteEvent(_, let snapshot) = whole.record(for: .wholeEvent) else { return XCTFail("whole-series record") }
         XCTAssertNotNil(snapshot.exceptions)
     }
 
@@ -306,7 +306,7 @@ final class DeleteUndoTests: XCTestCase {
         let series = weekly(startingAt: firstStart)
         let record = DeletedEventSnapshots(series: series, removed: series).record(for: .wholeEvent)
 
-        guard case .deleteEvent(let snapshot) = record else { return XCTFail("\(record)") }
+        guard case .deleteEvent(_, let snapshot) = record else { return XCTFail("\(record)") }
         XCTAssertEqual(snapshot.recurrenceRules?.count, 1)
         XCTAssertEqual(snapshot.startDate, firstStart)
     }
@@ -337,9 +337,9 @@ final class DeleteUndoTests: XCTestCase {
         // Verify round 4, findings 11/15, and round 5, finding 7: a series record says what its undo
         // brings back before it runs.
         let rules = "occurrences deleted on their own earlier come back, edited ones without their edits"
-        let series = UndoOperation.deleteEvent(snapshot: EventSnapshot(from: weekly(startingAt: firstStart)))
+        let series = UndoOperation.deleteEvent(id: "", snapshot: EventSnapshot(from: weekly(startingAt: firstStart)))
         XCTAssertEqual(series.description, "Deleted event: Standup (undo recreates the series from its rules: \(rules))")
-        let oneOff = UndoOperation.deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Review"))
+        let oneOff = UndoOperation.deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Review"))
         XCTAssertEqual(oneOff.description, "Deleted event: Review", "a one-off record is listed as before")
         // Round 5, findings 1/2: so does a delete_events_batch record that removed a series whole,
         // counting series at any depth; one without is listed as before.
@@ -413,15 +413,15 @@ final class DeleteUndoTests: XCTestCase {
     /// a fake store; this pin keeps the arm on it and the message in it.
     func testTheWholeEventUndoArmReportsTheRulesRestore() throws {
         let body = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: try SourcePins.source("EventKit/EventKitManager.swift")))
-        let arm = try XCTUnwrap(SourcePins.ranges(of: "case .deleteEvent(let snapshot):", in: body).first)
+        let arm = try XCTUnwrap(SourcePins.ranges(of: "case .deleteEvent(let removedID, let snapshot):", in: body).first)
         let next = try XCTUnwrap(SourcePins.ranges(of: "case .deleteOccurrence(", in: body).first)
-        let call = SourcePins.ranges(ofPattern: #"return\s+try\s+await\s+undoDeletedEvent\(snapshot\)\.text"#, in: body)
+        let call = SourcePins.ranges(ofPattern: #"return\s+try\s+await\s+undoDeletedEvent\(snapshot,\s*removedID:\s*removedID\)\.text"#, in: body)
         XCTAssertEqual(call.count, 1)
         if let call = call.first {
             XCTAssertGreaterThan(call.lowerBound, arm.lowerBound)
             XCTAssertLessThan(call.lowerBound, next.lowerBound, "in the whole-event arm")
         }
-        let undo = try XCTUnwrap(SourcePins.body(of: "static func undoDeleteEvent<", in: try SourcePins.source("EventKit/SeriesExceptionsUndo.swift")))
+        let undo = try XCTUnwrap(SourcePins.body(of: "static func recreateDeletedEvent<", in: try SourcePins.source("EventKit/SeriesExceptionsUndo.swift")))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"let\s+text\s*=\s*UndoOperation\.eventRestoredMessage\(snapshot:\s*snapshot,\s*newID:"#, in: undo).count, 1)
     }
 
@@ -430,7 +430,7 @@ final class DeleteUndoTests: XCTestCase {
     func testTheBatchUndoArmReportsItsMembers() throws {
         // PR #282: the arm returns `undoBatch(_:)`'s message (round 6, findings 2, 9); the count is of
         // the member texts, and the differences the restored reminders returned travel along
-        // (`UndoBatchWiringTests`).
+        // (`UndoBatchWiringTests`), and (#538 fix 1) what the members flagged instead of moving.
         let source = try SourcePins.source("EventKit/EventKitManager.swift")
         let undo = try XCTUnwrap(SourcePins.body(of: "func executeUndo(_ operation: UndoOperation)", in: source))
         let arm = try XCTUnwrap(SourcePins.ranges(of: "case .batch(let ops):", in: undo).first)
@@ -438,7 +438,7 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertEqual(call.count, 1)
         if let call = call.first { XCTAssertGreaterThan(call.lowerBound, arm.lowerBound) }
         let body = try XCTUnwrap(SourcePins.body(of: "func undoBatch(_ ops: [UndoOperation], restoreAvailable: Bool = false) async throws", in: source))
-        let message = SourcePins.ranges(ofPattern: #"return\s+\(UndoOperation\.batchUndoneMessage\(count:\s*outcome\.texts\.count,\s*events:\s*outcome\.events,\s*differing:\s*outcome\.differing\)"#, in: body)
+        let message = SourcePins.ranges(ofPattern: #"return\s+\(UndoOperation\.batchUndoneMessage\(count:\s*outcome\.texts\.count,\s*events:\s*outcome\.events,\s*differing:\s*outcome\.differing,\s*notFollowed:\s*outcome\.notFollowed\)"#, in: body)
         XCTAssertEqual(message.count, 1)
     }
 
@@ -477,7 +477,7 @@ final class DeleteUndoTests: XCTestCase {
 
     func testRestorableBatchMembersPassTheCheck() {
         let snapshot = UndoSnapshotFixtures.event(title: "Standup")
-        XCTAssertNil(UndoOperation.deleteEvent(snapshot: snapshot).batchMemberUndoRefusal)
+        XCTAssertNil(UndoOperation.deleteEvent(id: "", snapshot: snapshot).batchMemberUndoRefusal)
         XCTAssertNil(UndoOperation.deleteOccurrence(snapshot: snapshot, notCarriedOver: []).batchMemberUndoRefusal)
         XCTAssertNil(UndoOperation.createEvent(id: "e", title: "Standup", created: snapshot).batchMemberUndoRefusal)
     }

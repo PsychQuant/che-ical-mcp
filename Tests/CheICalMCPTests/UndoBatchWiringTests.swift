@@ -97,14 +97,16 @@ final class UndoBatchWiringTests: XCTestCase {
     /// (`UndoOperation.reminderBatchDelete`). A new place that builds a `.batch` fails the count.
     func testBatchRecordsAreBuiltOnlyFromDeletes() throws {
         let series = Substring(try Self.body("func deleteEventSeriesBatch(identifiers: [String])", in: Self.manager))
-        XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoSnapshots.map { .deleteEvent(snapshot: $0) }))"), in: series))
+        XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoOperations))"), in: series))
         XCTAssertEqual(Self.count(".batch(", in: series), 1)
 
         // Round 5, findings 5, 16: an `insert`, `+=` or reassignment passed the append count, so
         // every use of the builder's array is counted: its declaration, the one append, the
         // emptiness check and the record.
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bundoSnapshots\b"#, in: String(series)).count, 4)
-        XCTAssertNotNil(Self.offset(of: Self.call("var undoSnapshots: [EventSnapshot] = []"), in: series))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bundoOperations\b"#, in: String(series)).count, 4)
+        XCTAssertNotNil(Self.offset(of: Self.call("var undoOperations: [UndoOperation] = []"), in: series))
+        // #538: the one append builds a whole-event delete record with the identifier read before the removal.
+        XCTAssertNotNil(Self.offset(of: Self.call("undoOperations.append(.deleteEvent(id: removedID, snapshot: snapshot))"), in: series))
         // PR #465 verify r1: a row through the first occurrence cannot be undone, so it is kept out
         // of the record and only reported: its array is not part of any record.
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bthroughFirstOccurrence\b"#, in: String(series)).count, 4,
@@ -124,11 +126,11 @@ final class UndoBatchWiringTests: XCTestCase {
         // Round 6, finding 28: every use of the reminder builder's array too: its declaration, the
         // one append (after the remove succeeded) and the record.
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bundoSnapshots\b"#, in: String(reminders)).count, 3)
-        XCTAssertNotNil(Self.offset(of: Self.call("var undoSnapshots: [ReminderSnapshot] = []"), in: reminders))
-        XCTAssertEqual(Self.count("undoSnapshots.append(snapshot)", in: reminders), 1)
+        XCTAssertNotNil(Self.offset(of: Self.call("var undoSnapshots: [(id: String, snapshot: ReminderSnapshot)] = []"), in: reminders))
+        XCTAssertEqual(Self.count("undoSnapshots.append((id: removedID, snapshot: snapshot))", in: reminders), 1)
         // Round 7: the append comes after the remove, so a reminder whose remove threw is not recorded.
         let remove = Self.offset(of: Self.call("guard let snapshot = try commitReminderRemoval(reminder, onlyCompleted: onlyCompleted) else {"), in: reminders)
-        let append = Self.offset(of: Self.call("undoSnapshots.append(snapshot)"), in: reminders)
+        let append = Self.offset(of: Self.call("undoSnapshots.append((id: removedID, snapshot: snapshot))"), in: reminders)
         XCTAssertLessThan(try XCTUnwrap(remove), try XCTUnwrap(append))
 
         // Every `.batch(...)` built in Sources (a `case .batch(` match is not one): the two event
@@ -147,9 +149,10 @@ final class UndoBatchWiringTests: XCTestCase {
             let count = SourcePins.ranges(ofPattern: #"(?<!case )\.batch\s*\("#, in: code).count
             if count > 0 { built[file.lastPathComponent, default: 0] += count }
         }
-        // UndoManager.swift's second is `replacingEventIdentifier` (#435): the same members, with one
-        // identifier replaced, so nothing new can run last.
-        XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 2, "Server.swift": 4, "UndoBatchRestore.swift": 1],
+        // UndoManager.swift's second is `replacingEventIdentifier` (#435) and its third
+        // `replacingReminderIdentifier` (#538): the same members, with one identifier replaced, so
+        // nothing new can run last.
+        XCTAssertEqual(built, ["EventKitManager.swift": 3, "UndoManager.swift": 3, "Server.swift": 4, "UndoBatchRestore.swift": 1],
                        "a new .batch record must hold only members that may run last (mayRunLastAfterAFailure)")
     }
 
@@ -247,7 +250,7 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertNotNil(Self.offset(of: Self.call("restoreCalendar: { try await self.restoreCalendar(for: $0, kind: $1) },"), in: store))
         // Since #280 the delete-undo, single and batch member, restores through
         // `restoreDeletedReminder`; that is where the kind is passed.
-        let restore = Substring(try Self.body("func restoreDeletedReminder(_ snapshot: ReminderSnapshot)", in: Self.manager))
+        let restore = Substring(try Self.body("func restoreDeletedReminder(_ snapshot: ReminderSnapshot, removedID: String)", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("for: .recreateDeleted"), in: restore))
     }
 
@@ -261,25 +264,25 @@ final class UndoBatchWiringTests: XCTestCase {
     func testTheUndoBatchArmCarriesRestoredRemindersDifferencesAsData() throws {
         let batch = try Self.undoBatchBody()
         XCTAssertNotNil(Self.offset(of: Self.call("restore: { try await self.undoBatchMember($0) },"), in: batch))
-        XCTAssertNotNil(Self.offset(of: Self.call("return (UndoOperation.batchUndoneMessage(count: outcome.texts.count, events: outcome.events, differing: outcome.differing), outcome.differing, outcome.events)"), in: batch))
+        XCTAssertNotNil(Self.offset(of: Self.call("return (UndoOperation.batchUndoneMessage(count: outcome.texts.count, events: outcome.events, differing: outcome.differing, notFollowed: outcome.notFollowed), outcome.differing, outcome.events, outcome.notFollowed)"), in: batch))
         // #323: the text is built from what the members returned, never from the records.
         XCTAssertEqual(Self.count("members:", in: Substring(try XCTUnwrap(SourcePins.body(of: "static func batchUndoneMessage(", in: try SourcePins.source("EventKit/DeleteUndo.swift"))))), 0)
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\boutcome\.texts\b"#, in: String(batch)).count, 1, "only the count of the member texts is used")
         XCTAssertEqual(Self.count("restoreDeletedReminder(", in: batch), 0, "reminders go through undoBatchMember")
 
         let member = Substring(try Self.body("func undoBatchMember(_ operation: UndoOperation)", in: Self.manager))
-        XCTAssertNotNil(Self.offset(of: Self.call("case .deleteReminder(let snapshot):"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("case .deleteReminder(let removedID, let snapshot):"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("default: return UndoMemberOutcome(text: try await executeUndo(operation), differing: [])"), in: member))
         // Round 6, findings 2, 9: a nested batch member carries its own members' differences up,
         // and (#323) what its event members did.
         XCTAssertNotNil(Self.offset(of: Self.call("case .batch(let inner):"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoBatch(inner)"), in: member))
-        XCTAssertNotNil(Self.offset(of: Self.call("return UndoMemberOutcome(text: undone.message, differing: undone.differing, events: undone.events)"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("return UndoMemberOutcome(text: undone.message, differing: undone.differing, events: undone.events, notFollowed: undone.notFollowed)"), in: member))
         // #323: a deleted event or occurrence runs the same arm as `executeUndo`, and its outcome
         // travels as data.
-        XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoDeletedEvent(snapshot) return UndoMemberOutcome(text: undone.text, differing: [], events: undone.outcome.map { [$0] } ?? [])"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoDeletedEvent(snapshot, removedID: removedID) return UndoMemberOutcome(text: undone.text, differing: [], events: undone.outcome.map { [$0] } ?? [], notFollowed: undone.notFollowed.map { [$0] } ?? [])"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("let undone = try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver) return UndoMemberOutcome(text: undone.text, differing: [], events: [undone.outcome])"), in: member))
-        XCTAssertNotNil(Self.offset(of: Self.call("let restored = try await restoreDeletedReminder(snapshot)"), in: member))
+        XCTAssertNotNil(Self.offset(of: Self.call("let restored = try await restoreDeletedReminder(snapshot, removedID: removedID)"), in: member))
         XCTAssertNotNil(Self.offset(of: Self.call("differing: [UndoRestoredDifference(title: restored.title, storeDiffers: restored.storeDiffers)])"), in: member))
 
         let text = Substring(try XCTUnwrap(SourcePins.body(of: "static func batchUndoneMessage(", in: try SourcePins.source("EventKit/DeleteUndo.swift"))))
@@ -313,7 +316,7 @@ final class UndoBatchWiringTests: XCTestCase {
     func testTheReminderBatchDeleteRecordsOnlyTheRemindersItRemoved() throws {
         let body = Substring(try Self.body("func deleteRemindersBatch(identifiers: [String], onlyCompleted: Bool = false)", in: Self.manager))
         let remove = try XCTUnwrap(Self.offset(of: Self.call("guard let snapshot = try commitReminderRemoval(reminder, onlyCompleted: onlyCompleted) else {"), in: body))
-        let keep = try XCTUnwrap(Self.offset(of: Self.call("undoSnapshots.append(snapshot)"), in: body))
+        let keep = try XCTUnwrap(Self.offset(of: Self.call("undoSnapshots.append((id: removedID, snapshot: snapshot))"), in: body))
         let loopEnd = try XCTUnwrap(Self.offset(of: Self.call("failures.append((id, sanitized.code))"), in: body))
         let record = try XCTUnwrap(Self.offset(of: Self.call("if let undo = UndoOperation.reminderBatchDelete(undoSnapshots) { await CalendarUndoManager.shared.record(undo)"), in: body))
         XCTAssertLessThan(remove, keep, "kept only after remove succeeded")

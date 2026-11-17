@@ -27,7 +27,7 @@ private actor PartiallyFailingExecutor: UndoExecutionSource {
 
 final class UndoBatchNarrowingHandlerTests: XCTestCase {
     private func deleted(_ title: String) -> UndoOperation {
-        .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: title))
+        .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: title))
     }
 
     private func text(_ result: CallTool.Result) throws -> String {

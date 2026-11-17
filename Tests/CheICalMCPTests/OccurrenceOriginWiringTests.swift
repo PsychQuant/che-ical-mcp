@@ -59,7 +59,7 @@ final class OccurrenceOriginWiringTests: XCTestCase {
     /// rolled-back series leaves a link to nothing, which holds no slot). Only for a series.
     func testTheRecreationIsNotedBeforeTheRestore() throws {
         let source = SourcePins.code(try SourcePins.source("EventKit/SeriesExceptionsUndo.swift"))
-        let body = try XCTUnwrap(SourcePins.body(of: "static func undoDeleteEvent<", in: source))
+        let body = try XCTUnwrap(SourcePins.body(of: "static func recreateDeletedEvent<", in: source))
         let save = try XCTUnwrap(body.range(of: "try store.save(event)"))
         let restore = try XCTUnwrap(body.range(of: "outcome = try restore(exceptions, of: event, in: store)"))
         let note = try XCTUnwrap(body.range(of: "store.noteRecreation(of: recorded, as: store.identifiers(of: event))"))

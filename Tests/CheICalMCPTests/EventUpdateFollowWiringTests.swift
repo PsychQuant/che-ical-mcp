@@ -97,15 +97,22 @@ final class EventUpdateFollowWiringTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bawait\b"#, in: String(arm[check.upperBound..<save.lowerBound])).count, 0)
     }
 
-    /// The five callers, and no sixth: `moveEvent`, the move's undo, `updateEvent`, the update's
-    /// undo, and the `keep_later_edits` event arm.
-    func testTheRewriteIsCalledFromExactlyFivePlaces() throws {
+    /// The six callers, and no seventh: `moveEvent`, the move's undo, `updateEvent`, the update's
+    /// undo, the `keep_later_edits` event arm, and (#538) the undo of an event's delete, which calls
+    /// it on the manager's `undoHistory` (`CalendarUndoManager.shared` in production) rather than on
+    /// `shared` directly. What is counted is the text `.replaceEventIdentifier(` in the code of every
+    /// file under `Sources/CheICalMCP` (comments and strings removed), so a seventh call written with a
+    /// receiver and a dot fails whichever receiver it uses. Not counted (#538 fix 1, F21): a call with
+    /// an implicit `self` inside `CalendarUndoManager` or an extension of it, and a call through a
+    /// stored method reference; `UndoManager.swift`, where the method is declared, has neither today.
+    func testTheRewriteIsCalledFromExactlySixPlaces() throws {
         var calls: [String: Int] = [:]
         for file in try SourceScan.swiftFiles() {
             let code = SourcePins.code(try String(contentsOf: file, encoding: .utf8))
-            let count = SourcePins.ranges(of: "shared.replaceEventIdentifier(", in: code).count
+            let count = SourcePins.ranges(of: ".replaceEventIdentifier(", in: code).count
             if count > 0 { calls[file.lastPathComponent] = count }
         }
-        XCTAssertEqual(calls, ["EventKitManager.swift": 4, "EventKitManager+KeepLaterEdits.swift": 1])
+        XCTAssertEqual(calls, ["EventKitManager.swift": 4, "EventKitManager+KeepLaterEdits.swift": 1,
+                               "EventKitManager+SeriesExceptions.swift": 1])
     }
 }
