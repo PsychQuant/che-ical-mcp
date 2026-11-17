@@ -46,7 +46,8 @@ struct SlotReadings: Equatable {
 
     /// The largest UTC offset a zone has (Pacific/Kiritimati, `+14:00`); the two readings are never
     /// further apart. The restore lists the recreated series this much past each window, so a record
-    /// whose true slot lies just outside can be placed there and dropped (`SeriesExceptionsPlanner`).
+    /// whose true slot lies just outside is seen there; a record placed outside every window applies
+    /// nothing (`SeriesExceptionsPlanner.placement`, PR #558 round 1, ruling C).
     static let largestOffset: TimeInterval = 14 * 3600
 
     /// The readings of an occurrence, from its identifiers (the event identifier first, as

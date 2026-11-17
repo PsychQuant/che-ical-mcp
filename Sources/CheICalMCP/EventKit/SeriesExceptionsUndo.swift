@@ -130,7 +130,8 @@ enum SeriesExceptionsUndo {
             }
         }
         // #539: the margins around the windows, listed only when a record has a reading outside every
-        // window, so such a record can be placed on a slot there (and dropped) instead of not placed.
+        // window, so that a record whose readings are both slots (one in a margin) is seen as such; a
+        // record placed in a margin, outside every window, applies nothing (PR #558 round 1, ruling C).
         var marginSlots: [Date] = []
         if SeriesExceptionsPlanner.needsMargins(exceptions) {
             for margin in SeriesExceptionsPlanner.placementMargins(for: exceptions.windows) {

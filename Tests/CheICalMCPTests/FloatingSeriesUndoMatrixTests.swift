@@ -331,6 +331,7 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
     /// first occurrence deleted on its own; the series object refreshes. The stale record's wall-clock
     /// reading is the first slot, which held no plain occurrence: placed there before ruling I, its true
     /// slot was removed and no one-off written (the occurrence lost).
+    // spec-example: undo-history-discard / H1
     func testH1TheEditedOccurrenceIsNotLostWhenTheFirstWasDeleted() throws {
         let cell = Cell(host: TimeZone(secondsFromGMT: 8 * 3600)!, step: day, hourOfDay: 6, edited: 1, move: day, deleted: [0], route: .seriesObject)
         XCTAssertEqual(try run(cell).failures, [])

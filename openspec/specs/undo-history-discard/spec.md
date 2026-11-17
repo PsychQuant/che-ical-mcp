@@ -240,16 +240,24 @@ The undo of an `update_event` on a one-off event, with or without `keep_later_ed
 - **WHEN** `moved` is replaced by `restored`
 - **THEN** the record on the redo stack names `restored`
 
+
+<!-- @trace
+source: idd-538-fix1
+updated: 2026-11-17
+code:
+  - CHANGELOG.md
+-->
+
 ---
 ### Requirement: An edited occurrence's recorded slot is read both ways
 
-The identifier of an occurrence edited on its own carries its original time after `/RID=`. Measured on iCloud (#539), when the occurrence was edited while its timed series had no time zone that time is wall-clock time written as UTC; otherwise it is an instant. Three readers of this server SHALL read a timed `/RID=` both ways, as an instant and as wall-clock time in the host's time zone: the undo of a whole-series delete, the check whether a restored series holds a deleted occurrence's slot, and the forecast at a whole-series delete. They SHALL take the wall-clock reading only for an occurrence of a series that has no time zone when it is read: at the capture for the delete's record, the series object; for a deleted or moved occurrence's origin, the event the delete or move resolved (the series object when reached through the series' identifier, the occurrence itself when addressed by its own). An occurrence of a series that has a time zone, an all-day occurrence and an occurrence without a `/RID=` SHALL keep the one reading the server used before #539, and every path for them SHALL be the one it was before #539. The other readers of a `/RID=` (the #503 check, #553; the create-undo check, #416's weekday check and the #509 rule-end check, #557) read the instant only.
+The identifier of an occurrence edited on its own carries its original time after `/RID=`. Measured on iCloud (#539), when the occurrence was edited while its timed series had no time zone that time is wall-clock time written as UTC; otherwise it is an instant. Three readers of this server SHALL read a timed `/RID=` both ways, as an instant and as wall-clock time in the host's time zone: the undo of a whole-series delete, the check whether a restored series holds a deleted occurrence's slot, and the forecast at a whole-series delete. They SHALL take the wall-clock reading only for an occurrence of a series that has no time zone when it is read: at the capture for the delete's record, the series object; for a deleted or moved occurrence's origin, the series of the event the delete or move resolved: that event itself when it was reached through the series' identifier, and the series object stored under the part before `/RID=` when the occurrence was addressed by its own identifier; when that series object cannot be read, the origin SHALL take the instant reading alone. An occurrence of a series that has a time zone, an all-day occurrence and an occurrence without a `/RID=` SHALL keep the one reading the server used before #539, and the capture, the placement and the slot check for them SHALL be the ones before #539 (the forecast at the delete below applies to them too). The other readers of a `/RID=` (the #503 check, #553; the create-undo check, #416's weekday check and the #509 rule-end check, #557) read the instant only.
 
-For the undo of a whole-series delete the server SHALL record an edited occurrence when either reading is inside a recorded window, and SHALL place each recorded edited occurrence of two readings among the occurrences of the recreated series (listed over the windows and, when a reading lies outside them, 14 hours beyond each window): it is placed on the one reading that is a slot. The server SHALL apply none of the series' exceptions when one such record cannot be placed: neither or both readings are slots; the slot it would be placed on held an occurrence that was not edited on its own when the delete was recorded; it would be placed outside every window; or two records would be placed on one slot. When a placed record's own end is before its start as this process reads it (its wall-clock times fall across a daylight-saving gap of this Mac's time zone), whatever its number of readings, no one-off event can be saved for it, and the server SHALL apply none of the series' exceptions and SHALL say so in the undo's text.
+For the undo of a whole-series delete the server SHALL record an edited occurrence when either reading is inside a recorded window, and SHALL place each recorded edited occurrence of two readings among the occurrences of the recreated series (listed over the windows and, when a reading lies outside them, 14 hours beyond each window): it is placed on the one reading that is a slot. The server SHALL apply none of the series' exceptions when one such record cannot be placed: neither or both readings are slots; the slot it would be placed on held an occurrence that was not edited on its own when the delete was recorded; it would be placed outside every window; or another record would be placed on its slot. A record of one reading SHALL NOT be the reason nothing is applied: it is kept on its one reading, and two records of one reading on one slot are left as they were before #539. With at least one record of two readings, the server SHALL also apply none of the series' exceptions when the delete reached the series through a stand-in (the series object did not refresh, so the earliest plain occurrence left stood in for it), or when the recreated series' first slot lies inside a recorded window and held no occurrence that was not edited on its own when the delete was recorded (it was deleted or edited on its own); the restore keeps the first slot from the rule whatever a record says, and the undo's text SHALL say that the series' first occurrence was not a plain occurrence when it was deleted. A first slot outside every window is not asked. When a placed record's own end is before its start as this process reads it (its wall-clock times fall across a daylight-saving gap of this Mac's time zone), whatever its number of readings, no one-off event can be saved for it, and the server SHALL apply none of the series' exceptions and SHALL say so in the undo's text.
 
 For the undo of the delete of one occurrence (and of a split move's source), the check whether the restored series already holds the occurrence's slot SHALL count only occurrences of the same series or of a series an undo recreated from it, and SHALL compare an occurrence edited on its own by its instant reading only. When such an occurrence is at the instant reading of the deleted occurrence's slot, the slot is held: nothing is written and the record is used up, as before #539. When only an occurrence not edited on its own is at the deleted occurrence's wall-clock reading, the server SHALL write nothing, SHALL refuse the undo and SHALL keep the record, with a text that says the series holds an occurrence at that time as this Mac's time zone reads the recorded time, that this server cannot tell whether it is the deleted occurrence's slot, and that the entry can be given up with `discard_id`. Otherwise the occurrence is written as a one-off event.
 
-Before a whole-series delete removes anything, the server SHALL place each recorded edited occurrence on the slots the series' rule gives, expanded from the series' first slot to 14 hours past the last recorded window, with the rules of the restore above. When at least one record cannot be placed, and the delete is recorded as a whole-series delete, the delete's answer SHALL carry an `undo_note` saying that undo is expected to bring the series back from its rules alone, with the count; in a real `delete_events_batch` call the note is in its `rules_alone_on_undo` list. The note is a forecast: the restore still places against the recreated series. The note SHALL NOT count a record that is placed but ends before it starts. The server SHALL NOT write the note when the first slot cannot be shown (for example the series was reached through a stand-in, or its first occurrence was edited or deleted on its own), when the series has more than one rule or a rule the expander does not follow, when the expander would take more slots than its limit, when an occurrence not edited on its own that the delete recorded is no slot of the expander, or when the call's undo would be refused as a whole (a row of a `delete_events_batch` call recorded as deleting an occurrence and the following ones). The delete SHALL NOT be refused for it.
+Before a whole-series delete removes anything, the server SHALL place each recorded edited occurrence on the slots the series' rule gives, expanded from the series' first slot to 14 hours past the last recorded window, with the rules of the restore above; when the first-slot condition of the restore above holds (asked with the start the recreated series takes), every recorded edited occurrence is counted, without the expander. When at least one record cannot be placed, and the delete is recorded as a whole-series delete, the delete's answer SHALL carry an `undo_note` saying that undo is expected to bring the series back from its rules alone, with the count; in a real `delete_events_batch` call the note is in its `rules_alone_on_undo` list. The note is a forecast: the restore still places against the recreated series. The note SHALL NOT count a record that is placed but ends before it starts. Otherwise the server SHALL NOT write the note when the first slot cannot be shown (for example the series was reached through a stand-in, or its first occurrence was edited or deleted on its own), when the series has more than one rule or a rule the expander does not follow, when the expander would take more slots than its limit, when an occurrence not edited on its own that the delete recorded is no slot of the expander, or when the call's undo would be refused as a whole (a row of a `delete_events_batch` call recorded as deleting an occurrence and the following ones). The delete SHALL NOT be refused for it.
 
 #### Scenario: A floating edit comes back
 
@@ -283,6 +291,23 @@ Before a whole-series delete removes anything, the server SHALL place each recor
 
 - **WHEN** a recorded edited occurrence of two readings has no reading, or two readings, on a slot of the recreated series, is placed on a slot that held an occurrence not edited on its own, is placed outside every window, or is placed on the slot of another record
 - **THEN** none of the series' exceptions is applied and the undo text says the record did not match
+
+#### Scenario: The series' first occurrence is not plain
+
+- **WHEN** a series with no time zone holds an occurrence edited on its own whose recorded time has two readings, its first occurrence was deleted or edited on its own (or the delete reached it through a stand-in), and the whole series is deleted and the delete undone
+- **THEN** the series comes back from its rules alone, none of its exceptions is applied, the undo text says the first occurrence was not a plain occurrence, and the delete's answer carries an `undo_note` counting every recorded edited occurrence
+
+##### Example: the first slot stops the restore
+
+- **GIVEN** six daily slots at 06:00 `Asia/Taipei` and a record of two readings on the fourth slot
+- **WHEN** the condition is asked with the series' first slot as the recreated series' start
+- **THEN** it holds when the first slot is not a kept slot inside the window, and when the record says the delete went through a stand-in; it does not hold for a plain first slot, for a first slot outside the window, or when the only record has one reading
+
+##### Example: H1
+
+- **GIVEN** a host at `+08:00`, a daily series at 06:00 with no time zone, its second occurrence retitled, the whole series then moved one day later, and the new first occurrence deleted on its own, the series object refreshing
+- **WHEN** the whole series is deleted and the delete is undone
+- **THEN** the series comes back from its rules alone and no occurrence is lost or doubled
 
 #### Scenario: The undo of an occurrence's delete after its series was restored
 
@@ -325,10 +350,20 @@ Before a whole-series delete removes anything, the server SHALL place each recor
 
 
 <!-- @trace
-source: idd-538-fix1
-updated: 2026-11-17
+source: idd-539-fix2
+updated: 2026-11-18
 code:
+  - mcpb/manifest.json
+  - Sources/CheICalMCP/Server.swift
   - CHANGELOG.md
+  - Tests/CheICalMCPTests/FloatingSeriesUndoMatrixTests.swift
+  - Tests/CheICalMCPTests/ManifestParityTests.swift
+  - Tests/CheICalMCPTests/SlotReadingsDocsTests.swift
+  - README_zh-TW.md
+  - Sources/CheICalMCP/EventKit/SeriesExceptionsUndo.swift
+  - Sources/CheICalMCP/EventKit/SlotReadings.swift
+  - README.md
+  - Sources/CheICalMCP/EventKit/SeriesExceptions.swift
 -->
 
 ---

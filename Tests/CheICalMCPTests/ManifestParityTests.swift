@@ -681,7 +681,7 @@ final class ManifestParityTests: XCTestCase {
         // a record is not placed (B, C, D), and the guard's refusal (F).
         let placed = "#539: measured on iCloud, an occurrence edited while its timed series had no time zone carries its original time as wall-clock time; for a series with no time zone when it is deleted that time is read both"
         let zoned = "a series with a time zone is read as an instant, as before #539"
-        let guarded = "when the series had no time zone at that delete and only an occurrence of it not edited on its own is at that slot read as wall-clock time (#539)"
+        let guarded = "when the series had no time zone at that delete (read on the series, also for an occurrence deleted through its own identifier) and only an occurrence of it not edited on its own is at that slot read as wall-clock time (#539)"
         let declared = CheICalMCPServer.defineTools()
         for name in ["delete_event", "delete_events_batch", "undo"] {
             let description = declared.first { $0.name == name }?.description ?? ""
@@ -692,6 +692,8 @@ final class ManifestParityTests: XCTestCase {
         for name in ["delete_event", "undo"] {
             let description = declared.first { $0.name == name }?.description ?? ""
             for phrase in ["it counts as not matching when neither or both readings are slots, when that slot had an occurrence not edited on its own, when it falls outside the checked window, or when another record takes the same slot",
+                           // PR #558 round 2 (ruling I).
+                           "none is applied either when one recorded time has two readings and the series' first occurrence was not a plain occurrence when it was deleted (deleted or edited on its own, or the delete reached the series through a later occurrence), since the restore keeps the first slot from the rule;",
                            "the undo is refused, nothing is written and the entry is kept, since this server cannot tell which reading is the slot; it can be given up with discard_id."] {
                 XCTAssertEqual(description.components(separatedBy: phrase).count - 1, 1, "defineTools() \(name): \(phrase)")
             }
@@ -705,7 +707,7 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertEqual(move.components(separatedBy: "when the series had no time zone at the move and only an occurrence of it not edited on its own is at that slot read as wall-clock time, #539, the undo is refused instead, nothing is written, the copy stays and the entry is kept").count - 1, 1, move)
         let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
         let summary = (manifest?["tools"] as? [[String: Any]] ?? []).first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
-        for phrase in ["(#539: for a series with no time zone, an edited occurrence is placed by the one reading of its original time, as wall-clock time or as an instant, that is a slot, and placed nowhere else)",
+        for phrase in ["(#539: for a series with no time zone, an edited occurrence is placed by the one reading of its original time, as wall-clock time or as an instant, that is a slot, and placed nowhere else; none is applied when the series' first occurrence was not plain at the delete)",
                        "and is refused, the entry kept, when the series had no time zone and only an occurrence not edited on its own is at that slot read as wall-clock time, #539"] {
             XCTAssertEqual(summary.components(separatedBy: phrase).count - 1, 1, "mcpb/manifest.json undo: \(phrase)")
         }
@@ -721,7 +723,8 @@ final class ManifestParityTests: XCTestCase {
         let phrases = [
             "delete_event": ["the answer adds undo_note saying that undo is expected to bring the series back from its rules alone, with how many",
                              "That is a forecast made at the delete: the undo places the records on the recreated series and decides.",
-                             "There is no such note when the series' first occurrence is not a plain occurrence at its own start (for example edited or deleted on its own, or when it cannot be shown)",
+                             "Otherwise there is no such note when the series' first occurrence is not a plain occurrence at its own start (for example edited or deleted on its own, or when it cannot be shown)",
+                "every recorded edit is counted and the note given, as the undo then applies none of the exceptions",
                              "or when an occurrence not edited on its own that the delete records is no slot of that rule, nor for",
                              Self.placedButEndsBeforeStart],
             "delete_events_batch": ["the real call lists each row with one not placed under rules_alone_on_undo, as event_id and undo_note",

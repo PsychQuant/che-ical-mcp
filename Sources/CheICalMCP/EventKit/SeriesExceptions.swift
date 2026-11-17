@@ -459,7 +459,9 @@ enum SeriesExceptionsPlanner {
     /// (02:30 to 03:00 on 2027-03-14 at America/Los_Angeles) was listed from 03:30 to 03:00: both readings
     /// put it on its slot, and its one-off failed to save (EKErrorDatesInverted), so the undo rolled back
     /// and restored nothing. Such a record stops the restore instead (fail closed: the series comes back
-    /// from its rules). Read after `placeDetached`, so only a record the restore would write counts.
+    /// from its rules). Read after `placeDetached`, so only a placed record counts; a record placed on
+    /// the series' first slot counts too, although the restore keeps that slot from the rule and writes
+    /// no one-off for it (PR #558 round 2, H25).
     /// PR #558 round 1 (ruling E, F7): every such record, whatever its number of readings; a record of
     /// one reading (a host at offset 0 before the spring change, Europe/London) failed the same way
     /// before.
@@ -535,8 +537,8 @@ enum SeriesExceptionsRestorer {
         /// slot the series does not generate, or no slot at the series' own start), so none was
         /// applied and the series stands as the rules made it (round 2, B).
         var notApplied: Bool = false
-        /// #539 (device cell DS1): with `notApplied`, why: a placed record of two readings ends before
-        /// it starts as this process reads it, so no one-off can be saved for it.
+        /// #539 (device cell DS1): with `notApplied`, why: a placed record ends before it starts as this
+        /// process reads it, so no one-off can be saved for it (any placed record: ruling E).
         var endsBeforeStart: Bool = false
         /// PR #558 round 2 (ruling I): with `notApplied`, why: a record of two readings, and the series'
         /// first occurrence was not a plain occurrence when it was deleted, or the delete reached the series
