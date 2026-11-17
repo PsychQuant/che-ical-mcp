@@ -151,7 +151,8 @@ final class DeleteUndoFollowHistoryTests: XCTestCase {
     /// spec-example: undo-history-discard / what is flagged
     ///
     /// The create, whole-series move and #263 update entries that name the series are flagged and
-    /// counted, on both stacks. Not flagged: the marker of an update that touched the series (#538
+    /// counted (all on the undo stack here; `testAnEntryOnTheRedoStackIsFlagged` shows the redo
+    /// stack, PR #562 verify r1). Not flagged: the marker of an update that touched the series (#538
     /// fix 1, R3: its undo is refused and the entry discarded before any lookup, so the flagged text
     /// never comes and `discard_id` is not needed), a delete record that holds the same string, and
     /// the entries of other events.
@@ -279,22 +280,31 @@ final class DeleteUndoFollowHistoryTests: XCTestCase {
                                   fields: ["title"], before: exceptions, after: exceptions)
     }
 
-    /// The marker and a batch carry no not-followed title, so neither is flagged; every kind that
-    /// is flagged has one (#538 fix 1, R3, F33).
+    /// The marker, a batch and the record of a move by copy carry no not-followed title, so none is
+    /// flagged; every kind that is flagged has one (#538 fix 1, R3, F33). A move by copy names its copy,
+    /// and its undo never answers the not-followed text: it restores the original and reports the copy
+    /// as not found (`MoveByCopyUndo.copyState`), so flagging it would count an entry whose undo does
+    /// not say why (#559, G3 to G5, G17).
     func testOnlyKindsWithANotFollowedTitleAreFlagged() async throws {
         let history = CalendarUndoManager()
         await history.record(.batch([.createEvent(id: "S", title: "Standup", created: event("Standup"))]))
         let batch = try await topID(history)
         await history.record(.updateRecurringEvent(id: "S", title: "Standup", kind: .occurrence))
         let marker = try await topID(history)
+        let byCopy = UndoOperation.moveByCopy(original: event("Standup"), isSplit: false, notCarriedOver: [], copyID: "S",
+                                              copy: event("Standup"))
+        XCTAssertEqual(byCopy.eventIdentifiersNamed, ["S"], "the copy is named, so only the title keeps it out")
+        await history.record(byCopy)
+        let copy = try await topID(history)
 
         let count = await history.markSeriesNotFollowed("S")
 
         XCTAssertEqual(count, 0)
-        let flagged = await flags(history, [batch, marker])
-        XCTAssertEqual(flagged, [false, false])
+        let flagged = await flags(history, [batch, marker, copy])
+        XCTAssertEqual(flagged, [false, false, false])
         XCTAssertNil(UndoOperation.updateRecurringEvent(id: "S", title: "Standup", kind: .series).notFollowedTitle)
         XCTAssertNil(UndoOperation.batch([.createEvent(id: "S", title: "Standup", created: event("Standup"))]).notFollowedTitle)
+        XCTAssertNil(byCopy.notFollowedTitle)
     }
 
     /// spec-example: undo-history-discard / the rewrite after a recreate leaves the #263 record

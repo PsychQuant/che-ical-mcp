@@ -129,7 +129,9 @@ final class EventUpdateRecordTests: XCTestCase {
     }
 
     /// Condition 2. An occurrence picked by occurrence_date (span this or future): the old identifier
-    /// still names the series it was picked from.
+    /// still names the series it was picked from. The exception is span future from the series' first
+    /// occurrence with a calendar change, which moved the whole series under a new identifier within a
+    /// Google account; it fails this condition too, so its records stay behind (#551).
     func testNoRewriteWhenAnOccurrenceWasPicked() {
         XCTAssertNil(follow("S", "T", whole: false))
     }

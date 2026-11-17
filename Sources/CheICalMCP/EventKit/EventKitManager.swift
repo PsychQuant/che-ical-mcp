@@ -1864,8 +1864,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             onOccurrence: event !== masterEvent || masterEvent.isDetached, span: span)
         // #246: a calendar change across accounts changes the identifier, so the record keeps the
         // one the event has now (read here, after the save); #236: and the state the update left.
-        // #484: within a Google account, and across accounts, a calendar change gives the event a new
-        // identifier (measured). Older undo and redo records that name the event follow it, as after
+        // #484: within a Google account, and across accounts, a calendar change gave the event a new
+        // identifier (measured on iCloud and Google; Exchange was not run). Older undo and redo records that name the event follow it, as after
         // an in-place move (#435), but only when the save renamed the whole event
         // (`EventUpdateRecord.identifierToFollow`): a split usually leaves the old identifier in use
         // (not span `future` from the first occurrence with a calendar change: #551).

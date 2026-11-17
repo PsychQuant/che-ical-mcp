@@ -908,7 +908,9 @@ final class SeriesExceptionsUndoTests: XCTestCase {
 
     /// #538 fix 1 (F20, M25): a recreated series that reads back as its first occurrence's own
     /// identifier (`<id>/RID=<seconds>`) is returned as the series' identifier, so a followed record
-    /// never names one occurrence of it. A one-off keeps what it reads.
+    /// never names one occurrence of it. The answer's text still gives what was read (`E1/RID=…`), so
+    /// the identifier in the answer and the one records follow to differ in this shape (#559, G28:
+    /// the comment used to claim a one-off case this test does not build).
     func testARecreatedSeriesThatReadsBackAsAnOccurrenceIsReturnedAsTheSeries() throws {
         let store = FakeSeriesExceptionsStore()
         store.seriesSlots = [s0, s1, s2, s3]
