@@ -904,16 +904,17 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertEqual(text.components(separatedBy: pin).count - 1, 1, "\(place): exactly one \"\(pin)\" in: \(text)", line: line)
         }
         let update = try descriptions(of: "update_event")
-        assertOnce("calendar_name moves the event to another calendar and the store gives it a new identifier there: a calendar in another account, and within a Google account another calendar of the same account (measured; within an iCloud account the identifier stayed the same)", in: update.declared, "update_event")
+        assertOnce("calendar_name moves the event to another calendar and the store gives it a new identifier there: a calendar in another account, and within a Google account another calendar of the same account (measured; within an iCloud account the identifier stayed the same; Exchange was not measured)", in: update.declared, "update_event")
         XCTAssertFalse(update.declared.contains("calendar_name moves the event to a calendar in another account ("), "the old first case: \(update.declared)")
         assertOnce("After a calendar change over the whole event (a one-off event, or a series with span 'all' through its own identifier), older undo entries of the event follow it to the new identifier (#484); a split of the series is not followed, nor is span 'future' from the series' first occurrence with calendar_name, which moved the whole series under a new identifier within a Google account while older entries kept the old one (#551).", in: update.declared, "update_event")
-        assertOnce("a move to another calendar (another account, or within a Google account)", in: update.summary, "manifest update_event")
+        assertOnce("a move to another calendar (measured: another account, or within a Google account; Exchange not measured)", in: update.summary, "manifest update_event")
         assertOnce("(older undo entries follow a calendar change of the whole event, not one through span future from the first occurrence, #551)", in: update.summary, "manifest update_event")
         XCTAssertFalse(update.summary.contains("when a move to another account or a split"), update.summary)
 
         let tool = CheICalMCPServer.defineTools().first { $0.name == "update_event" }
         let calendarName = tool?.inputSchema.objectValue?["properties"]?.objectValue?["calendar_name"]?.objectValue?["description"]?.stringValue ?? ""
-        assertOnce("Another calendar can give the event a new identifier (in another account, and within a Google account): use the response's id (see id_changed).", in: calendarName, "calendar_name")
+        assertOnce("Another calendar can give the event a new identifier (measured: a calendar in another account, and another calendar within a Google account; within an iCloud account it stayed the same; Exchange was not measured): use the response's id (see id_changed).", in: calendarName, "calendar_name")
+        XCTAssertFalse(calendarName.contains("(in another account, and within a Google account)"), "#554: the closed list: \(calendarName)")
         XCTAssertTrue(calendarName.contains("(#503: the move is a create plus a delete, not measured)"), "the #503 sentence stays: \(calendarName)")
 
         let undo = try descriptions(of: "undo")

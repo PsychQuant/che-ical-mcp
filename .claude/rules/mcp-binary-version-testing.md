@@ -168,7 +168,11 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
     時間沒有晚於紀錄裡的開始時間（`created.startDate`）；兩種都回報到 #377。
     **edited-before 形狀**：另建一個系列，用 `--cli` 刪第一個場次、再用 `--cli` 的 `update_event` span `this` 改第二個
     場次的標題（兩個寫入都不進 session 的 undo stack）→ session `undo`：同樣的拒絕（stand-in 是第三個場次）→
-    `discard_id` 移除 → `delete_event` span `all` 會以 edited-before 拒絕（訊息說可以怎麼逐一刪），這是預期的。
+    `discard_id` 移除 → 測試者自己 `delete_event` span `all`、系列的 bare id：**不會被拒絕**，系列經那個被單獨改過的場次
+    （第一個剩下的場次）以 span `future` 整串刪掉，回 `deleted`，帶 `occurrence_id`（那個場次）與 `undo_note`（這筆刪除不能
+    undo：undo 會拒絕並丟掉它的紀錄），讀回 0 個場次。這是 #428 的路（見〈場次自己的 id 上的 span all（#416）〉一節的
+    「系列 id 走到第一場」）；#428 之前的 build 在這裡回 edited-before 的拒絕。2026-11-13 在 Google 的拋棄式日曆上用
+    `ba98641`（1.23.0）的 release build 以長駐 stdio server 量過一次（#547）；這個形狀在 iCloud 沒有用這個 build 量過。
     **edited-after 形狀**：另建一個系列，用 `--cli` 刪第一個場次、再用 `--cli` 改第三個場次（在 stand-in 之後）的標題 →
     session `undo`：同樣的拒絕 → `discard_id` 移除 → 測試者自己 `delete_event` span `all`：**連被單獨改過的第三個場次也
     一起刪掉**。這是 `delete_event` 的預期行為（它不做 create-undo 的 `modified_occurrences` 檢查），不是 undo 的；也正是
@@ -709,8 +713,11 @@ end、notes、location、alarms。
    (j3) `create_event` → `update_event` 只帶 `calendar_name` → `undo` 帶那筆紀錄的 `discard_id` → `undo`：以
    「changed after this operation … (calendar)」拒絕，不是 not found，紀錄保留，`discard_id` 可移除。
    (j) 不涵蓋 `keep_later_edits` 的 undo、undo 之後的 redo、跨帳號（iCloud 與 Google 兩個方向）的換日曆與它的 undo、
-   整個系列以 span `all` 換日曆（裝置格 M1、X3），以及 iCloud 帳號內 ID 不變的對照（IC1–IC3）：
-   這五項只有 PR #552 的裝置執行（長駐 stdio server，各跑一次）；
+   整個系列以 span `all` 換日曆（裝置格 M1、X3），以及 iCloud 帳號內 ID 不變的對照（IC1–IC3）。這五項，加上格 E（先改 `title`、
+   再換日曆，較舊的那筆 update 紀錄跟著一次改寫）、格 M4（同一次呼叫帶 `title` 與 `calendar_name`），以及從系列第一場以
+   span `future` 帶 `calendar_name` 的那一格（「split 不跟」的裝置證據：紀錄沒有被改寫），都只有 PR #552 的裝置執行（長駐
+   stdio server，各跑一次）。最後那一格量到的是還沒修的 #551（整個系列在 Google 換了 ID，較舊的紀錄回 not found），所以不加成
+   gate 的步驟；
 6. `delete_events_batch` 的 `event_ids` 帶 `[系列 id, 第 1 場自己的 id]`、span `all`，第 1 場**只改標題**（開始時間沒變，這時
    系列 id 單獨呼叫時走第一場，#436）。先用 `--cli` 帶 `dry_run: true`：列出兩列、沒有拒絕。**真的刪除要在重啟後的 session MCP
    上做**（`--cli` 的 undo stack 隨 process 消失，上面的表）：回 2 succeeded、沒有剩下；接著 `undo` 一次：系列與場次都回來，
