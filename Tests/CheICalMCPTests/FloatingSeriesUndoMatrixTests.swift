@@ -290,6 +290,27 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
                 }
             }
         }
+        // J1 (verify round 3): the window edges, where a stale record's true slot is outside every window and
+        // its wall-clock reading names a slot inside one, deleted on its own (`windowEdgeCells`).
+        return cells + windowEdgeCells()
+    }
+
+    /// J1's two shapes in every host, at 06:00 and 22:00, on the three routes: (i) a young weekly series moved
+    /// one week later, the 210th occurrence edited and the 209th deleted, the window ending between them;
+    /// (ii) a series begun three years before the delete, moved one week earlier, the second occurrence
+    /// edited and the third deleted, the window starting after the second's true slot.
+    private func windowEdgeCells() -> [Cell] {
+        var cells: [Cell] = []
+        for host in hosts {
+            for hourOfDay in [6, 22] {
+                for route in [Route.seriesObject, .standIn(.nothing), .standIn(.earlier)] {
+                    cells.append(Cell(host: host, step: 7 * day, hourOfDay: hourOfDay, edited: 209, move: 7 * day, deleted: [208],
+                                      route: route, count: 280))
+                    cells.append(Cell(host: host, step: 7 * day, hourOfDay: hourOfDay, edited: 1, move: -7 * day, deleted: [2],
+                                      route: route, count: 5 * 52 + 20, yearsBefore: 3))
+                }
+            }
+        }
         return cells
     }
 
@@ -356,6 +377,27 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             let run = try run(cell)
             XCTAssertEqual(run.failures, [], leaves.rawValue)
             XCTAssertEqual(run.kind, .twoNotApplied, leaves.rawValue)
+        }
+    }
+
+    /// J1 (verify round 3): a stale record whose true slot lies outside every window while its wall-clock
+    /// reading names a slot inside one that was deleted on its own. (i) a young weekly series moved one week
+    /// later, the 210th occurrence edited, the 209th deleted: the window ends between the two. (ii) a series
+    /// begun three years before the delete, moved one week earlier, the second occurrence edited, the third
+    /// deleted: the window starts after the edited one's true slot. Placed on the deleted slot, the record's
+    /// true slot was never removed and the one-off was written there too: two events at one start.
+    func testJ1AStaleRecordWhoseTrueSlotIsOutsideTheWindowsWritesNoSecondEvent() throws {
+        for host in hosts where host.secondsFromGMT() != 0 {
+            for route in [Route.seriesObject, .standIn(.nothing), .standIn(.earlier)] {
+                let late = Cell(host: host, step: 7 * day, hourOfDay: 6, edited: 209, move: 7 * day, deleted: [208], route: route,
+                                count: 280)
+                let early = Cell(host: host, step: 7 * day, hourOfDay: 6, edited: 1, move: -7 * day, deleted: [2], route: route,
+                                 count: 5 * 52 + 20, yearsBefore: 3)
+                for cell in [late, early] {
+                    let run = try run(cell)
+                    XCTAssertEqual(run.failures, [], cell.label)
+                }
+            }
         }
     }
 
