@@ -289,8 +289,8 @@ final class DeleteUndoFollowHandlerTests: XCTestCase {
     }
 
     /// F18: each kind that can be flagged shows its own recorded title, through the production path
-    /// (`handleUndo` and the real builder): an update's title before it, a #263 update's old title, a
-    /// move by copy's original. The other titles of the record are not shown.
+    /// (`handleUndo` and the real builder): an update's title before it, a #263 update's old title.
+    /// The other titles of the record are not shown. A move by copy is not flagged (#559).
     func testEachFlaggedKindShowsItsOwnRecordedTitle() async throws {
         let exceptions = SeriesExceptions(window: DateInterval(start: s0, duration: day), keptSlots: [], detached: [])
         let cases: [(UndoOperation, String)] = [
@@ -301,8 +301,7 @@ final class DeleteUndoFollowHandlerTests: XCTestCase {
             (.updateSeries(SeriesUpdateRecord(id: "S", externalIdentifier: "X-S", old: UndoSnapshotFixtures.event(title: "Series before"),
                                               saved: UndoSnapshotFixtures.event(title: "Series after"), fields: ["title"],
                                               before: exceptions, after: exceptions)), "Series before"),
-            (.moveByCopy(original: UndoSnapshotFixtures.event(title: "Original"), isSplit: false, notCarriedOver: [], copyID: "S",
-                         copy: UndoSnapshotFixtures.event(title: "Copy")), "Original"),
+            // A move by copy is not flagged (#559): its undo restores the original and reports the copy.
         ]
         for (operation, title) in cases {
             let history = CalendarUndoManager()
