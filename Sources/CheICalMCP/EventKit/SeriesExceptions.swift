@@ -739,9 +739,9 @@ enum OccurrenceSlotGuard {
     /// only: two readings compared with two readings can meet where neither occurrence's slot is (a
     /// `/RID=` of each kind on adjacent days at a host 12 hours from UTC, PR #558 verify F1, F4). So the
     /// guard answers `held` only where it did before #539, and the new case writes nothing and keeps the
-    /// record. Not covered: a holder edited on its own whose digits are wall-clock time, at the true slot
-    /// of an origin whose digits are wall-clock time too, is compared at its instant reading, as before
-    /// #539, and the one-off may be written beside it.
+    /// record. Not covered: a holder edited on its own at the origin's true slot whose `/RID=` is of the
+    /// other kind (an instant where the origin's digits are wall-clock time, or the reverse) does not meet
+    /// the origin's instant reading, so the one-off is written beside it, as before #539.
     static func answer(_ origin: OccurrenceOrigin, recreatedAs recreated: [UndoPostState.OccurrenceIDs],
                        by holders: [SeriesHolder]) -> Answer {
         let series = [origin.series] + recreated

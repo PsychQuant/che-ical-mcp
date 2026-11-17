@@ -13,7 +13,7 @@ final class OccurrenceSlotWallClockRefusalTests: XCTestCase {
     /// as it is (a trusted message).
     func testTheRecordIsKeptAndTheTextIsShownAsItIs() {
         XCTAssertEqual(UndoFailureDisposition.of(refusal), .restore)
-        XCTAssertFalse(refusal is UnrecoverableUndoError)
+        XCTAssertFalse((refusal as Error) is UnrecoverableUndoError)
         XCTAssertEqual(EventKitErrorSanitizer.writeFailureLog(handler: "undo", identifier: "batch member", error: refusal), refusal.message)
     }
 

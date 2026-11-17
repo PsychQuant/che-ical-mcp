@@ -1308,12 +1308,15 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 
 ## Release gate：沒有時區的系列，修改過的場次在 undo 裡的讀法（#539）
 
-#539 讓整個系列刪除的 undo（`SeriesExceptionsPlanner.placeDetached`）與單一場次刪除的 undo 的檢查（`OccurrenceSlotGuard.isHeld`）
-把修改過的場次的 `/RID=` 讀成兩種時間（`SlotReadings`：牆上時間與時刻），採用落在系列場次上的那一種。純函式、記憶體內 store 與
-三個主機時區都有測試；裝置上只在**單一 stdio process**（不是 session MCP）做過，所以**出 #539 的那個版本打 tag 之前**，在重啟後的
-session MCP 上（行為探測確認是新 binary 之後）重做下面幾格，只用名稱含 `#539` 的拋棄式 iCloud 日曆。系列都是每週 6 場、第一場在
-未來、帶 `timezone: Asia/Taipei` 與 `end_date` 建立；修改與 `clear_timezone` 用 `--cli` 做（不進 session 的 undo stack），刪除與 undo
-在 session 上做，讀回用 `--cli`：
+#539 讓整個系列刪除的 undo（`SeriesExceptionsPlanner.placeDetached`）、單一場次刪除的 undo 的檢查（`OccurrenceSlotGuard.answer`）
+與刪除時的預告，把讀取時**沒有時區的系列**裡修改過的場次的 `/RID=` 讀成兩種時間（`SlotReadings`：牆上時間與時刻），採用恰好一種
+落在系列場次上的那一種；有時區的系列只讀成時刻，跟 #539 之前一樣（PR #558 verify round 1 的裁定 A）。放不上去的情形（兩種讀法都是或
+都不是場次、落在擷取時有一般場次的時段、落在視窗外、兩筆落在同一個時段）與結束在開始之前的場次，都讓所有例外不套用；單一場次刪除的
+檢查只在讀成時刻的時段比對，只有一般場次在牆上時間讀法上時拒絕 undo、保留紀錄。純函式、記憶體內 store 與三個主機時區都有測試；裝置上
+只在**單一 stdio process**（不是 session MCP）做過，所以**出 #539 的那個版本打 tag 之前**，在重啟後的 session MCP 上（行為探測確認是
+新 binary 之後）重做下面幾格，只用名稱含 `#539` 的拋棄式 iCloud 日曆。系列都是每週 6 場、第一場在未來、帶 `timezone: Asia/Taipei` 與
+`end_date` 建立（第 11、12 步除外）；修改與 `clear_timezone` 用 `--cli` 做（不進 session 的 undo stack），刪除與 undo 在 session 上做，
+讀回用 `--cli`：
 
 1. **F1**：`clear_timezone`（span `all`）→ 第 3 場改標題、第 4 場延後一小時（span `this`）→ session：`delete_event` span `all` → `undo`：
    `2 occurrence(s) edited on their own came back`，讀回與刪除前相同。
@@ -1329,25 +1332,43 @@ session MCP 上（行為探測確認是新 binary 之後）重做下面幾格，
 9. **預告（N1–N3）**：保有時區的系列 → `--cli` 改第 3 場標題 → `--cli` 用系列 id、span `all` 把整個系列往後移一小時（回 `updated`；
    第 3 場跟著移、保留標題，`/RID=` 仍是舊時段）→ session：`delete_events_batch` dry run（span `all`）的列帶 `undo_note`
    （`Undo of this row would be expected to bring the series back from its rules alone: 1 occurrence(s) …`）→ 分別用 `delete_event`
-   span `all`（N1）、`delete_events_batch` 實際呼叫（N2，`rules_alone_on_undo` 有一列）、`delete_event` span `future` 從第一場起（N3）
-   刪除，回應都帶 `undo_note`（`Undo is expected to bring this series back from its rules alone: 1 occurrence(s) …`）→ `undo`：
-   `Restored from the series rules alone: the recorded exceptions did not match …`，讀回 6 場、第 3 場的標題回到系列的標題。
+   span `all`（N1）、`delete_events_batch` 實際呼叫（N2）、`delete_event` span `future` 從第一場起（N3）刪除。N1 與 N3 的回應帶
+   `undo_note`（`Undo is expected to bring this series back from its rules alone: 1 occurrence(s) …`）；N2 的回應沒有最上層的
+   `undo_note`，這段說明在 `rules_alone_on_undo` 的那一列。`undo`：N1 與 N3 回
+   `Restored from the series rules alone: the recorded exceptions did not match …`，N2（batch）回
+   `1 series was restored from its rules alone: its recorded exceptions did not match …`；三者讀回都是 6 場、第 3 場的標題回到系列的標題。
 10. **主機時區的夏令時間切換日修改的場次**：server 以 `TZ=America/Los_Angeles` 執行；系列每週 6 場、30 分鐘，以 `Asia/Taipei` 建立後
     `clear_timezone`，修改切換日那一場的標題。DS1：02:30、第一場 2027-02-28，修改 2027-03-14 那一場（洛杉磯沒有 02:30）：store 把它列成
     03:30 開始、03:00 結束；刪除沒有 `undo_note`；`undo`：`Restored from the series rules alone: an occurrence edited on its own ends before it starts …`，
     讀回 6 場、系列的標題。DS2：01:30、第一場 2027-10-24，修改 2027-11-07 那一場（01:30 出現兩次）：store 列在 01:30 PDT；`undo` 還原那一個修改，
     讀回那個時段只有一個事件、修改過的標題。
+11. **S1**（PR #558 verify round 1）：有時區（`Asia/Taipei`）的每日系列 06:00、6 場、`end_date` 在最後一場當天 23:00 → `--cli` 改第 2 場
+    標題 → `--cli` 用系列 id、span `all` 把 `start_time` 改到同一天 22:00（延後 16 小時，回 `updated`；第 2 場跟著移、`/RID=` 留在舊時段）。
+    (a) session：`delete_event` span `all`：回應帶 `undo_note` → `undo`：`Restored from the series rules alone: the recorded exceptions did not match …`，
+    讀回 6 場、都是系列的標題（+0 與 +20 秒）。(b) 另一個同樣的系列，session：用第 2 場自己的 id `delete_event` span `this` → `undo`：
+    `restored the deleted occurrence … as a one-off event`，讀回 6 場、第 2 場是改過的標題、沒有重複。**S2**：同 S1，刪除前先 `--cli` 的
+    `clear_timezone`（span `all`）：被 #503 的檢查拒絕（`a listed occurrence falls where the rule gives none … Nothing was written.`），
+    之後 (a)(b) 與 S1 相同。
+12. **FR**（#321 檢查的拒絕，裁定 F）：server 以 `TZ=America/Los_Angeles` 執行；DS1 的系列（`end_date` 2027-04-05）`clear_timezone` 之後改
+    2027-03-14 與 2027-03-28 兩場的標題 → session：用 2027-03-28 那場自己的 id `delete_event` span `this` → `delete_event` span `all` →
+    `undo`：照規則回來（DS1 的說明）→ `undo`：被拒絕（`Cannot undo the deletion of an occurrence of '…': its series had no time zone when it was deleted, …`），
+    什麼都沒寫（讀回 6 場、都是系列的標題，+0 與 +20 秒），`undo_history` 最上面仍是那一筆 → `undo` 帶它的 `discard_id` 移除。
 
 2026-11-16 已在 iCloud 用 `83d2418a` 的簽章 release build、每格一個 stdio process 做過第 1 到 7 步，結果都如上。2026-11-17 用 `3587d72e`
-的簽章 release build（它的 `Sources/` 與 head `95814269` 相同；之後的 commit 在 `Sources/` 只改了 `Server.swift` 裡 `delete_event` 與
+的簽章 release build（它的 `Sources/` 與 round 0 的 head `95814269` 相同；之後的 commit 在 `Sources/` 只改了 `Server.swift` 裡 `delete_event` 與
 `delete_events_batch` 的描述文字）在 stdio process 上重做第 1、2、4 步，並做了第 8 到 10 步，結果都如上；同一天較早用
 `cb3346ec` 做第 10 步的 DS1 時，那一場兩種讀法都放得上去，一次性事件存檔失敗（`eventkit_error_4`），undo 讓系列維持刪除，`3587d72e` 改成
-不套用例外、照規則重建（見上）。**沒做、出版前要補或記成未量**：
+不套用例外、照規則重建（見上）。同一天 PR #558 verify round 1 用 `3587d72e` 與 `main`（`bdcb8f9e`）的簽章 release build 做第 11 步：
+`3587d72e` 的 (a) 只剩 5 場（第 2 場的時段被當成多餘的場次移除，也沒有寫一次性事件，回應卻說一個單獨刪除的場次維持刪除），(b) 回
+`nothing was written … its restored series already has an occurrence at its slot`、紀錄消失、第 2 場不見；`main` 的 (a) 照規則回來 6 場，
+(b) 寫回一次性事件。round 1 修正後用 `6851a4b9` 的簽章 release build（之後的 commit 只改文件與測試）在 stdio process 上重做第 1 到 4、
+7（只有 L1）、8 到 12 步，結果都如上。**沒做、出版前要補或記成未量**：
 
-- 第 1 到 10 步在重啟後的 session MCP 上（第 7、10 步除外）。
-- 刪除時的預告不數放得上去、但以這台 Mac 讀到的時間結束在開始之前的場次（時間落在夏令時間切換）：刪除時沒有說明，undo 照規則重建這個系列（第 10 步的 DS1）。
+- 第 1 到 12 步在重啟後的 session MCP 上（第 7、10、12 步除外，它們要另一個主機時區的 server）。
+- 刪除時的預告：放得上去、但以這台 Mac 讀到的時間結束在開始之前的場次（時間落在夏令時間切換）也不給：刪除時沒有說明，undo 照規則重建這個系列（第 10 步的 DS1）。
 - span `future` 的日期範圍 dry run 不給預告；`delete_events_batch` 用日期範圍、span `future` 刪掉整個系列的列，實際呼叫的 `rules_alone_on_undo` 沒有在裝置上看過。
-- split move（`move_events_batch` span `this`）在這種系列上的 undo（#466 走同一個檢查，沒有量）。
+- split move（`move_events_batch` span `this`）在這種系列上的 undo（#466 走同一個檢查與同一個拒絕，沒有量）。
+- 刪除前又讀到時區的系列（#541 在 Google 日曆上看到）：照 #539 之前讀成時刻，沒有量。
 - #321 gate 第 3、4 步在保有時區的系列上（#321 起一直欠著）。
 - iCloud 以外的來源。
 - 計畫裡移出這個 PR 的部分：#503 檢查（計畫第 4 步、mutant 10、裝置格 MB 與 R1）的提案在 #553；其他三個讀者（create-undo 的檢查、#416 的星期檢查、
