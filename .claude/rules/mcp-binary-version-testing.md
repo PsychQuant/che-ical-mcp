@@ -1354,6 +1354,10 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
     `undo`：照規則回來（DS1 的說明）→ `undo`：被拒絕（`Cannot undo the deletion of an occurrence of '…': its series had no time zone when it was deleted, …`），
     什麼都沒寫（讀回 6 場、都是系列的標題，+0 與 +20 秒），`undo_history` 最上面仍是那一筆 → `undo` 帶它的 `discard_id` 移除。
 
+13. **FW**（與 #538 合併後：不套用例外的還原讓較舊的紀錄跟著重建的系列走）：server 以 `TZ=America/Los_Angeles` 執行；session：在拋棄式
+    日曆以 `Asia/Taipei` 建立 DS1 的系列（留下 create 的紀錄）→ `--cli`：`clear_timezone`、改 2027-03-14 那一場的標題 → session：`delete_event`
+    span `all` → `undo`：照規則回來（DS1 的說明），沒有說紀錄沒被移動 → `undo`：create 的紀錄跟著新的系列 id，刪掉重建的系列，讀回 0 場。
+
 2026-11-16 已在 iCloud 用 `83d2418a` 的簽章 release build、每格一個 stdio process 做過第 1 到 7 步，結果都如上。2026-11-17 用 `3587d72e`
 的簽章 release build（它的 `Sources/` 與 round 0 的 head `95814269` 相同；之後的 commit 在 `Sources/` 只改了 `Server.swift` 裡 `delete_event` 與
 `delete_events_batch` 的描述文字）在 stdio process 上重做第 1、2、4 步，並做了第 8 到 10 步，結果都如上；同一天較早用
@@ -1370,6 +1374,7 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 - split move（`move_events_batch` span `this`）在這種系列上的 undo（#466 走同一個檢查與同一個拒絕，沒有量）。
 - 刪除前又讀到時區的系列（#541 在 Google 日曆上看到）：照 #539 之前讀成時刻，沒有量。
 - #321 gate 第 3、4 步在保有時區的系列上（#321 起一直欠著）。
+- **Not covered**：重建的系列在被刪場次的時段上有一個單獨修改過、`/RID=` 是另一種的場次（被刪的是牆上時間而它是時刻，或反過來）時，檢查只比讀成時刻的時段，會像 #539 之前一樣在旁邊寫第二個事件（後續 issue）。
 - iCloud 以外的來源。
 - 計畫裡移出這個 PR 的部分：#503 檢查（計畫第 4 步、mutant 10、裝置格 MB 與 R1）的提案在 #553；其他三個讀者（create-undo 的檢查、#416 的星期檢查、
   #509 的規則結束檢查；計畫第 5 步、mutant 11）在 #557。
