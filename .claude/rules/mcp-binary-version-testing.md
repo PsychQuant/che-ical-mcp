@@ -1356,7 +1356,8 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 
 13. **FW**（與 #538 合併後：不套用例外的還原讓較舊的紀錄跟著重建的系列走）：server 以 `TZ=America/Los_Angeles` 執行；session：在拋棄式
     日曆以 `Asia/Taipei` 建立 DS1 的系列（留下 create 的紀錄）→ `--cli`：`clear_timezone`、改 2027-03-14 那一場的標題 → session：`delete_event`
-    span `all` → `undo`：照規則回來（DS1 的說明），沒有說紀錄沒被移動 → `undo`：create 的紀錄跟著新的系列 id，刪掉重建的系列，讀回 0 場。
+    span `all` → `undo`：照規則回來（DS1 的說明），沒有說紀錄沒被移動 → `undo`：create 的紀錄跟著新的系列 id，所以找得到它，被 #236 的檢查以
+    `start_time`、`end_time`、`timezone` 拒絕（`clear_timezone` 在 create 之後改的），不是找不到，也不是 #538 的 not-followed 訊息；紀錄保留。
 
 2026-11-16 已在 iCloud 用 `83d2418a` 的簽章 release build、每格一個 stdio process 做過第 1 到 7 步，結果都如上。2026-11-17 用 `3587d72e`
 的簽章 release build（它的 `Sources/` 與 round 0 的 head `95814269` 相同；之後的 commit 在 `Sources/` 只改了 `Server.swift` 裡 `delete_event` 與
@@ -1366,7 +1367,8 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 `3587d72e` 的 (a) 只剩 5 場（第 2 場的時段被當成多餘的場次移除，也沒有寫一次性事件，回應卻說一個單獨刪除的場次維持刪除），(b) 回
 `nothing was written … its restored series already has an occurrence at its slot`、紀錄消失、第 2 場不見；`main` 的 (a) 照規則回來 6 場，
 (b) 寫回一次性事件。round 1 修正後用 `6851a4b9` 的簽章 release build（之後的 commit 只改文件與測試）在 stdio process 上重做第 1 到 4、
-7（只有 L1）、8 到 12 步，結果都如上。**沒做、出版前要補或記成未量**：
+7（只有 L1）、8 到 12 步，結果都如上。與 `main`（`92d9b796`，#538）合併後，用合併後 head `80e3179d` 的簽章 release build 重做第 1、2、4、9（只有 N1）、10（只有 DS1）、
+11、12 步並做第 13 步，以及 #538 gate 的 sequence 1 與 8，結果都如上（sequence 8 的第二次 undo 回 #538 的 not-followed 訊息、紀錄保留）。**沒做、出版前要補或記成未量**：
 
 - 第 1 到 12 步在重啟後的 session MCP 上（第 7、10、12 步除外，它們要另一個主機時區的 server）。
 - 刪除時的預告：放得上去、但以這台 Mac 讀到的時間結束在開始之前的場次（時間落在夏令時間切換）也不給：刪除時沒有說明，undo 照規則重建這個系列（第 10 步的 DS1）。
