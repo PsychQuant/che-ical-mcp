@@ -1379,10 +1379,10 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 11、12 步並做第 13 步，以及 #538 gate 第 1、3 步（#538 Implementation Complete 編號的 sequence 1 與 8），結果都如上（第 3 步的第二次 undo 回 #538 的 not-followed 訊息、紀錄保留）；
 B1、N2、N3、DS2、R2、L1 只在合併前的 `6851a4b9` 做過。PR #558 round 2 修正後（2026-11-18），用 `ab1a94ec` 的 Developer ID 簽章 release build（這台機器連不到
 Apple 的時間戳記伺服器，以 `--timestamp=none` 簽章）在 stdio process 上重做第 1、2、4、9（只有 N1）、10（只有 DS1）、11、12、13 步並做第 14 步，以及
-#538 gate 第 1、3 步：第 1、2、4、9、11 步、第 14 步與 #538 的兩步都如上。第 10、12、13 步這次走的是放置的答案，不是 DS1 的：修改切換日那一場之後，
-store 在同一個時間（03:30 PDT）同時列出改過的場次與一個沒改過的場次（立即與 40 秒後都是），所以紀錄落在 kept slot 上（裁定 B），刪除帶 `undo_note`、
-undo 回 `the recorded exceptions did not match …`、讀回 6 場系列的標題；同一個形狀在 `adfc902e` 的簽章 build 上也一樣（所以是 store 這次的列法，
-不是這一輪的程式）；第 12 步的第二次 undo 照舊被拒絕、紀錄保留、`discard_id` 移除，第 13 步的第二次 undo 被 #236 以 `timezone` 拒絕、紀錄保留。
+#538 gate 第 1、3 步，結果都如上。第 10、12、13 步要照步驟做：建立、`clear_timezone` 與修改用主機時區（`+08:00`）的 `--cli`，只有 stdio server 與讀回
+用 `TZ=America/Los_Angeles`。第一次試的時候 `clear_timezone` 與修改也在洛杉磯時區的 process 裡做，修改的 `/RID=` 成了 03:30 的牆上時間，store
+在 03:30 PDT 同時列出改過的場次與一個沒改過的場次，紀錄落在 kept slot 上（裁定 B），刪除帶 `undo_note`、undo 回 `did not match`；`adfc902e` 的
+簽章 build 在同樣的做法下也一樣，所以是做法不對，不是程式。
 **沒做、出版前要補或記成未量**：
 
 - 第 1 到 14 步在重啟後的 session MCP 上（第 7、10、12、13 步除外，它們要另一個主機時區的 server）。
