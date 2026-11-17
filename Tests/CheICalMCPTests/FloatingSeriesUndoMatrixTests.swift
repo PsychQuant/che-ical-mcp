@@ -81,6 +81,18 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
     /// What a cell came to.
     enum Kind: Equatable { case notRestorable, noCapture, oneReading, twoApplied, twoNotApplied }
 
+    /// J10: where `main`'s restore of a two-reading record applies it, what its calendar is.
+    enum MainAgainstThis: String {
+        /// The calendar as before the delete: `main` kept the edit, this PR does not.
+        case asBefore
+        /// As before the delete with the first occurrence kept from the rule, which `main`'s answer says.
+        case firstKeptFromRule
+        /// A calendar the matrix's checks reject (two events at one start, or an occurrence lost or moved).
+        case rejected
+        /// The same calendar as this PR's.
+        case same
+    }
+
     struct Run {
         var kind: Kind
         var failures: [String] = []
@@ -88,9 +100,9 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         /// checks reject (a stale `/RID=` after a move by a whole period, read at offset 0: #560's shape on a
         /// series with no time zone). Counted apart; it is not this PR's path.
         var asOnMain: [String] = []
-        /// A two-reading cell where `main`'s restore of the same record leaves the calendar as before the
-        /// delete and this PR's rules-alone restore does not (J10).
-        var mainKeptTheEdit = false
+        /// A two-reading cell where `main`'s restore of the same record applies the exceptions (J10): how its
+        /// calendar compares with this PR's rules-alone one. Nil where `main` applies nothing.
+        var main: MainAgainstThis? = nil
     }
 
     // MARK: - building a cell
@@ -195,7 +207,15 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             run.failures = issues
             // J10: `main`'s restore of the same record on the same recreated series.
             let main = restoreAtStoreLevel(exceptions, slots: ruleSlots, zone: host, onMain: true)
-            run.mainKeptTheEdit = (main.left + left).sorted() == before && final != before
+            if main.answer.contains("notApplied: false") {
+                let mainFinal = (main.left + left).sorted()
+                var firstKept = before.filter { !$0.hasPrefix("\(Int(start.timeIntervalSinceReferenceDate)) ") }
+                firstKept = (firstKept + [key(start, "Standup")]).sorted()
+                run.main = mainFinal == final ? .same : mainFinal == before ? .asBefore
+                    : mainFinal == firstKept && main.answer.contains("firstOccurrenceKeptFromRule: true") ? .firstKeptFromRule : .rejected
+            } else if (main.left + left).sorted() != final {
+                fail("main applied nothing and left another calendar")
+            }
             return run
         }
         if restore.notApplied {
@@ -335,7 +355,7 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         var kinds: [String: Int] = [:]
         var twoReadingFailures = 0
         var asOnMain = 0
-        var mainKeptTheEdit = 0
+        var mainAgainstThis: [String: Int] = [:]
         var mainKeptByShape: [String: Int] = [:]
         let all = cells()
         for cell in all {
@@ -345,8 +365,8 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             kinds["\(run.kind)", default: 0] += 1
             failures += run.failures
             if !run.asOnMain.isEmpty { asOnMain += 1 }
-            if run.mainKeptTheEdit {
-                mainKeptTheEdit += 1
+            if let main = run.main { mainAgainstThis[main.rawValue, default: 0] += 1 }
+            if run.main == .asBefore || run.main == .firstKeptFromRule {
                 let offset = TimeInterval(cell.host.secondsFromGMT())
                 let move = cell.move == offset ? "move +offset" : cell.move == -offset ? "move -offset" : "move \(cell.move / 3_600) h"
                 mainKeptByShape[move, default: 0] += 1
@@ -356,9 +376,10 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         let redLabels = Set(failures.map { $0.components(separatedBy: ": ")[0] })
         let redCells = redLabels.count
         let byRoute = Dictionary(grouping: redLabels) { label in label.components(separatedBy: ", ").last ?? "" }.mapValues(\.count)
+        print("MATRIX main applied a two-reading record \(mainAgainstThis.sorted { $0.key < $1.key })")
         print("MATRIX main kept the edit by move \(mainKeptByShape.sorted { $0.key < $1.key })")
         print("MATRIX red by route \(byRoute.sorted { $0.key < $1.key })")
-        print("MATRIX cells \(all.count) kinds \(kinds.sorted { $0.key < $1.key }) red \(redCells) two-reading red \(twoReadingFailures) one-reading as on main but rejected \(asOnMain) two-reading where main kept the edit \(mainKeptTheEdit)")
+        print("MATRIX cells \(all.count) kinds \(kinds.sorted { $0.key < $1.key }) red \(redCells) two-reading red \(twoReadingFailures) one-reading as on main but rejected \(asOnMain)")
         XCTAssertEqual(redCells, 0, failures.prefix(12).joined(separator: "\n"))
         // The totals of the round's record (PR #558 round 3, with J1's 72 window-edge cells): a change of the
         // restore that moves a cell from one outcome to another shows here.
@@ -368,9 +389,11 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         XCTAssertNil(kinds["twoApplied"], "no record of two readings is applied")
         XCTAssertEqual(kinds["twoNotApplied"], 5640)
         XCTAssertEqual(asOnMain, 464)
-        // J10: where `main`'s restore, reading the stale `/RID=` as an instant, leaves the calendar as before the delete and
-        // this PR's does not (the series moved by plus or minus the host's offset, or a day minus it, after the edit).
-        XCTAssertEqual(mainKeptTheEdit, 570)
+        // J10: where `main`'s restore, reading the stale `/RID=` as an instant, applies the record (742 cells): it leaves a
+        // calendar the checks accept and this PR's rules-alone restore does not in 674 (as before the delete, or with the first
+        // occurrence kept from the rule, as its answer says); one the checks reject in 40 (two events at one start in 6 of
+        // them); the same calendar as this PR in 28.
+        XCTAssertEqual(mainAgainstThis, ["asBefore": 570, "firstKeptFromRule": 104, "rejected": 40, "same": 28])
     }
 
     // MARK: - named cells

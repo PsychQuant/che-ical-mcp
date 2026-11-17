@@ -343,9 +343,24 @@ Before a whole-series delete removes anything, the server SHALL read the recorde
 source: idd-539-fix3
 updated: 2026-11-18
 code:
+  - Sources/CheICalMCP/EventKit/SeriesExceptions.swift
+  - Sources/CheICalMCP/EventKit/SeriesExceptionsUndo.swift
+  - Sources/CheICalMCP/EventKit/SlotReadings.swift
+  - Sources/CheICalMCP/EventKit/DeleteUndo.swift
+  - Sources/CheICalMCP/EventKit/UndoEventOutcome.swift
+  - Sources/CheICalMCP/EventKit/EventKitManager+SeriesExceptions.swift
+  - Sources/CheICalMCP/EventDeletionSource.swift
+  - Sources/CheICalMCP/EventBatchDeletionSource.swift
+  - Sources/CheICalMCP/Server.swift
+  - mcpb/manifest.json
+  - Tests/CheICalMCPTests/FloatingSeriesUndoMatrixTests.swift
+  - Tests/CheICalMCPTests/FloatingSeriesRulesAloneTests.swift
+  - Tests/CheICalMCPTests/FloatingSeriesExceptionsUndoTests.swift
+  - Tests/CheICalMCPTests/SeriesDeleteForecastTests.swift
+  - Tests/CheICalMCPTests/ManifestParityTests.swift
+  - Tests/CheICalMCPTests/SlotReadingsDocsTests.swift
   - README.md
   - README_zh-TW.md
-  - Tests/CheICalMCPTests/SlotReadingsDocsTests.swift
   - CHANGELOG.md
 -->
 

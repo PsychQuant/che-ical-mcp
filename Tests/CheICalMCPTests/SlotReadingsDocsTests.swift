@@ -97,7 +97,7 @@ final class SlotReadingsDocsTests: XCTestCase {
                         "**Undo of a whole-series delete of a series with no time zone says why it brings the series back from its rules alone** (#539)",
                         "**The edits of a series with no time zone are not restored by this undo; #539 stays open for that.** PR #558 placed",
                         "A matrix test over 7,884 shapes",
-                        "570 of those shapes are ones where `main`",
+                        "in 742 of those shapes `main`, reading the stale identifier as an instant, applied the record",
                         "on a zoned series moved 16 hours later the same day, `delete_event` with span `all` carried the note and its undo restored from the rules alone too."], in: "CHANGELOG.md")
     }
 }
