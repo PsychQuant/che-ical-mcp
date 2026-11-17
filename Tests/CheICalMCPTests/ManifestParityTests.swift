@@ -776,14 +776,14 @@ final class ManifestParityTests: XCTestCase {
                 XCTAssertFalse(tool.declared.contains(gone), "\(name): \(gone)")
                 XCTAssertFalse(tool.summary.contains(gone), "\(name) summary: \(gone)")
             }
-            once("gives that occurrence's identifier (#532: only an occurrence whose identifier is the series' identifier followed by /RID= and digits is found, the shape read on iCloud and, through EventKit, on Google; an identifier that fails the echo check is not given, and the text points to list_events)", in: tool.declared, name)
+            once("gives that occurrence's identifier (#532: only an occurrence whose identifier is the series' identifier followed by /RID= is found, the shape read on iCloud and, through EventKit, on Google; its identifier is given only when /RID= is followed by digits alone and it passes the echo check on characters and length, and otherwise the text points to list_events)", in: tool.declared, name)
             XCTAssertFalse(tool.declared.contains("gives that occurrence's identifier (#532);"), "#555: the shape limit: \(name)")
             // PR #545 verify round 2: the refusal needs an edited occurrence that starts on the day; a day
             // with no occurrence is not refused. #555: it is found only in the identifier shape read on
             // iCloud and Google, and the identifier is given only when it passes the echo check.
             once("does not reach an occurrence edited on its own: when no occurrence that was not edited on its own starts on that day and one edited on its own starts on it,", in: tool.summary, name)
             once(name == "move_events_batch" ? "(for a day with no occurrence, or one an edited occurrence was moved off, the row's error says so)" : "(a day with no occurrence, or one an edited occurrence was moved off, answers not found)", in: tool.summary, name)
-            once("found by an identifier of the series' id followed by /RID= and digits (the shape on iCloud and Google),", in: tool.summary, name)
+            once("found by an identifier of the series' id followed by /RID= (the shape on iCloud and Google),", in: tool.summary, name)
             once("gives its identifier, or points to list_events when it does not echo it", in: tool.summary, name)
         }
         let update = try descriptions(of: "update_event").declared
@@ -936,14 +936,23 @@ final class ManifestParityTests: XCTestCase {
         let undo = try descriptions(of: "undo")
         assertOnce("older entries of that event or reminder follow it, so a further undo acts on the recreated item and is checked like any undo (#538, measured on iCloud)", in: undo.declared, "undo")
         assertOnce("They do not follow a series whose occurrences edited on their own came back as separate events", in: undo.declared, "undo")
-        assertOnce("The undo of one occurrence's delete, of a split move or of a move by copy moves no entry, and no entry of a whole-series update that undo could restore (#263) is moved", in: undo.declared, "undo")
+        assertOnce("The undo of one occurrence's delete, of a split move or of a move by copy moves no entry, and the undo of a delete moves no entry of a whole-series update that undo could restore (#263)", in: undo.declared, "undo")
         // #538 fix 1 (F22): which undos follow, in both texts, and the exceptions and the measurement in the summary.
         assertOnce("The undo of a delete_event of a one-off event or of a whole series, of a delete_reminder, or of one member of a batch delete writes the item again under a new identifier", in: undo.declared, "undo")
         assertOnce("the undo of such an entry that is not found answers that the series it names was recreated as a new one", in: undo.declared, "undo")
         assertOnce("when one of them is an entry whose undo looks the series up", in: undo.declared, "undo")
-        assertOnce("whose entries that undo looks up are not moved, said in the answer when there are any", in: undo.summary, "manifest undo")
+        assertOnce("no entry follows a series whose edited occurrences came back as separate events; when entries of it whose undo looks it up remain (not when it reads back under its old identifier), the delete's undo says so", in: undo.summary, "manifest undo")
+        // #559 (G6, G9, G15, G16, G32): the limit of entries named by an occurrence's own identifier is the #426 move's,
+        // in both texts; the delete's undo is the one that says so; a recreated series under the removed identifier flags nothing.
+        assertOnce("entries naming the series by an occurrence's own identifier (a whole-series move made through it, #426) are neither moved nor flagged, and their undo answers the generic not-found", in: undo.summary, "manifest undo")
+        assertOnce("Entries that name the series by the own identifier of one of its occurrences (a whole-series move made through it, #426) are neither moved nor flagged, and their undo answers the generic not-found.", in: undo.declared, "undo")
+        assertOnce("the answer of the delete's undo (a batch undo's too) says so", in: undo.declared, "undo")
+        assertOnce("when the recreated series reads back under the removed identifier, no entry is flagged and nothing is said.", in: undo.declared, "undo")
+        XCTAssertFalse(undo.declared.contains("a whole-series move or an update made through it"), "#559 G15: such an update is a marker")
+        XCTAssertFalse(undo.summary.contains("a whole-series move or an update made through it"), "#559 G15: such an update is a marker")
         assertOnce("the undo of a delete_event of a one-off event or a whole series, of a delete_reminder or of a batch member recreates the item under a new identifier (measured on iCloud) and older entries of it follow", in: undo.summary, "manifest undo")
-        assertOnce("an entry of a whole-series update that undo could restore (#263) is not moved; and the undo of one occurrence's delete, a split move or a move by copy moves no entry (#538)", in: undo.summary, "manifest undo")
+        assertOnce("an entry of a whole-series update that undo could restore (#263) is not moved;", in: undo.summary, "manifest undo")
+        assertOnce("and the undo of one occurrence's delete, a split move or a move by copy moves no entry (#538)", in: undo.summary, "manifest undo")
         for character in ["<", ">", "&"] {
             XCTAssertFalse(undo.summary.contains(character), "manifest undo: \(character)")
         }

@@ -178,7 +178,8 @@ MCP 上（行為探測確認是新 binary 之後），只用名稱含 `#236` 的
     一起刪掉**。這是 `delete_event` 的預期行為（它不做 create-undo 的 `modified_occurrences` 檢查），不是 undo 的；也正是
     訊息不點名刪除工具、把刪除留給使用者手動做的原因。
     2026-11-04 已用 repo 內 build 的 binary 以單一 stdio process 在 iCloud 做過這三個形狀（含 discard 再 delete 的順序，
-    跨 process 的 `list_events` 確認；edited-after 形狀刪除前有 4 個場次、含改過的那個，刪除後 0 個）；出版前在重啟後
+    跨 process 的 `list_events` 確認；edited-after 形狀刪除前有 4 個場次、含改過的那個，刪除後 0 個）。那次的 build 在 #428
+    之前，edited-before 形狀最後的刪除回的是當時的 edited-before 拒絕，不是上面寫的整串刪除（#547）；出版前在重啟後
     的 session MCP 上重做一次。
 12. **還原目標日曆不見了（#269）**：拋棄式日曆（名稱含 `#269`）。session MCP：
     (a) 在日曆 A 建一次性事件 → `delete_event` → 刪掉日曆 A → `undo`：要以「Cannot undo the deletion of an event

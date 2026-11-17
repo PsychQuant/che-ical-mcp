@@ -668,6 +668,34 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertTrue(partial.message.contains(absoluteAlarmsNote), partial.message)
     }
 
+    /// #559 (G11, G26): a nested batch that stopped part-way carries what its restored members
+    /// flagged up with the rest, after the outer members' counts, and the batch sentence sums both.
+    func testANestedBatchCarriesItsRestoredNotFollowedCountUp() throws {
+        let inner = UndoBatchPartiallyUndoneError(remaining: [deleted("Y")], restoredCount: 1, memberError: "eventkit_error_1",
+                                                  restored: [deleted("Z")], restoredNotFollowed: [2])
+        let failure = UndoOperation.batchUndoFailure(members: [deleted("X"), .batch([deleted("Y"), deleted("Z")]), deleted("W")],
+                                                     interrupted: .init(completed: 1, underlying: inner),
+                                                     notFollowed: [1], describe: { _ in "unused" })
+        let partial = try XCTUnwrap(failure as? UndoBatchPartiallyUndoneError, "\(failure)")
+        XCTAssertEqual(partial.restoredNotFollowed, [1, 2])
+        let sentence = try XCTUnwrap(DeleteUndoFollow.batchNotFollowedSentence([1, 2]))
+        XCTAssertEqual(partial.message.components(separatedBy: sentence).count, 2, partial.message)
+    }
+
+    /// #559 (G13): a batch undo that stops part-way carries the batch sentence for the members it
+    /// restored before the failed item's own error, which ends the text (the spec's "before the
+    /// failed item's own error"); the sentence is said once.
+    func testThePartWayTextCarriesTheBatchSentenceBeforeTheFailedItemsError() throws {
+        let partial = UndoBatchPartiallyUndoneError(remaining: [deleted("Y"), deleted("X")], restoredCount: 1, memberError: "member error",
+                                                    restored: [deleted("Z")], restoredNotFollowed: [1], failingTitle: "Y")
+        let sentence = try XCTUnwrap(DeleteUndoFollow.batchNotFollowedSentence([1]))
+        let said = try XCTUnwrap(partial.message.range(of: sentence), partial.message)
+        let error = try XCTUnwrap(partial.message.range(of: " The failed item's own error follows"), partial.message)
+        XCTAssertLessThan(said.upperBound, error.lowerBound, partial.message)
+        XCTAssertTrue(partial.message.hasSuffix(": member error"), partial.message)
+        XCTAssertEqual(partial.message.components(separatedBy: sentence).count, 2, "said once: \(partial.message)")
+    }
+
     // MARK: - A: occurrence deletes restore independently (PR #282 round 3, finding 5)
 
     private func occurrence(_ title: String) -> UndoOperation {
