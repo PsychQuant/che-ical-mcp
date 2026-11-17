@@ -46,13 +46,14 @@ final class DeleteUndoFollowWiringTests: XCTestCase {
         let body = try wrapperBody
         try assertOrder(["undone = try await undoDeletedEvent(snapshot, kind: kind, on: store)",
                          "undone = try await undoDeletedEvent(snapshot, kind: kind, on: seriesExceptionsStore)",
-                         "guard let removedID else { return (undone.text, undone.outcome) }",
+                         "guard let removedID else { return (undone.text, undone.outcome, nil) }",
                          "switch DeleteUndoFollow.decision(removedID: removedID, newID: undone.newID, isOccurrenceRecord: snapshot.isOccurrenceRecord, outcome: undone.outcome) {",
-                         "case .follow(let newID): await undoHistory.replaceEventIdentifier(removedID, with: newID)",
+                         "case .follow(let newID): await undoHistory.replaceEventIdentifier(removedID, with: newID, change: .recreated)",
+                         "return (undone.text, undone.outcome, nil)",
                          "case .flag(let oneOffs): let flagged = await undoHistory.markSeriesNotFollowed(removedID)",
-                         "guard flagged > 0 else { return (undone.text, undone.outcome) }",
-                         "return (DeleteUndoFollow.appendingNotFollowed(undone.text, oneOffs: oneOffs), undone.outcome)",
-                         "case .none: return (undone.text, undone.outcome)"], in: body)
+                         "guard flagged > 0 else { return (undone.text, undone.outcome, nil) }",
+                         "return (DeleteUndoFollow.appendingNotFollowed(undone.text, oneOffs: oneOffs), undone.outcome, oneOffs)",
+                         "case .none: return (undone.text, undone.outcome, nil)"], in: body)
         assertOnce("DeleteUndoFollow.decision(", in: body)
         let open = try XCTUnwrap(body.firstIndex(of: "{"))
         let guardRange = try XCTUnwrap(body.range(of: "guard let removedID"))
@@ -126,7 +127,9 @@ final class DeleteUndoFollowWiringTests: XCTestCase {
         XCTAssertEqual(try calls(".replaceReminderIdentifier("), ["EventKitManager.swift": 1])
     }
 
-    /// Every record site of the two cases reads the removed identifier before the removal: the
+    /// Every record site of the two cases reads the removed identifier before the removal (#538 fix 1,
+    /// R2: the reminder batch too, as `deleteReminder` does, not off the object after the write store's
+    /// commit, `rollback()` and `refresh()`): the
     /// record type has no default, so a site that leaves it out does not compile; these pins hold
     /// which identifier it reads.
     func testTheRecordSitesReadTheRemovedIdentifierBeforeTheRemoval() throws {
@@ -148,7 +151,10 @@ final class DeleteUndoFollowWiringTests: XCTestCase {
                          "let snapshot = try removeExistingReminder(reminder, handler:",
                          "await CalendarUndoManager.shared.record(.deleteReminder(id: removedID, snapshot: snapshot))"], in: reminder)
         let reminders = try body("func deleteRemindersBatch(identifiers: [String]", in: Self.manager)
-        try assertOrder(["guard let snapshot = try commitReminderRemoval(reminder, onlyCompleted: onlyCompleted) else {",
-                         "undoSnapshots.append((id: reminder.calendarItemIdentifier, snapshot: snapshot))"], in: reminders)
+        try assertOrder(["guard let reminder = freshReminder(id: id) else {",
+                         "let removedID = reminder.calendarItemIdentifier",
+                         "guard let snapshot = try commitReminderRemoval(reminder, onlyCompleted: onlyCompleted) else {",
+                         "undoSnapshots.append((id: removedID, snapshot: snapshot))"], in: reminders)
+        assertOnce("reminder.calendarItemIdentifier", in: reminders)
     }
 }

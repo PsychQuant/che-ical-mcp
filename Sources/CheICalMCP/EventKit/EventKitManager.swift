@@ -3254,6 +3254,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                         failures.append((id, "Reminder not found"))
                         continue
                     }
+                    // #538 fix 1 (R2): the identifier its undo moves older records from, read before the
+                    // removal, as `deleteReminder` reads it: the removal commits on the write store and
+                    // then calls `rollback()` and `refresh()` on this object (`commitReminderRemoval`).
+                    let removedID = reminder.calendarItemIdentifier
                     // #28 F1: when the caller asks for "only completed reminders"
                     // (binding mode on cleanup_completed_reminders), honor the
                     // invariant the tool schema promises. Without this gate, a
@@ -3271,8 +3275,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                         continue
                     }
                     successCount += 1
-                    // #538: the identifier read off the reminder looked up before the removal.
-                    undoSnapshots.append((id: reminder.calendarItemIdentifier, snapshot: snapshot))
+                    undoSnapshots.append((id: removedID, snapshot: snapshot))
                 } catch let error as EventKitError where WriteStoreRowFailure.code(for: error) != nil {
                     // PR #507 round 1: the write store's own errors keep their own codes and a stderr line.
                     if WriteStoreRowFailure.endsTheBatch(error, removedSoFar: successCount) { throw error }
@@ -3606,7 +3609,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// hold differently, as data, so a batch nested in another carries them up
     /// (`undoBatchMember`; PR #282 round 6, findings 2, 9).
     func undoBatch(_ ops: [UndoOperation], restoreAvailable: Bool = false) async throws
-        -> (message: String, differing: [UndoRestoredDifference], events: [UndoEventOutcome]) {
+        -> (message: String, differing: [UndoRestoredDifference], events: [UndoEventOutcome], notFollowed: [Int]) {
         // #244 D3 first: a member that can never be restored refuses and discards the record,
         // which must win over #248 B's refusal below, which keeps it (PR #278 round 2, finding 24).
         try verifyBatchMemberRestorable(.batch(ops), verb: .undo)
@@ -3627,8 +3630,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #323: what the event members did, from the outcomes they returned (an occurrence's
         // absolute-date alarm, a series' rules or exceptions restore, a slot already held); #261:
         // what a restored reminder's store holds differently (`batchUndoneMessage`).
-        return (UndoOperation.batchUndoneMessage(count: outcome.texts.count, events: outcome.events, differing: outcome.differing),
-                outcome.differing, outcome.events)
+        // #538 fix 1 (R1): and what they flagged instead of moving.
+        return (UndoOperation.batchUndoneMessage(count: outcome.texts.count, events: outcome.events, differing: outcome.differing,
+                                                 notFollowed: outcome.notFollowed),
+                outcome.differing, outcome.events, outcome.notFollowed)
     }
 
     /// #287: a batch undo with `restore_available`: #248 B's pre-check, and when it refuses, the
@@ -3638,7 +3643,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// rule, and the restorable ones are checked once more before the first write (a calendar gone
     /// since the split refuses them whole, nothing written).
     func undoBatchRestoringAvailable(_ ops: [UndoOperation]) async throws
-        -> (message: String, differing: [UndoRestoredDifference], events: [UndoEventOutcome]) {
+        -> (message: String, differing: [UndoRestoredDifference], events: [UndoEventOutcome], notFollowed: [Int]) {
         let (outcome, kept) = try await UndoBatchPartialRestore.run(
             ops, restoreAvailable: true,
             verify: { try await self.verifyRestoreDestinations(of: ops, verb: .undo) },
@@ -3697,7 +3702,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         switch operation {
         case .batch(let inner):
             let undone = try await undoBatch(inner)
-            return UndoMemberOutcome(text: undone.message, differing: undone.differing, events: undone.events)
+            return UndoMemberOutcome(text: undone.message, differing: undone.differing, events: undone.events, notFollowed: undone.notFollowed)
         case .deleteReminder(let removedID, let snapshot):
             let restored = try await restoreDeletedReminder(snapshot, removedID: removedID)
             return UndoMemberOutcome(text: Self.restoredReminderMessage(restored),
@@ -3706,7 +3711,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // #323: the same arm as `executeUndo`'s, with what it did as data; #538: older records
             // of this member follow it right after its own write.
             let undone = try await undoDeletedEvent(snapshot, removedID: removedID)
-            return UndoMemberOutcome(text: undone.text, differing: [], events: undone.outcome.map { [$0] } ?? [])
+            return UndoMemberOutcome(text: undone.text, differing: [], events: undone.outcome.map { [$0] } ?? [],
+                                     notFollowed: undone.notFollowed.map { [$0] } ?? [])
         case .deleteOccurrence(let snapshot, let notCarriedOver):
             let undone = try await undoDeletedOccurrence(snapshot, notCarriedOver: notCarriedOver)
             return UndoMemberOutcome(text: undone.text, differing: [], events: [undone.outcome])

@@ -181,6 +181,7 @@ struct UndoBatchPartialRestoreStoppedError: LocalizedError, Sendable {
             let restored = partial.restoredCount == 1 ? "1 item was" : "\(partial.restoredCount) items were"
             let loss = (UndoOperation.batchLossNote(events: partial.restoredEvents).map { " For the items restored: \($0)." } ?? "")
                 + UndoRestoredDifference.sentences(partial.restoredDiffering)
+                + (DeleteUndoFollow.batchNotFollowedSentence(partial.restoredNotFollowed).map { " " + $0 } ?? "")
             message = "Undo of this batch stopped part-way: \(restored) restored, then one item cannot be restored by any retry and was dropped from this history entry."
                 + loss + notAttempted
                 + " The entry was kept with only \(those) whose calendar or list is missing or read-only, under the same id; run undo again once their calendar or list is back."

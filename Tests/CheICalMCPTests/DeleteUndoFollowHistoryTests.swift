@@ -148,9 +148,13 @@ final class DeleteUndoFollowHistoryTests: XCTestCase {
         return try XCTUnwrap(UUID(uuidString: try XCTUnwrap(snapshot.entries.first).id))
     }
 
+    /// spec-example: undo-history-discard / what is flagged
+    ///
     /// The create, whole-series move and #263 update entries that name the series are flagged and
-    /// counted, on both stacks; a delete record that holds the same string and the entries of other
-    /// events are not.
+    /// counted, on both stacks. Not flagged: the marker of an update that touched the series (#538
+    /// fix 1, R3: its undo is refused and the entry discarded before any lookup, so the flagged text
+    /// never comes and `discard_id` is not needed), a delete record that holds the same string, and
+    /// the entries of other events.
     func testMarkingFlagsTheEntriesThatNameTheSeries() async throws {
         let history = CalendarUndoManager()
         var ids: [UUID] = []
@@ -159,6 +163,7 @@ final class DeleteUndoFollowHistoryTests: XCTestCase {
         ids.append(try await topID(history))
         await history.record(.createEvent(id: "other", title: "Other", created: event("Other"))); ids.append(try await topID(history))
         await history.record(.updateRecurringEvent(id: "S", title: "Standup", kind: .series)); ids.append(try await topID(history))
+        await history.record(.updateSeries(seriesUpdate("S"))); ids.append(try await topID(history))
         await history.record(.deleteEvent(id: "S", snapshot: event("Standup"))); ids.append(try await topID(history))
         let awaited8 = try await history.beginUndo()
         let undone = try XCTUnwrap(awaited8)
@@ -166,10 +171,10 @@ final class DeleteUndoFollowHistoryTests: XCTestCase {
 
         let count = await history.markSeriesNotFollowed("S")
 
-        XCTAssertEqual(count, 3)
+        XCTAssertEqual(count, 3, "the create, the move and the #263 update")
         let flagged = await flags(history, ids)
-        XCTAssertEqual(flagged, [true, true, false, true, false],
-                       "the delete record on the redo stack is not flagged")
+        XCTAssertEqual(flagged, [true, true, false, false, true, false],
+                       "the marker is not flagged; the delete record on the redo stack is not flagged")
         let value6 = await history.markSeriesNotFollowed("")
         XCTAssertEqual(value6, 0)
     }
@@ -265,5 +270,79 @@ final class DeleteUndoFollowHistoryTests: XCTestCase {
             .deleteReminder(id: "S", snapshot: reminder("t")), .calendarOperation(kind: .created, title: "t"),
         ]
         for operation in none { XCTAssertEqual(operation.eventIdentifiersNamed, [], "\(operation)") }
+    }
+
+    private func seriesUpdate(_ id: String) -> SeriesUpdateRecord {
+        let exceptions = SeriesExceptions(window: DateInterval(start: Date(timeIntervalSince1970: 1_800_000_000), duration: 86_400),
+                                          keptSlots: [], detached: [])
+        return SeriesUpdateRecord(id: id, externalIdentifier: "X-" + id, old: event("Standup"), saved: event("Standup 2"),
+                                  fields: ["title"], before: exceptions, after: exceptions)
+    }
+
+    /// The marker and a batch carry no not-followed title, so neither is flagged; every kind that
+    /// is flagged has one (#538 fix 1, R3, F33).
+    func testOnlyKindsWithANotFollowedTitleAreFlagged() async throws {
+        let history = CalendarUndoManager()
+        await history.record(.batch([.createEvent(id: "S", title: "Standup", created: event("Standup"))]))
+        let batch = try await topID(history)
+        await history.record(.updateRecurringEvent(id: "S", title: "Standup", kind: .occurrence))
+        let marker = try await topID(history)
+
+        let count = await history.markSeriesNotFollowed("S")
+
+        XCTAssertEqual(count, 0)
+        let flagged = await flags(history, [batch, marker])
+        XCTAssertEqual(flagged, [false, false])
+        XCTAssertNil(UndoOperation.updateRecurringEvent(id: "S", title: "Standup", kind: .series).notFollowedTitle)
+        XCTAssertNil(UndoOperation.batch([.createEvent(id: "S", title: "Standup", created: event("Standup"))]).notFollowedTitle)
+    }
+
+    /// spec-example: undo-history-discard / the rewrite after a recreate leaves the #263 record
+    ///
+    /// #538 fix 1 (R4): a #263 whole-series update record names the series as it was, with its
+    /// occurrences, and its undo compares the series' external identifier, which a recreated series
+    /// does not have; so the rewrite after the undo of a delete leaves it, on both stacks, while the
+    /// create records follow. The rewrite for the same event under a new identifier (#435, #484)
+    /// still moves it.
+    func testTheRewriteAfterARecreateLeavesTheWholeSeriesUpdateRecord() async throws {
+        let history = CalendarUndoManager()
+        await history.record(.createEvent(id: "S", title: "Standup", created: event("Standup")))
+        await history.record(.updateSeries(seriesUpdate("S")))
+        await history.record(.createEvent(id: "S", title: "Standup", created: event("Standup")))
+        for _ in 0..<2 {
+            let begun = try await history.beginUndo()
+            await history.finishHistoryOperation(try XCTUnwrap(begun))
+        }
+
+        await history.replaceEventIdentifier("S", with: "T", change: .recreated)
+
+        let first = await history.popRedo()
+        XCTAssertEqual(ids(try XCTUnwrap(first).operation), ["S"], "redo stack: the #263 record stays")
+        let second = await history.popRedo()
+        XCTAssertEqual(ids(try XCTUnwrap(second).operation), ["T"], "redo stack: the create record follows")
+        let undo = await undoIDs(history)
+        XCTAssertEqual(undo, [["T"], ["S"], ["T"]], "undo stack, after both came back")
+
+        let sameEvent = UndoOperation.updateSeries(seriesUpdate("S")).replacingEventIdentifier("S", with: "T", change: .sameEvent)
+        XCTAssertEqual(sameEvent.eventIdentifiersNamed, ["T"], "#435 and #484 still move it")
+        XCTAssertEqual(UndoOperation.updateSeries(seriesUpdate("S")).replacingEventIdentifier("S", with: "T").eventIdentifiersNamed, ["T"],
+                       "the default is the same event")
+        let recreated = UndoOperation.batch([.updateSeries(seriesUpdate("S")), .createEvent(id: "S", title: "t", created: event("t"))])
+            .replacingEventIdentifier("S", with: "T", change: .recreated)
+        XCTAssertEqual(recreated.eventIdentifiersNamed, ["S", "T"], "inside a batch too")
+    }
+
+    /// The same on the undo stack, in its order, with another kind of each.
+    func testOnTheUndoStackOnlyTheWholeSeriesUpdateRecordStays() async {
+        let history = CalendarUndoManager()
+        await history.record(.createEvent(id: "S", title: "Standup", created: event("Standup")))
+        await history.record(.updateSeries(seriesUpdate("S")))
+        await history.record(.moveEvent(id: "S", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: "Standup", isSeries: true))
+        await history.record(.updateRecurringEvent(id: "S", title: "Standup", kind: .series))
+
+        await history.replaceEventIdentifier("S", with: "T", change: .recreated)
+
+        let undo = await undoIDs(history)
+        XCTAssertEqual(undo, [["T"], ["T"], ["S"], ["T"]])
     }
 }

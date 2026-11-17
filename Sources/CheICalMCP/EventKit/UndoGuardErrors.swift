@@ -208,7 +208,7 @@ extension UndoTargetMissingError {
     /// found. Author-controlled text; the only value in it is the entry's recorded title through
     /// `undoShownTitle`. Kept like every not-found (`undo-history-discard`).
     static func seriesNotFollowed(title: String) -> UndoTargetMissingError {
-        UndoTargetMissingError(message: "Cannot undo: the recurring event '\(undoShownTitle(title))' was deleted and then recreated by an undo as a new series, and occurrences of it that had been edited on their own came back as separate events, so the series this entry names is not the one that exists now. This entry was not moved to the new series. Nothing was written and this history entry was kept. To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id.")
+        UndoTargetMissingError(message: "Cannot undo: the recurring event '\(undoShownTitle(title))' was deleted and then recreated by an undo as a new series, and occurrences of it that had been edited on their own came back as separate events, so the series this entry names no longer exists. This entry was not moved to the new series. Nothing was written and this history entry was kept. To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id.")
     }
 }
 

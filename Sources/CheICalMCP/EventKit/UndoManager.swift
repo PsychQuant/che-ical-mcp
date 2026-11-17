@@ -443,7 +443,7 @@ enum UndoOperation {
 
     /// #435: this record with `new` where it named the event `old`. Records that hold no identifier,
     /// and reminders, are returned as they are.
-    func replacingEventIdentifier(_ old: String, with new: String) -> UndoOperation {
+    func replacingEventIdentifier(_ old: String, with new: String, change: EventIdentifierChange = .sameEvent) -> UndoOperation {
         func swapped(_ id: String) -> String { id == old ? new : id }
         switch self {
         case .createEvent(let id, let title, let created):
@@ -453,11 +453,13 @@ enum UndoOperation {
         case .updateRecurringEvent(let id, let title, let kind):
             return .updateRecurringEvent(id: swapped(id), title: title, kind: kind)
         case .updateSeries(let record):
+            // #538 fix 1 (R4): not to a series the undo of a delete wrote anew (`EventIdentifierChange`).
+            guard change == .sameEvent else { return self }
             return .updateSeries(record.replacingIdentifier(swapped(record.id)))
         case .moveEvent(let id, let from, let to, let title, let isSeries):
             return .moveEvent(id: swapped(id), fromCalendarIdentifier: from, toCalendarIdentifier: to, title: title, isSeries: isSeries)
         case .batch(let operations):
-            return .batch(operations.map { $0.replacingEventIdentifier(old, with: new) })
+            return .batch(operations.map { $0.replacingEventIdentifier(old, with: new, change: change) })
         case .deleteEvent:
             // #538: its identifier names a removed event, also when the record sits on the redo
             // stack after its undo recreated the event under the new one.
@@ -521,10 +523,14 @@ enum UndoOperation {
     }
 
     /// #538: the title the not-followed refusal shows for a flagged record, as the record holds it;
-    /// nil for the kinds `CalendarUndoManager.markSeriesNotFollowed` never flags. Exhaustive.
+    /// nil for the kinds `CalendarUndoManager.markSeriesNotFollowed` never flags, which are the ones
+    /// with nil here: a recurring update's marker (#538 fix 1, R3: its undo is refused and the record
+    /// discarded before any lookup, so it never answers not found and needs no `discard_id`), a batch
+    /// (no batch recorded today names a live event), delete records, reminders and calendar operations.
+    /// Exhaustive.
     var notFollowedTitle: String? {
         switch self {
-        case .createEvent(_, let title, _), .updateRecurringEvent(_, let title, _), .moveEvent(_, _, _, let title, _):
+        case .createEvent(_, let title, _), .moveEvent(_, _, _, let title, _):
             return title
         case .updateEvent(_, let oldSnapshot, _):
             return oldSnapshot.title
@@ -532,8 +538,8 @@ enum UndoOperation {
             return record.old.title
         case .moveByCopy(let original, _, _, _, _):
             return original.title
-        case .batch, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .createReminder, .deleteReminder,
-             .updateReminder, .completeReminder, .completeRecurringReminder, .calendarOperation:
+        case .updateRecurringEvent, .batch, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .createReminder,
+             .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder, .calendarOperation:
             return nil
         }
     }
@@ -739,11 +745,11 @@ actor CalendarUndoManager {
     /// #435: a move gave an event a new identifier. Older records of that event keep working: they
     /// named it by the identifier it had. The record of the move itself is recorded after this, or
     /// is the one being undone.
-    func replaceEventIdentifier(_ old: String, with new: String) {
-        undoStack = undoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new)) }
+    func replaceEventIdentifier(_ old: String, with new: String, change: EventIdentifierChange = .sameEvent) {
+        undoStack = undoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new, change: change)) }
         // Cluster verify r2: the redo stack too. An undo calls this after popUndo moved its own
         // record there, so a redo of that move finds the event under the identifier it has now.
-        redoStack = redoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new)) }
+        redoStack = redoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new, change: change)) }
     }
 
     /// #538: the reminder counterpart of `replaceEventIdentifier`, on both stacks: the undo of a
@@ -754,13 +760,15 @@ actor CalendarUndoManager {
     }
 
     /// #538: flags every entry on both stacks that names `seriesID` (`eventIdentifiersNamed`; delete
-    /// records name none) and returns how many name it, flagged before or not. The undo of a
-    /// whole-series delete calls it instead of `replaceEventIdentifier` when it did not follow.
+    /// records name none) and whose undo can answer the not-followed text (#538 fix 1, R3: a kind with
+    /// a `notFollowedTitle`, so not a recurring update's marker nor a batch), and returns how many,
+    /// flagged before or not. The undo of a whole-series delete calls it instead of
+    /// `replaceEventIdentifier` when it did not follow.
     func markSeriesNotFollowed(_ seriesID: String) -> Int {
         guard !seriesID.isEmpty else { return 0 }
         var count = 0
         func mark(_ record: UndoRecord) -> UndoRecord {
-            guard record.operation.eventIdentifiersNamed.contains(seriesID) else { return record }
+            guard record.operation.notFollowedTitle != nil, record.operation.eventIdentifiersNamed.contains(seriesID) else { return record }
             count += 1
             return record.flaggedSeriesNotFollowed()
         }
@@ -1024,4 +1032,17 @@ enum UndoHistoryError: LocalizedError, Sendable, TrustedErrorMessage {
         case .stale: return "The undo history changed. Read undo_history and select the current top record ID."
         }
     }
+}
+
+/// #538 fix 1 (R4): what gave an event the identifier `CalendarUndoManager.replaceEventIdentifier`
+/// moves records to. A #263 whole-series update record names the series as it was, with its
+/// occurrences, and its undo compares the series' external identifier: it follows the same series
+/// under a new identifier, and not a series the undo of its delete wrote anew.
+enum EventIdentifierChange: Sendable, Equatable {
+    /// The same event, now under another identifier: a move or a calendar update and their undos
+    /// (#435, #484). Every record that names it follows.
+    case sameEvent
+    /// A new event written from a removed one's snapshot by the undo of its delete (#538). A #263
+    /// whole-series update record does not follow.
+    case recreated
 }

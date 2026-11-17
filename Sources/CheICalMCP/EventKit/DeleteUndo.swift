@@ -307,13 +307,18 @@ extension UndoOperation {
     /// are not shown, so what the members did is named here, once each, from the outcomes they
     /// returned (#323, `batchLossNote(events:)`), never from the records or the member text. A pure
     /// function of what it is given.
-    static func batchUndoneMessage(count: Int, events: [UndoEventOutcome] = [], differing: [UndoRestoredDifference] = []) -> String {
+    /// #538 fix 1 (R1): `notFollowed`, what the members flagged instead of moving
+    /// (`UndoMemberOutcome.notFollowed`), ends the text with the batch form of the sentence.
+    static func batchUndoneMessage(count: Int, events: [UndoEventOutcome] = [], differing: [UndoRestoredDifference] = [],
+                                   notFollowed: [Int] = []) -> String {
         var message = "Undone batch (\(batchCount(count)))"
         if let note = batchLossNote(events: events) { message += ". " + note }
         // What the restored reminders' stores hold differently, from the names each member
         // returned, never from member text (#261; PR #282 round 5, finding 1).
         let named = UndoRestoredDifference.sentences(differing)
-        return named.isEmpty ? message : message + "." + named
+        let text = named.isEmpty ? message : message + "." + named
+        guard let sentence = DeleteUndoFollow.batchNotFollowedSentence(notFollowed) else { return text }
+        return text + (named.isEmpty ? ". " : " ") + sentence
     }
 
     /// The text of a redone batch; no batch whose members write on redo is recorded today (#247).

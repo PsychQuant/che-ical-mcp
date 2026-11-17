@@ -906,6 +906,19 @@ final class SeriesExceptionsUndoTests: XCTestCase {
                                                  outcome: recreated.outcome), .flag(oneOffs: 1))
     }
 
+    /// #538 fix 1 (F20, M25): a recreated series that reads back as its first occurrence's own
+    /// identifier (`<id>/RID=<seconds>`) is returned as the series' identifier, so a followed record
+    /// never names one occurrence of it. A one-off keeps what it reads.
+    func testARecreatedSeriesThatReadsBackAsAnOccurrenceIsReturnedAsTheSeries() throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = [s0, s1, s2, s3]
+        store.seriesReadsBackAsItsFirstOccurrence = true
+        let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0)
+        let recreated = try SeriesExceptionsUndo.recreateDeletedEvent(series, calendar: series.calendarIdentifier, in: store)
+        XCTAssertEqual(recreated.newID, "E1")
+        XCTAssertTrue(recreated.text.contains("(new ID: E1/RID="), "the answer gives what was read: \(recreated.text)")
+    }
+
     /// `undoDeleteEvent` answers what `recreateDeletedEvent` answers, without the identifier.
     func testUndoDeleteEventIsTheRecreateWithoutTheIdentifier() throws {
         let event = UndoSnapshotFixtures.event(title: "Review", startDate: s0)

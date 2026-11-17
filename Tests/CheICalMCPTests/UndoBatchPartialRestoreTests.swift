@@ -290,4 +290,22 @@ final class UndoBatchPartialRestoreTests: XCTestCase {
             XCTAssertTrue(stopped.message.contains("what it says about this history entry is superseded by this message: gone"), stopped.message)
         }
     }
+
+    /// #538 fix 1 (R1): a dropped last member, with a restored series member that flagged older
+    /// records, still says they were not moved, in the replacement text this type builds.
+    func testADroppedLastMemberStillSaysTheOlderEntriesWereNotMoved() async throws {
+        let steps = Steps()
+        let partial = UndoBatchPartiallyUndoneError(remaining: [], restoredCount: 1, memberError: "gone", failing: .dropped,
+                                                    restoredNotFollowed: [2])
+        do {
+            _ = try await run(restoreAvailable: true, verify: refused, runFails: partial, steps: steps)
+            XCTFail("the part-way failure must surface")
+        } catch let stopped as UndoBatchPartialRestoreStoppedError {
+            XCTAssertTrue(stopped.message.contains(" Older undo entries of a recurring event this batch recreated were not moved to its recreated series, because 2 of its occurrences that had been edited on their own came back as separate events. An undo of such an entry that is not found will answer that, and the entry can only be given up with discard_id."), stopped.message)
+            XCTAssertEqual(stopped.message.components(separatedBy: "were not moved").count, 2, "said once")
+        }
+        XCTAssertTrue(partial.message.contains("were not moved"), "and in #248 A's own text: \(partial.message)")
+        let plain = UndoBatchPartiallyUndoneError(remaining: [], restoredCount: 1, memberError: "gone", failing: .dropped)
+        XCTAssertFalse(plain.message.contains("were not moved"), plain.message)
+    }
 }
