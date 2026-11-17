@@ -263,7 +263,7 @@ final class MoveByCopyUndoTests: XCTestCase {
         XCTAssertEqual(destination.calendarIdentifier, original.calendarIdentifier)
         XCTAssertNil(record.restoreDestination(verb: .redo))
         XCTAssertEqual(record.restoredItemTitle, "Standup")
-        XCTAssertEqual(record.restoredItemWhen, UndoOperation.deleteEvent(snapshot: original).restoredItemWhen)
+        XCTAssertEqual(record.restoredItemWhen, UndoOperation.deleteEvent(id: "", snapshot: original).restoredItemWhen)
         XCTAssertFalse(record.mayRunLastAfterAFailure, "it writes to an existing item (the copy); no batch records it")
         XCTAssertNil(record.undoPostState, "the original is recreated; the copy is checked inside the arm")
         XCTAssertNil(record.redoPostState)

@@ -101,7 +101,7 @@ final class ReminderUndoWiringTests: XCTestCase {
     func testTheUndoArmsResolveTheListBeforeWritingAnything() throws {
         let undo = try slice(try managerSource(), from: "func executeUndo(", to: "func executeRedo(")
         // #261: the delete arm (single and batch) recreates through `restoreDeletedReminder`.
-        XCTAssertTrue(undo.contains("case .deleteReminder(let snapshot):\n            return Self.restoredReminderMessage(try await restoreDeletedReminder(snapshot))"), undo)
+        XCTAssertTrue(undo.contains("case .deleteReminder(let removedID, let snapshot):\n            return Self.restoredReminderMessage(try await restoreDeletedReminder(snapshot, removedID: removedID))"), undo)
         // Each slice ends where its arm or function ends: the next case, or, for
         // `restoreDeletedReminder`, the brace that closes it (#291 item 7: brace-matched, so the
         // slice cannot run on into the next declaration).

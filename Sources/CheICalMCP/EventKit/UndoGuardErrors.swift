@@ -203,6 +203,13 @@ extension UndoTargetMissingError {
     static func seriesUnreadable(title: String) -> UndoTargetMissingError {
         UndoTargetMissingError(message: "Cannot undo the creation of the recurring event '\(undoShownTitle(title))': the series this undo would delete no longer reads under its recorded identifier, although an occurrence of it can still be read. Nothing was written and this history entry was kept. Run undo again only if it may still be syncing. Otherwise \(createUndoWayOn)")
     }
+
+    /// #538: the undo of a record flagged by `CalendarUndoManager.markSeriesNotFollowed` that is not
+    /// found. Author-controlled text; the only value in it is the entry's recorded title through
+    /// `undoShownTitle`. Kept like every not-found (`undo-history-discard`).
+    static func seriesNotFollowed(title: String) -> UndoTargetMissingError {
+        UndoTargetMissingError(message: "Cannot undo: the recurring event '\(undoShownTitle(title))' was deleted and then recreated by an undo as a new series, and occurrences of it that had been edited on their own came back as separate events, so the series this entry names no longer exists. This entry was not moved to the new series. Nothing was written and this history entry was kept. To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id.")
+    }
 }
 
 extension UndoTargetMissingError: TrustedErrorMessage {}

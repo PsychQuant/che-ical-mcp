@@ -29,6 +29,14 @@ struct ReminderCompletionSnapshot: Equatable, Sendable {
         self.completionDate = completionDate
     }
 
+    /// #538: the same snapshot naming `id` (`UndoOperation.replacingReminderIdentifier`); every
+    /// other field, the occurrence identity included, is kept.
+    func replacingIdentifier(_ id: String) -> ReminderCompletionSnapshot {
+        ReminderCompletionSnapshot(id: id, title: title, calendarID: calendarID, sourceID: sourceID,
+                                   isCompleted: isCompleted, hasRecurrence: hasRecurrence, due: due,
+                                   rules: rules, completionDate: completionDate)
+    }
+
     init(from reminder: EKReminder) {
         self.init(id: reminder.calendarItemIdentifier, title: reminder.title ?? "",
                   calendarID: reminder.calendar?.calendarIdentifier ?? "",

@@ -51,7 +51,7 @@ final class DeleteUndoHandlerTests: XCTestCase {
         let history = CalendarUndoManager()
         await history.record(.createEvent(id: "older", title: "Older", created: UndoSnapshotFixtures.event(title: "Older")))
         await history.record(.batch([.deleteFollowingOccurrences(title: "Standup"),
-                                     .deleteEvent(snapshot: UndoSnapshotFixtures.event(title: "Review"))]))
+                                     .deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Review"))]))
 
         let result = try await undo(with: history)
 

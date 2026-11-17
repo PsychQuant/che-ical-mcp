@@ -32,10 +32,10 @@ final class UndoRedoTextHandlerTests: XCTestCase {
         let reminder = UndoSnapshotFixtures.reminder(title: title)
         let ops: [UndoOperation] = [
             .createEvent(id: "e", title: title, created: event),
-            .deleteEvent(snapshot: event),
+            .deleteEvent(id: "", snapshot: event),
             .moveEvent(id: "e", fromCalendarIdentifier: "a", toCalendarIdentifier: "b", title: title, isSeries: false),
             .createReminder(id: "r", title: title, created: reminder),
-            .deleteReminder(snapshot: reminder),
+            .deleteReminder(id: "", snapshot: reminder),
             .updateRecurringEvent(id: "e", title: title, kind: .series),
             UndoSnapshotFixtures.seriesUpdate(title: title),   // #263
         ]
@@ -50,7 +50,7 @@ final class UndoRedoTextHandlerTests: XCTestCase {
     /// answers the instruction too instead of "Redone batch (N operations)" for a no-op.
     func testExecuteRedoOfABatchOfDeletesAnswersTheInstruction() async throws {
         let event = UndoSnapshotFixtures.event(title: "Standup")
-        let batch = UndoOperation.batch([.deleteEvent(snapshot: event), .deleteEvent(snapshot: event)])
+        let batch = UndoOperation.batch([.deleteEvent(id: "", snapshot: event), .deleteEvent(id: "", snapshot: event)])
         let manager = EventKitManager.forTesting(probe: DeniedProbe())
 
         let text = try await manager.executeRedo(batch)

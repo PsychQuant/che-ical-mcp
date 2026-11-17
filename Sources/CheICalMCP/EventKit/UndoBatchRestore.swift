@@ -124,12 +124,12 @@ extension UndoOperation {
     func restoreDestination(verb: UndoHistoryVerb) -> UndoRestoreDestination? {
         guard verb == .undo else { return nil }
         switch self {
-        case .deleteEvent(let snapshot):
+        case .deleteEvent(_, let snapshot):
             return .eventCalendar(snapshot)
         case .deleteOccurrence(let snapshot, _):
             // #244: recreated as a one-off event in the occurrence's recorded calendar.
             return .eventCalendar(snapshot)
-        case .deleteReminder(let snapshot):
+        case .deleteReminder(_, let snapshot):
             return .reminderList(snapshot)
         case .moveByCopy(let original, _, _, _, _):
             // #466: the source is recreated in its recorded calendar. No batch records this kind.
@@ -256,6 +256,8 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
     let restoredDiffering: [UndoRestoredDifference]
     /// What those members' undos did (#323), named here once, from the outcomes, not the records.
     let restoredEvents: [UndoEventOutcome]
+    /// #538 fix 1 (R1): what those members flagged instead of moving (`UndoMemberOutcome.notFollowed`).
+    let restoredNotFollowed: [Int]
     let memberError: String
     let failing: FailingMember
     let message: String
@@ -268,13 +270,14 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
     /// same title (`UndoOperation.restoredItemWhen`, #407), or nil.
     init(remaining: [UndoOperation], restoredCount: Int, memberError: String, failing: FailingMember = .runsLast,
          restored: [UndoOperation] = [], restoredDiffering: [UndoRestoredDifference] = [],
-         restoredEvents: [UndoEventOutcome] = [],
+         restoredEvents: [UndoEventOutcome] = [], restoredNotFollowed: [Int] = [],
          failingTitle: String? = nil, failingWhen: String? = nil, failedBeforeWrite: Bool = false) {
         self.remaining = remaining
         self.restoredCount = restoredCount
         self.restored = restored
         self.restoredDiffering = restoredDiffering
         self.restoredEvents = restoredEvents
+        self.restoredNotFollowed = restoredNotFollowed
         self.memberError = memberError
         self.failing = failing
         let restoredText = restoredCount == 1 ? "1 item was" : "\(restoredCount) items were"
@@ -306,6 +309,7 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
         }
         let loss = (UndoOperation.batchLossNote(events: restoredEvents).map { " For the items restored: \($0)." } ?? "")
             + UndoRestoredDifference.sentences(restoredDiffering)
+            + (DeleteUndoFollow.batchNotFollowedSentence(restoredNotFollowed).map { " " + $0 } ?? "")
         let giveUp: String
         switch failing {
         case .dropped where remaining.isEmpty:
@@ -362,7 +366,7 @@ extension UndoOperation {
     /// with nothing restored and nothing waiting).
     static func batchUndoFailure(members: [UndoOperation], interrupted: UndoBatchRunner.Interrupted,
                                  differing: [UndoRestoredDifference] = [], events: [UndoEventOutcome] = [],
-                                 describe: (Error) -> String) -> Error {
+                                 notFollowed: [Int] = [], describe: (Error) -> String) -> Error {
         let failedIndex = members.count - 1 - interrupted.completed
         guard members.indices.contains(failedIndex) else { return interrupted.underlying }
         let inner = interrupted.underlying as? UndoBatchPartiallyUndoneError
@@ -374,6 +378,8 @@ extension UndoOperation {
         let restoredDiffering = differing + (inner?.restoredDiffering ?? [])
         // What those members' undos did (#323), nested ones too.
         let restoredEvents = events + (inner?.restoredEvents ?? [])
+        // #538 fix 1 (R1): what those members flagged instead of moving, nested ones too.
+        let restoredNotFollowed = notFollowed + (inner?.restoredNotFollowed ?? [])
         // Every branch reports the restored members and their differences the same way (PR #282
         // round 6, finding 18: two branches used to pass them on separately, and dropping them
         // there went unnoticed).
@@ -389,7 +395,7 @@ extension UndoOperation {
                      _ memberError: String) -> UndoBatchPartiallyUndoneError {
             UndoBatchPartiallyUndoneError(remaining: remaining, restoredCount: restored, memberError: memberError,
                                           failing: failing, restored: restoredMembers, restoredDiffering: restoredDiffering,
-                                          restoredEvents: restoredEvents,
+                                          restoredEvents: restoredEvents, restoredNotFollowed: restoredNotFollowed,
                                           failingTitle: failingTitle, failingWhen: failingWhen, failedBeforeWrite: failedBeforeWrite)
         }
         if inner == nil, interrupted.underlying is UnrecoverableUndoError {
@@ -423,10 +429,10 @@ extension UndoOperation {
     /// kinds no batch records), for the partial error. Exhaustive (#196 convention).
     var restoredItemTitle: String? {
         switch self {
-        case .deleteEvent(let snapshot): return snapshot.title
+        case .deleteEvent(_, let snapshot): return snapshot.title
         case .moveByCopy(let original, _, _, _, _): return original.title
         case .deleteOccurrence(let snapshot, _): return snapshot.title
-        case .deleteReminder(let snapshot): return snapshot.title
+        case .deleteReminder(_, let snapshot): return snapshot.title
         case .deleteFollowingOccurrences, .batch, .createEvent, .updateEvent, .updateRecurringEvent, .updateSeries, .moveEvent,
              .createReminder, .updateReminder, .completeReminder, .completeRecurringReminder, .calendarOperation:
             return nil
@@ -441,11 +447,11 @@ extension UndoOperation {
     /// list or account name (#37).
     var restoredItemWhen: String? {
         switch self {
-        case .deleteEvent(let snapshot), .deleteOccurrence(let snapshot, _), .moveByCopy(let snapshot, _, _, _, _):
+        case .deleteEvent(_, let snapshot), .deleteOccurrence(let snapshot, _), .moveByCopy(let snapshot, _, _, _, _):
             let format = snapshot.isAllDay ? "yyyy-MM-dd" : "yyyy-MM-dd'T'HH:mm:ssXXXXX"
             let zone = snapshot.isAllDay ? TimeZone.current : (snapshot.timeZone ?? TimeZone.current)
             return "starting " + DateFormatter.machineReadable(format, zone: zone).string(from: snapshot.startDate)
-        case .deleteReminder(let snapshot):
+        case .deleteReminder(_, let snapshot):
             guard let due = snapshot.dueDateComponents, let year = due.year, let month = due.month, let day = due.day else { return nil }
             var text = String(format: "%04d-%02d-%02d", year, month, day)
             if let hour = due.hour { text += String(format: "T%02d:%02d", hour, due.minute ?? 0) }
@@ -529,22 +535,24 @@ enum UndoBatchExecution {
                     restore: (UndoOperation) async throws -> UndoMemberOutcome,
                     describe: (Error) -> String,
                     isolation: isolated (any Actor)? = #isolation) async throws
-        -> (texts: [String], differing: [UndoRestoredDifference], events: [UndoEventOutcome]) {
+        -> (texts: [String], differing: [UndoRestoredDifference], events: [UndoEventOutcome], notFollowed: [Int]) {
         var differing: [UndoRestoredDifference] = []
         var events: [UndoEventOutcome] = []
+        var notFollowed: [Int] = []
         do {
             let texts = try await UndoBatchRunner.run(verb == .undo ? Array(members.reversed()) : members, check: check,
                                                       execute: { member in
                                                           let outcome = try await restore(member)
                                                           differing.append(contentsOf: outcome.differing)
                                                           events.append(contentsOf: outcome.events)
+                                                          notFollowed.append(contentsOf: outcome.notFollowed)
                                                           return outcome.text
                                                       })
-            return (texts, differing, events)
+            return (texts, differing, events, notFollowed)
         } catch let interrupted as UndoBatchRunner.Interrupted {
             switch verb {
             case .undo: throw UndoOperation.batchUndoFailure(members: members, interrupted: interrupted, differing: differing,
-                                                             events: events, describe: describe)
+                                                             events: events, notFollowed: notFollowed, describe: describe)
             case .redo: throw interrupted.underlying
             }
         }
@@ -559,11 +567,15 @@ struct UndoMemberOutcome: Sendable {
     let text: String
     let differing: [UndoRestoredDifference]
     let events: [UndoEventOutcome]
+    /// #538 fix 1 (R1): for each deleted series this member recreated whose older records were
+    /// flagged instead of moved, its `oneOffs` (`DeleteUndoFollow.batchNotFollowedSentence`).
+    let notFollowed: [Int]
 
-    init(text: String, differing: [UndoRestoredDifference], events: [UndoEventOutcome] = []) {
+    init(text: String, differing: [UndoRestoredDifference], events: [UndoEventOutcome] = [], notFollowed: [Int] = []) {
         self.text = text
         self.differing = differing
         self.events = events
+        self.notFollowed = notFollowed
     }
 }
 

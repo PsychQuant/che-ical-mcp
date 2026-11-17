@@ -52,7 +52,7 @@ final class ReminderListDeletedHandlerTests: XCTestCase {
     func testADeleteUndoWhoseListWasDeletedDuringTheSaveKeepsItsRecord() async throws {
         let history = CalendarUndoManager()
         await history.record(.createEvent(id: "older", title: "Older", created: UndoSnapshotFixtures.event(title: "Older")))
-        await history.record(.deleteReminder(snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent")))
+        await history.record(.deleteReminder(id: "", snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent")))
         let before = await history.historySnapshot()
         let executor = ListDeletedExecutor()
         let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)

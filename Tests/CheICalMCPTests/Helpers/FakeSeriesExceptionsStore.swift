@@ -77,8 +77,16 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func add(_ event: Event) { events.append(event) }
 
+    /// #538 fix 1 (F20): a saved series reads back under its first occurrence's own identifier
+    /// (`<id>/RID=<seconds since 2001>`), as a store can hand back an occurrence for a series.
+    var seriesReadsBackAsItsFirstOccurrence = false
+
     func identifiers(of event: Event) -> UndoPostState.OccurrenceIDs {
-        UndoPostState.OccurrenceIDs(eventIdentifier: event.id, externalIdentifier: event.external)
+        if seriesReadsBackAsItsFirstOccurrence, event.hasRules, let id = event.id {
+            return UndoPostState.OccurrenceIDs(eventIdentifier: "\(id)/RID=\(Int(event.start.timeIntervalSinceReferenceDate))",
+                                               externalIdentifier: event.external)
+        }
+        return UndoPostState.OccurrenceIDs(eventIdentifier: event.id, externalIdentifier: event.external)
     }
 
     func hasCalendar(_ event: Event) -> Bool { event.calendar != nil }

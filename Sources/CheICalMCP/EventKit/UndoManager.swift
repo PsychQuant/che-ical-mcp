@@ -377,7 +377,12 @@ struct ReminderSnapshot {
 /// drops the post-state must not compile (#196 convention).
 enum UndoOperation {
     case createEvent(id: String, title: String, created: EventSnapshot)
-    case deleteEvent(snapshot: EventSnapshot)
+    /// #538: `id` is the identifier the removed event had (for an event with rules, the series'
+    /// identifier without a `/RID=` part, `DeleteUndoFollow.removedIdentifier`). Its undo writes a
+    /// new event under a new identifier and moves older records of `id` to it
+    /// (`DeleteUndoFollow.identifierToFollow`). No default: a record site that leaves it out must
+    /// not compile. Never rewritten: it names an event that no longer exists.
+    case deleteEvent(id: String, snapshot: EventSnapshot)
     /// #244: one occurrence of a series deleted (span "this"). The snapshot is the occurrence
     /// without rules; undo recreates it as a one-off event, never a second series (`EventRemovalKind`).
     /// `notCarriedOver` as the move path reports it (#253): `absolute_alarms` when an absolute alarm
@@ -401,7 +406,9 @@ enum UndoOperation {
     /// the record otherwise. Every other recurring update stays `updateRecurringEvent`.
     case updateSeries(SeriesUpdateRecord)
     case createReminder(id: String, title: String, created: ReminderSnapshot)
-    case deleteReminder(snapshot: ReminderSnapshot)
+    /// #538: `id` is the removed reminder's `calendarItemIdentifier`, read before the removal; its
+    /// undo moves older reminder records of `id` to the recreated reminder. No default; never rewritten.
+    case deleteReminder(id: String, snapshot: ReminderSnapshot)
     case updateReminder(id: String, oldSnapshot: ReminderSnapshot, saved: ReminderSnapshot)
     /// #196: `requestedCompleted` is replayed by redo (never inferred as !wasCompleted —
     /// that reopened an idempotently completed reminder); `completionDate` is the
@@ -436,7 +443,7 @@ enum UndoOperation {
 
     /// #435: this record with `new` where it named the event `old`. Records that hold no identifier,
     /// and reminders, are returned as they are.
-    func replacingEventIdentifier(_ old: String, with new: String) -> UndoOperation {
+    func replacingEventIdentifier(_ old: String, with new: String, change: EventIdentifierChange = .sameEvent) -> UndoOperation {
         func swapped(_ id: String) -> String { id == old ? new : id }
         switch self {
         case .createEvent(let id, let title, let created):
@@ -446,11 +453,17 @@ enum UndoOperation {
         case .updateRecurringEvent(let id, let title, let kind):
             return .updateRecurringEvent(id: swapped(id), title: title, kind: kind)
         case .updateSeries(let record):
+            // #538 fix 1 (R4): not to a series the undo of a delete wrote anew (`EventIdentifierChange`).
+            guard change == .sameEvent else { return self }
             return .updateSeries(record.replacingIdentifier(swapped(record.id)))
         case .moveEvent(let id, let from, let to, let title, let isSeries):
             return .moveEvent(id: swapped(id), fromCalendarIdentifier: from, toCalendarIdentifier: to, title: title, isSeries: isSeries)
         case .batch(let operations):
-            return .batch(operations.map { $0.replacingEventIdentifier(old, with: new) })
+            return .batch(operations.map { $0.replacingEventIdentifier(old, with: new, change: change) })
+        case .deleteEvent:
+            // #538: its identifier names a removed event, also when the record sits on the redo
+            // stack after its undo recreated the event under the new one.
+            return self
         case .moveByCopy(let original, let isSplit, let notCarriedOver, let copyID, let copy):
             // #466 and #435: the copy is the live event this record names; a later move of it that
             // changed its identifier is followed, so the undo can still find and remove it. The
@@ -459,6 +472,75 @@ enum UndoOperation {
                                copyID: swapped(copyID), copy: copy)
         default:
             return self
+        }
+    }
+
+    /// #538: the event identifiers this record names a live event by, the ones
+    /// `replacingEventIdentifier` rewrites. Delete records hold a removed identifier and name none.
+    /// Exhaustive (#196 convention), so a new record kind has to be classified here.
+    var eventIdentifiersNamed: [String] {
+        switch self {
+        case .createEvent(let id, _, _), .updateEvent(let id, _, _), .updateRecurringEvent(let id, _, _),
+             .moveEvent(let id, _, _, _, _):
+            return [id]
+        case .updateSeries(let record):
+            return [record.id]
+        case .moveByCopy(_, _, _, let copyID, _):
+            return [copyID]
+        case .batch(let operations):
+            return operations.flatMap(\.eventIdentifiersNamed)
+        case .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .createReminder, .deleteReminder,
+             .updateReminder, .completeReminder, .completeRecurringReminder, .calendarOperation:
+            return []
+        }
+    }
+
+    /// #538: this record with `new` where it named the reminder `old`, the counterpart of
+    /// `replacingEventIdentifier`. A reminder's `calendarItemIdentifier` and an event's
+    /// `eventIdentifier` are separate namespaces, so event records are returned as they are, and so
+    /// is `.deleteReminder`, whose identifier names a removed reminder. Exhaustive (#196 convention).
+    func replacingReminderIdentifier(_ old: String, with new: String) -> UndoOperation {
+        func swapped(_ id: String) -> String { id == old ? new : id }
+        switch self {
+        case .createReminder(let id, let title, let created):
+            return .createReminder(id: swapped(id), title: title, created: created)
+        case .updateReminder(let id, let oldSnapshot, let saved):
+            return .updateReminder(id: swapped(id), oldSnapshot: oldSnapshot, saved: saved)
+        case .completeReminder(let id, let wasCompleted, let requestedCompleted, let completionDate, let title,
+                               let redoCompletionDate, let wasRecurring):
+            return .completeReminder(id: swapped(id), wasCompleted: wasCompleted, requestedCompleted: requestedCompleted,
+                                     completionDate: completionDate, title: title, redoCompletionDate: redoCompletionDate,
+                                     wasRecurring: wasRecurring)
+        case .completeRecurringReminder(let before, let requestedCompleted, let redoCompletionDate):
+            return .completeRecurringReminder(before: before.replacingIdentifier(swapped(before.id)),
+                                              requestedCompleted: requestedCompleted, redoCompletionDate: redoCompletionDate)
+        case .batch(let operations):
+            return .batch(operations.map { $0.replacingReminderIdentifier(old, with: new) })
+        case .deleteReminder, .createEvent, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .updateEvent,
+             .updateRecurringEvent, .updateSeries, .moveEvent, .moveByCopy, .calendarOperation:
+            return self
+        }
+    }
+
+    /// #538: the title the not-followed refusal shows for a flagged record, as the record holds it;
+    /// nil for the kinds `CalendarUndoManager.markSeriesNotFollowed` never flags, which are the ones
+    /// with nil here: a recurring update's marker (#538 fix 1, R3: its undo is refused and the record
+    /// discarded before any lookup, so it never answers not found and needs no `discard_id`), a batch
+    /// (no batch recorded today names a live event), delete records, reminders and calendar operations.
+    /// Exhaustive.
+    var notFollowedTitle: String? {
+        switch self {
+        case .createEvent(_, let title, _), .moveEvent(_, _, _, let title, _):
+            return title
+        case .updateEvent(_, let oldSnapshot, _):
+            return oldSnapshot.title
+        case .updateSeries(let record):
+            return record.old.title
+        case .moveByCopy(let original, _, _, _, _):
+            return original.title
+        case .updateRecurringEvent, .batch, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .createReminder,
+             .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder, .calendarOperation:
+            return nil
         }
     }
 
@@ -472,7 +554,7 @@ enum UndoOperation {
         switch self {
         case .createEvent(_, let title, _):
             return "Created event: \(undoVisibleTitle(title))"
-        case .deleteEvent(let snapshot):
+        case .deleteEvent(_, let snapshot):
             // Verify round 4, findings 11/15: the listing says it before the undo runs (#285).
             var restore = ""
             if snapshot.restoresFromRules {
@@ -501,7 +583,7 @@ enum UndoOperation {
             return "Moved event: \(undoVisibleTitle(original.title)) (by copy: undo restores it in its original calendar and removes the copy if unchanged)"
         case .createReminder(_, let title, _):
             return "Created reminder: \(undoVisibleTitle(title))"
-        case .deleteReminder(let snapshot):
+        case .deleteReminder(_, let snapshot):
             return "Deleted reminder: \(undoVisibleTitle(snapshot.title))"
         case .updateReminder(_, let old, _):
             return "Updated reminder: \(undoVisibleTitle(old.title))"
@@ -540,21 +622,33 @@ struct UndoRecord {
     let id: UUID
     let operation: UndoOperation
     let timestamp: Date
+    /// #538: the record names a series that the undo of its whole-series delete recreated as a new
+    /// series without moving this record, because occurrences edited on their own came back as
+    /// separate events (`CalendarUndoManager.markSeriesNotFollowed`). A not-found undo of it answers
+    /// `UndoTargetMissingError.seriesNotFollowed`. Part of the entry: kept by everything that keeps
+    /// the entry, gone with it.
+    let seriesNotFollowed: Bool
 
     init(_ operation: UndoOperation) {
-        self.init(id: UUID(), operation: operation, timestamp: Date())
+        self.init(id: UUID(), operation: operation, timestamp: Date(), seriesNotFollowed: false)
     }
 
-    private init(id: UUID, operation: UndoOperation, timestamp: Date) {
+    private init(id: UUID, operation: UndoOperation, timestamp: Date, seriesNotFollowed: Bool) {
         self.id = id
         self.operation = operation
         self.timestamp = timestamp
+        self.seriesNotFollowed = seriesNotFollowed
     }
 
     /// #248 A: the same history entry holding less, with its id and timestamp, which the spec keeps
-    /// stable across pop and restore.
+    /// stable across pop and restore; the #538 flag too.
     func narrowed(to operation: UndoOperation) -> UndoRecord {
-        UndoRecord(id: id, operation: operation, timestamp: timestamp)
+        UndoRecord(id: id, operation: operation, timestamp: timestamp, seriesNotFollowed: seriesNotFollowed)
+    }
+
+    /// #538: the same entry, flagged.
+    func flaggedSeriesNotFollowed() -> UndoRecord {
+        UndoRecord(id: id, operation: operation, timestamp: timestamp, seriesNotFollowed: true)
     }
 }
 
@@ -651,11 +745,41 @@ actor CalendarUndoManager {
     /// #435: a move gave an event a new identifier. Older records of that event keep working: they
     /// named it by the identifier it had. The record of the move itself is recorded after this, or
     /// is the one being undone.
-    func replaceEventIdentifier(_ old: String, with new: String) {
-        undoStack = undoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new)) }
+    func replaceEventIdentifier(_ old: String, with new: String, change: EventIdentifierChange = .sameEvent) {
+        undoStack = undoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new, change: change)) }
         // Cluster verify r2: the redo stack too. An undo calls this after popUndo moved its own
         // record there, so a redo of that move finds the event under the identifier it has now.
-        redoStack = redoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new)) }
+        redoStack = redoStack.map { $0.narrowed(to: $0.operation.replacingEventIdentifier(old, with: new, change: change)) }
+    }
+
+    /// #538: the reminder counterpart of `replaceEventIdentifier`, on both stacks: the undo of a
+    /// reminder's delete recreated it under `new`, and its own record is on the redo stack by then.
+    func replaceReminderIdentifier(_ old: String, with new: String) {
+        undoStack = undoStack.map { $0.narrowed(to: $0.operation.replacingReminderIdentifier(old, with: new)) }
+        redoStack = redoStack.map { $0.narrowed(to: $0.operation.replacingReminderIdentifier(old, with: new)) }
+    }
+
+    /// #538: flags every entry on both stacks that names `seriesID` (`eventIdentifiersNamed`; delete
+    /// records name none) and whose undo can answer the not-followed text (#538 fix 1, R3: a kind with
+    /// a `notFollowedTitle`, so not a recurring update's marker nor a batch), and returns how many,
+    /// flagged before or not. The undo of a whole-series delete calls it instead of
+    /// `replaceEventIdentifier` when it did not follow.
+    func markSeriesNotFollowed(_ seriesID: String) -> Int {
+        guard !seriesID.isEmpty else { return 0 }
+        var count = 0
+        func mark(_ record: UndoRecord) -> UndoRecord {
+            guard record.operation.notFollowedTitle != nil, record.operation.eventIdentifiersNamed.contains(seriesID) else { return record }
+            count += 1
+            return record.flaggedSeriesNotFollowed()
+        }
+        undoStack = undoStack.map(mark)
+        redoStack = redoStack.map(mark)
+        return count
+    }
+
+    /// Test seam (#538): whether the entry with `id` carries the flag, on either stack.
+    func isSeriesNotFollowed(_ id: UUID) -> Bool? {
+        (undoStack + redoStack).first { $0.id == id }?.seriesNotFollowed
     }
 
     /// #435: whether a write gave the event a new identifier. Through a stand-in the series'
@@ -793,8 +917,9 @@ extension UndoOperation {
     /// `cleanup_completed_reminders`), holding only the reminders the call removed, in the order it
     /// removed them; one undo restores them all, as for `delete_events_batch` (#185). `nil` when it
     /// removed none, so the call pushes no entry that undo would pop instead of an older operation.
-    static func reminderBatchDelete(_ removed: [ReminderSnapshot]) -> UndoOperation? {
-        removed.isEmpty ? nil : .batch(removed.map { .deleteReminder(snapshot: $0) })
+    /// #538: each removed reminder with the identifier it had, read before its removal.
+    static func reminderBatchDelete(_ removed: [(id: String, snapshot: ReminderSnapshot)]) -> UndoOperation? {
+        removed.isEmpty ? nil : .batch(removed.map { .deleteReminder(id: $0.id, snapshot: $0.snapshot) })
     }
 }
 
@@ -832,7 +957,7 @@ extension UndoOperation {
             return nil
         case .createEvent(_, let title, _):
             return "Cannot redo the creation of event '\(undoVisibleTitle(title))': redo does not create items again. Use create_event to create it again." + nothingWritten
-        case .deleteEvent(let snapshot):
+        case .deleteEvent(_, let snapshot):
             return "Cannot redo the deletion of event '\(undoVisibleTitle(snapshot.title))': redo does not delete the restored event. Use delete_event to delete it again." + nothingWritten
         case .deleteOccurrence(let snapshot, _):
             // #244: the undo brought the occurrence back as a one-off event, not into its series.
@@ -855,7 +980,7 @@ extension UndoOperation {
             return "Cannot redo the move of event '\(undoVisibleTitle(original.title))': redo does not move events again. Use move_events_batch to move it again. If the undo left the copy in the calendar it was moved to, moving the event again adds a second one there: check that calendar first." + nothingWritten
         case .createReminder(_, let title, _):
             return "Cannot redo the creation of reminder '\(undoVisibleTitle(title))': redo does not create items again. Use create_reminder to create it again." + nothingWritten
-        case .deleteReminder(let snapshot):
+        case .deleteReminder(_, let snapshot):
             return "Cannot redo the deletion of reminder '\(undoVisibleTitle(snapshot.title))': redo does not delete the restored reminder. Use delete_reminder to delete it again." + nothingWritten
         case .updateReminder(_, let oldSnapshot, _):
             return "Cannot redo the update of reminder '\(undoVisibleTitle(oldSnapshot.title))': redo does not apply updates again, so it stays as the undo left it. Use update_reminder to apply the changes again." + nothingWritten
@@ -907,4 +1032,17 @@ enum UndoHistoryError: LocalizedError, Sendable, TrustedErrorMessage {
         case .stale: return "The undo history changed. Read undo_history and select the current top record ID."
         }
     }
+}
+
+/// #538 fix 1 (R4): what gave an event the identifier `CalendarUndoManager.replaceEventIdentifier`
+/// moves records to. A #263 whole-series update record names the series as it was, with its
+/// occurrences, and its undo compares the series' external identifier: it follows the same series
+/// under a new identifier, and not a series the undo of its delete wrote anew.
+enum EventIdentifierChange: Sendable, Equatable {
+    /// The same event, now under another identifier: a move or a calendar update and their undos
+    /// (#435, #484). Every record that names it follows.
+    case sameEvent
+    /// A new event written from a removed one's snapshot by the undo of its delete (#538). A #263
+    /// whole-series update record does not follow.
+    case recreated
 }
