@@ -340,9 +340,10 @@ enum SeriesExceptionsPlanner {
     /// (`SlotReadings.place`); it is not placed when neither or both are, when that slot held an
     /// occurrence not edited on its own at the capture (a kept slot: no slot has both, so the reading
     /// is the wrong one, as for an edited occurrence whose `/RID=` stayed at its slot from before a
-    /// whole-series time move, #539 cell N1), or when that slot is outside every window. With any record
-    /// of two readings, two records on one slot are not placed either. A record of one reading is kept
-    /// as it is (the restore's consistency check decides it, as before #539), and with no record of two
+    /// whole-series time move, #539 cell N1), when that slot is outside every window, or when another
+    /// record takes that slot too. A record of one reading is kept as it is (the restore's consistency
+    /// check decides it, as before #539) and is never the reason a record is not placed (PR #558 round 2,
+    /// H27: two records of one reading on one slot are left as before #539), and with no record of two
     /// readings every record is, so such a placement is what the restore saw before #539.
     struct Placement {
         /// The records placed, in their recorded order, each with its slot set to the reading placed.
@@ -366,10 +367,15 @@ enum SeriesExceptionsPlanner {
             }
             placed.append(DetachedOccurrence(slot: slot, snapshot: record.snapshot, readings: record.readings))
         }
-        // Ruling D: a slot taken by two records holds neither.
-        let shared = placed.filter { record in placed.filter { UndoPostState.sameInstant($0.slot, record.slot) }.count > 1 }.count
+        // Ruling D: a record of two readings on a slot another record takes is not placed. PR #558 round 2
+        // (H27): a record of one reading is never the reason, so records of one reading that share a slot
+        // only with each other are left as they are, as before #539.
+        func shares(_ record: DetachedOccurrence) -> Bool {
+            placed.filter { UndoPostState.sameInstant($0.slot, record.slot) }.count > 1
+        }
+        let shared = placed.filter { $0.readings.wallClock != nil && shares($0) }.count
         guard shared > 0 else { return Placement(placed: placed, unplaced: unplaced) }
-        let alone = placed.filter { record in placed.filter { UndoPostState.sameInstant($0.slot, record.slot) }.count == 1 }
+        let alone = placed.filter { $0.readings.wallClock == nil || !shares($0) }
         return Placement(placed: alone, unplaced: unplaced + shared)
     }
 

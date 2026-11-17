@@ -56,10 +56,32 @@ final class SeriesPlacementTests: XCTestCase {
             record(SlotReadings(instant: slots[1].addingTimeInterval(8 * hour), wallClock: slots[1])),
             record(SlotReadings(instant: slots[1])),
         ])
-        XCTAssertEqual(SeriesExceptionsPlanner.placement(withOneReading, among: InstantSet(slots)).unplaced, 2)
+        // PR #558 round 2 (H27): the record of two readings is not placed; the record of one reading is
+        // kept as it is (the restore's consistency check decides it), never counted as the reason.
+        let mixed = SeriesExceptionsPlanner.placement(withOneReading, among: InstantSet(slots))
+        XCTAssertEqual(mixed.unplaced, 1)
+        XCTAssertEqual(mixed.placed.map(\.readings), [SlotReadings(instant: slots[1])])
+        XCTAssertNil(SeriesExceptionsPlanner.placeDetached(withOneReading, among: slots))
         let oneReadingOnly = SeriesExceptions(window: window, keptSlots: kept,
                                               detached: [record(SlotReadings(instant: slots[1])), record(SlotReadings(instant: slots[1]))])
         XCTAssertEqual(SeriesExceptionsPlanner.placement(oneReadingOnly, among: InstantSet(slots)).unplaced, 0, "as before #539")
+    }
+
+    /// PR #558 round 2 (H27, H38): a record of one reading is never the reason a record is not placed, beside
+    /// a record of two readings that is placed: one on a kept slot passes (rulings B and C ask only records of
+    /// two readings), and two that share a slot only with each other pass (ruling D likewise), as before #539.
+    func testARecordOfOneReadingIsNeverTheReason() {
+        let kept = [slots[0], slots[3], slots[4], slots[5]]
+        let placedTwo = record(SlotReadings(instant: slots[1].addingTimeInterval(8 * hour), wallClock: slots[1]))
+        let onKept = SeriesExceptions(window: window, keptSlots: kept, detached: [placedTwo, record(SlotReadings(instant: slots[3]))])
+        let first = SeriesExceptionsPlanner.placement(onKept, among: InstantSet(slots))
+        XCTAssertEqual(first.unplaced, 0)
+        XCTAssertEqual(first.placed.map(\.slot), [slots[1], slots[3]])
+        let sharing = SeriesExceptions(window: window, keptSlots: kept,
+                                       detached: [placedTwo, record(SlotReadings(instant: slots[2])), record(SlotReadings(instant: slots[2]))])
+        let second = SeriesExceptionsPlanner.placement(sharing, among: InstantSet(slots))
+        XCTAssertEqual(second.unplaced, 0)
+        XCTAssertEqual(second.placed.map(\.slot), [slots[1], slots[2], slots[2]])
     }
 
     /// Ruling C: a record of two readings placed outside every window applies nothing; one placed inside

@@ -19,9 +19,9 @@ final class OccurrenceSlotWallClockRefusalTests: XCTestCase {
 
     /// In a batch (for example `[occurrence id, series id]`, whose series member is restored first and
     /// makes the slot held), the refused member is kept with the members not yet restored, under the same
-    /// id, and its own text follows the batch's. The batch text asks to check before a retry, which is
-    /// cautious here (this member wrote nothing), as for every error the closed list of
-    /// `failsBeforeAnyWrite` does not name.
+    /// id, and its own text follows the batch's. PR #558 round 2 (H6, H8, H32): the batch text says this
+    /// member wrote nothing, for its own reason (not a missing calendar or list), and does not ask to
+    /// check for a second copy.
     func testInABatchTheRefusedMemberIsKept() throws {
         let occurrence = UndoOperation.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(title: "Third"), notCarriedOver: [])
         let series = UndoOperation.deleteEvent(id: "S", snapshot: UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 6))
@@ -34,6 +34,9 @@ final class OccurrenceSlotWallClockRefusalTests: XCTestCase {
         XCTAssertEqual(partial.restoredCount, 1)
         XCTAssertEqual(partial.failing, .runsLast)
         XCTAssertTrue(partial.message.hasSuffix(": " + refusal.message), partial.message)
+        XCTAssertTrue(partial.message.contains("'Third' was refused before anything of it was written (this server could not tell whether its series already holds its time, as its own error says), so running undo again does not add a copy of it."), partial.message)
+        XCTAssertFalse(partial.message.contains("may have left something written"), partial.message)
+        XCTAssertFalse(partial.message.contains("its calendar or list was not found"), partial.message)
         XCTAssertEqual(UndoFailureDisposition.of(partial), .restore)
         XCTAssertFalse(UndoOperation.failsBeforeAnyWrite(refusal))
     }

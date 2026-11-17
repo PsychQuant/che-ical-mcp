@@ -99,7 +99,7 @@ final class ZonedSeriesUndoOnMainTests: XCTestCase {
     /// second, third or fifth occurrence: the production capture records what `main`'s capture recorded
     /// (one reading each), and the store-level restore removes, creates and answers what `main`'s did.
     func testAZonedRecordIsCapturedAndRestoredAsOnMain() throws {
-        var cases = 0, notApplied = 0, applied = 0
+        var cases = 0, notApplied = 0, applied = 0, lostAsOnMain = 0
         for zone in zones {
             let offset = TimeInterval(zone.secondsFromGMT(for: date(2027, 3, 1, 6, in: zone)))
             for move: TimeInterval in [24 * 3600 - offset, -offset, 3 * 3600, 0] {
@@ -126,7 +126,18 @@ final class ZonedSeriesUndoOnMainTests: XCTestCase {
                         XCTAssertEqual(log, main.log, label)
                         XCTAssertEqual(left, main.left, label)
                         cases += 1
-                        if answer.contains("notApplied: true") { notApplied += 1 } else { applied += 1 }
+                        // PR #558 round 2 (H3, H28, H44): a move by one whole period puts the stale `/RID=` on the
+                        // series' first slot, its anchor: `main` applies the record there, writes no one-off and
+                        // removes the edited occurrence's true slot, so the occurrence is lost (#560). It is
+                        // `main`'s path (ruling A) and counted apart, not as an applied edit.
+                        if answer.contains("notApplied: true") {
+                            notApplied += 1
+                        } else if left.contains(where: { $0.hasPrefix("Edited@") }) {
+                            applied += 1
+                        } else {
+                            lostAsOnMain += 1
+                            XCTAssertEqual(move, step, "only a move by one whole period, \(label)")
+                        }
                     }
                 }
             }
@@ -135,6 +146,10 @@ final class ZonedSeriesUndoOnMainTests: XCTestCase {
         // Both outcomes are reached: a move of none applies the edit, a move off the rule applies nothing.
         XCTAssertGreaterThan(applied, 10)
         XCTAssertGreaterThan(notApplied, 10)
+        // #560: the daily move by 24 hours at UTC (24 hours minus an offset of 0), the second occurrence edited:
+        // its stale `/RID=` is then the moved series' first slot.
+        XCTAssertEqual(lostAsOnMain, 1)
+        print("ZONED cases \(cases) applied \(applied) notApplied \(notApplied) lost as on main (#560) \(lostAsOnMain)")
     }
 
     /// The store-level restore of `exceptions` on a store whose recreated series ("R") generates `slots`.

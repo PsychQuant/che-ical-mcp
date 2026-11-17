@@ -29,13 +29,22 @@ final class SlotReadingsZoneWiringTests: XCTestCase {
 
     /// The three places that record an origin: a delete through `DeletedEventSnapshots` (the series object,
     /// or the occurrence addressed by its own identifier), the whole-series delete of an occurrence
-    /// addressed by its own identifier, and a split move (the event the move resolved).
-    func testEachOriginIsTakenWithTheZoneOfTheEventItsCallResolved() throws {
+    /// addressed by its own identifier, and a split move (the event the move resolved). PR #558 round 2
+    /// (ruling J, H22): each takes the zone of the event's series (`seriesIsFloating(of:)`), which every
+    /// site that builds one of these snapshots hands in.
+    func testEachOriginIsTakenWithTheZoneOfItsSeries() throws {
         let deletes = try code("EventKit/DeleteUndo.swift")
-        XCTAssertEqual(count("removedSnapshot.withOccurrenceOrigin(OccurrenceOrigin.of(removed, floating: OccurrenceOrigin.isFloating(series)))", in: deletes), 1)
-        XCTAssertEqual(count("snapshot.withOccurrenceOrigin(OccurrenceOrigin.of(event, floating: OccurrenceOrigin.isFloating(event)))", in: deletes), 1)
+        XCTAssertEqual(count("removedSnapshot.withOccurrenceOrigin(OccurrenceOrigin.of(removed, floating: seriesFloating(series)))", in: deletes), 1)
+        XCTAssertEqual(count("snapshot.withOccurrenceOrigin(OccurrenceOrigin.of(event, floating: seriesFloating(event)))", in: deletes), 1)
         let manager = try code("EventKit/EventKitManager.swift")
-        XCTAssertEqual(count("copied.withOccurrenceOrigin(OccurrenceOrigin.of(subject, floating: OccurrenceOrigin.isFloating(master)))", in: manager), 1)
+        XCTAssertEqual(count("copied.withOccurrenceOrigin(OccurrenceOrigin.of(subject, floating: self.seriesIsFloating(of: master)))", in: manager), 1)
+        // Every snapshot built in the manager is handed the series' zone, never the event's own.
+        XCTAssertEqual(count("DeletedEventSnapshots(series:", in: manager), 5)
+        XCTAssertEqual(count("EventSnapshot.recordingSeriesDelete(of:", in: manager), 2)
+        XCTAssertEqual(count("seriesFloating: { self.seriesIsFloating(of: $0) }", in: manager), 7)
+        XCTAssertEqual(count("OccurrenceOrigin.isFloating(", in: manager), 0)
+        let wrapper = try code("EventKit/EventKitManager+SeriesExceptions.swift")
+        XCTAssertEqual(count("OccurrenceOrigin.seriesIsFloating(eventIdentifier: event.eventIdentifier, ownFloating: OccurrenceOrigin.isFloating(event), seriesFloating: { id in ((try? self.storedEvent(id: id)) ?? nil).map(OccurrenceOrigin.isFloating) })", in: wrapper), 1)
         // No other place takes an origin from an event.
         let sources = try ["EventKit/DeleteUndo.swift", "EventKit/EventKitManager.swift", "EventKit/SeriesExceptionsUndo.swift",
                            "EventKit/EventKitManager+SeriesExceptions.swift", "Server.swift"].map(code).joined(separator: " ")

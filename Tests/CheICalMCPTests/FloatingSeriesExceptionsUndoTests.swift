@@ -200,6 +200,12 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
         XCTAssertEqual(try restore([record(at: slots[2], end: slots[2].addingTimeInterval(3600), twoReadings: true),
                                     record(at: outside, end: outside.addingTimeInterval(3600), twoReadings: true)], margins: [outside]),
                        .init(stayedDeleted: 0, oneOffs: 0, notApplied: true), "placed outside the window: nothing applied")
+        // PR #558 round 2 (H17): the check reads placed records only, after the placement: a record that is not
+        // placed (outside every window) and ends before it starts gives the placement's answer, not the
+        // daylight-saving one.
+        XCTAssertEqual(try restore([record(at: slots[2], end: slots[2].addingTimeInterval(3600), twoReadings: true),
+                                    record(at: outside, end: outside.addingTimeInterval(-60), twoReadings: true)], margins: [outside]),
+                       .init(stayedDeleted: 0, oneOffs: 0, notApplied: true), "not placed, ends before it starts: not the daylight-saving answer")
         XCTAssertEqual(try restore([record(at: slots[2], end: slots[2].addingTimeInterval(-60), twoReadings: true)]),
                        .init(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true))
     }
@@ -316,15 +322,24 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
                                OccurrenceSlotWallClockRefusal(title: "Third", kind: .recreateDeleted).message)
             }
             XCTAssertEqual(after.events.count, before)
+            // PR #558 round 2 (H19): the split move's kind, through the store-level slot check, gives the
+            // move's words (`slotCheck` passes its kind on).
+            XCTAssertThrowsError(try SeriesExceptionsUndo.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar,
+                                                                               kind: .undoMoveByCopy, in: after)) { error in
+                XCTAssertEqual((error as? OccurrenceSlotWallClockRefusal)?.message,
+                               OccurrenceSlotWallClockRefusal(title: "Third", kind: .undoMoveByCopy).message)
+            }
+            XCTAssertEqual(after.events.count, before)
         }
     }
 
-    /// The refusal's text, in a deletion's and a move's words (fixed words and the title only).
+    /// The refusal's text, in a deletion's and a move's words (fixed words and the title only). PR #558
+    /// round 2: the move's slot is the moved occurrence's (H16), and each says what giving it up keeps (H23).
     func testTheWallClockRefusalText() {
         XCTAssertEqual(OccurrenceSlotWallClockRefusal(title: "Third", kind: .recreateDeletedOccurrence).message,
-                       "Cannot undo the deletion of an occurrence of 'Third': its series had no time zone when it was deleted, so its recorded time can be wall-clock time or an instant, and its series holds an occurrence at the time this Mac's time zone reads it as, but none at the instant. This server cannot tell whether that occurrence is at the deleted occurrence's slot (a one-off event beside it would be a second event there), so nothing was written and this history entry was kept. To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id.")
+                       "Cannot undo the deletion of an occurrence of 'Third': its series had no time zone when it was deleted, so its recorded time can be wall-clock time or an instant, and its series holds an occurrence at the time this Mac's time zone reads it as, but none at the instant. This server cannot tell whether that occurrence is at the deleted occurrence's slot (a one-off event beside it would be a second event there), so nothing was written and this history entry was kept. Giving it up leaves the calendar as it is: this entry holds the only copy of the deleted occurrence and of any edit it had, and this server has no other way to write it back (it can be made again by hand in Calendar). To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id.")
         XCTAssertEqual(OccurrenceSlotWallClockRefusal(title: "Third", kind: .undoMoveByCopy).message,
-                       "Cannot undo the move of an occurrence of 'Third': its series had no time zone when it was moved, so its recorded time can be wall-clock time or an instant, and its series holds an occurrence at the time this Mac's time zone reads it as, but none at the instant. This server cannot tell whether that occurrence is at the deleted occurrence's slot (a one-off event beside it would be a second event there), so nothing was written, the copy the move made stays in the calendar it was moved to, and this history entry was kept. To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id.")
+                       "Cannot undo the move of an occurrence of 'Third': its series had no time zone when it was moved, so its recorded time can be wall-clock time or an instant, and its series holds an occurrence at the time this Mac's time zone reads it as, but none at the instant. This server cannot tell whether that occurrence is at the moved occurrence's original slot (a one-off event beside it would be a second event there), so nothing was written, the copy the move made stays in the calendar it was moved to, and this history entry was kept. Giving it up leaves the calendar as it is: the copy keeps the occurrence and its edits. To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id.")
         XCTAssertEqual(OccurrenceSlotWallClockRefusal(title: "", kind: .recreateDeleted).message.prefix(51),
                        "Cannot undo the deletion of an occurrence of: its s")
     }

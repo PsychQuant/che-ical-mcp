@@ -32,20 +32,20 @@ final class SeriesDeleteForecastWiringTests: XCTestCase {
     /// reached, then the removal. PR #558 round 2 (ruling I (a)): the capture is handed the same
     /// `viaStandIn` as the count, from the one resolution.
     func testEachCapturePointCountsFromItsCaptureBeforeItRemoves() throws {
-        assertInOrder(["seriesExceptions: { self.captureSeriesExceptions(of: masterEvent, viaStandIn: resolved.viaStandIn) })",
+        assertInOrder(["seriesExceptions: { self.captureSeriesExceptions(of: masterEvent, viaStandIn: resolved.viaStandIn) }, seriesFloating: { self.seriesIsFloating(of: $0) })",
                        "unplacedEdits = unplacedEditsAtDelete(snapshots.series.exceptions, of: masterEvent, id: identifier, viaStandIn: resolved.viaStandIn)",
                        "try eventStore.remove(occurrence, span: span)"],
                       in: try body("func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws -> Int {"),
                       "delete_event span future")
-        assertInOrder(["EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event, viaStandIn: resolved.viaStandIn) })",
+        assertInOrder(["EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event, viaStandIn: resolved.viaStandIn) }, seriesFloating: { self.seriesIsFloating(of: $0) })",
                        "let unplacedEdits = unplacedEditsAtDelete(snapshot.exceptions, of: event, id: identifier, viaStandIn: resolved.viaStandIn)",
                        "try eventStore.remove(event, span: .futureEvents)"],
                       in: try body("func deleteEventSeries(identifier: String) async throws -> SeriesDeleteRoute {"), "delete_event span all")
-        assertInOrder(["EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event, viaStandIn: resolved.viaStandIn) })",
+        assertInOrder(["EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event, viaStandIn: resolved.viaStandIn) }, seriesFloating: { self.seriesIsFloating(of: $0) })",
                        "let unplacedEdits = unplacedEditsAtDelete(snapshot.exceptions, of: event, id: id, viaStandIn: resolved.viaStandIn)",
                        "try eventStore.remove(event, span: .futureEvents)"],
                       in: try body("func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult {"), "batch span all")
-        assertInOrder(["seriesExceptions: { self.captureSeriesExceptions(of: masterEvent, viaStandIn: resolvedRow.viaStandIn) })",
+        assertInOrder(["seriesExceptions: { self.captureSeriesExceptions(of: masterEvent, viaStandIn: resolvedRow.viaStandIn) }, seriesFloating: { self.seriesIsFloating(of: $0) })",
                        "unplacedEdits = unplacedEditsAtDelete(snapshots.series.exceptions, of: masterEvent, id: item.identifier, viaStandIn: resolvedRow.viaStandIn)",
                        "try eventStore.remove(occurrence, span: span)"],
                       in: try body(Self.batchDeclaration), "batch span future")

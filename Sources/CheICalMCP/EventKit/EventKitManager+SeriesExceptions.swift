@@ -28,6 +28,14 @@ extension EventKitManager {
         SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore, viaStandIn: viaStandIn)
     }
 
+    /// PR #558 round 2 (ruling J): whether the series of `event` has no time zone, for an occurrence's
+    /// origin (`OccurrenceOrigin.seriesIsFloating`): through an occurrence's own identifier, the series
+    /// object stored under the part before `/RID=`; nil (one reading) when it cannot be read.
+    func seriesIsFloating(of event: EKEvent) -> Bool {
+        OccurrenceOrigin.seriesIsFloating(eventIdentifier: event.eventIdentifier, ownFloating: OccurrenceOrigin.isFloating(event),
+                                          seriesFloating: { id in ((try? self.storedEvent(id: id)) ?? nil).map(OccurrenceOrigin.isFloating) })
+    }
+
     /// #539 step 6: the forecast of a whole-series delete, read before the removal: how many of the
     /// occurrences edited on their own that `exceptions` (this delete's capture) recorded the series'
     /// rule does not place (`SeriesExceptionsPlanner.unplacedEdits`). The rule is expanded from the

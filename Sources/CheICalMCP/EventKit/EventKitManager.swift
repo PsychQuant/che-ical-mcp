@@ -2014,7 +2014,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 throw occurrenceMissError(series: masterEvent, id: identifier, on: date, call: .delete(futureSpan: span == .futureEvents))
             }
             snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
-                                              seriesExceptions: { self.captureSeriesExceptions(of: masterEvent, viaStandIn: resolved.viaStandIn) })
+                                              seriesExceptions: { self.captureSeriesExceptions(of: masterEvent, viaStandIn: resolved.viaStandIn) },
+                                              seriesFloating: { self.seriesIsFloating(of: $0) })
             unplacedEdits = unplacedEditsAtDelete(snapshots.series.exceptions, of: masterEvent, id: identifier, viaStandIn: resolved.viaStandIn)
             try eventStore.remove(occurrence, span: span)
         } else if hadRules {
@@ -2022,7 +2023,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 message: "For recurring events, occurrence_date is required to identify which occurrence to delete."
             )
         } else {
-            snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent)
+            snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent, seriesFloating: { self.seriesIsFloating(of: $0) })
             try eventStore.remove(masterEvent, span: span)
         }
         markNeedsRefresh()
@@ -2063,7 +2064,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // #185 — snapshot BEFORE removal (the rules as value snapshots since #191, so undo
         // rebuilds the whole series), consistent with single deleteEvent.
         // #285: a series' exceptions are listed before the removal takes them away.
-        let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event, viaStandIn: resolved.viaStandIn) })
+        let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event, viaStandIn: resolved.viaStandIn) },
+                                                           seriesFloating: { self.seriesIsFloating(of: $0) })
         // #539 step 6: the forecast, from the capture, before the removal.
         let unplacedEdits = unplacedEditsAtDelete(snapshot.exceptions, of: event, id: identifier, viaStandIn: resolved.viaStandIn)
         // #538: read before the removal.
@@ -2122,7 +2124,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                             failures.append((id, refusal))
                             continue
                         }
-                        let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence)
+                        let snapshots = DeletedEventSnapshots(series: occurrence, removed: occurrence, seriesFloating: { self.seriesIsFloating(of: $0) })
                         try eventStore.remove(occurrence, span: .futureEvents)
                         successCount += 1
                         throughFirstOccurrence.append((identifier: id, occurrenceID: first.id))
@@ -2142,7 +2144,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((id, refusal))
                     continue
                 }
-                let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event, viaStandIn: resolved.viaStandIn) })
+                let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event, viaStandIn: resolved.viaStandIn) },
+                                                                   seriesFloating: { self.seriesIsFloating(of: $0) })
                 let unplacedEdits = unplacedEditsAtDelete(snapshot.exceptions, of: event, id: id, viaStandIn: resolved.viaStandIn)
                 // #538: read before the removal.
                 let removedID = DeleteUndoFollow.removedIdentifier(eventIdentifier: event.eventIdentifier, hasRules: event.hasRecurrenceRules)
@@ -2372,7 +2375,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                         continue
                     }
                     snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
-                                                      seriesExceptions: { self.captureSeriesExceptions(of: masterEvent, viaStandIn: resolvedRow.viaStandIn) })
+                                                      seriesExceptions: { self.captureSeriesExceptions(of: masterEvent, viaStandIn: resolvedRow.viaStandIn) },
+                                                      seriesFloating: { self.seriesIsFloating(of: $0) })
                     unplacedEdits = unplacedEditsAtDelete(snapshots.series.exceptions, of: masterEvent, id: item.identifier,
                                                           viaStandIn: resolvedRow.viaStandIn)
                     let removedStart = occurrence.startDate, removedSlot = occurrence.occurrenceDate
@@ -2385,7 +2389,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((item.identifier, Self.batchOccurrenceDateRequired))
                     continue
                 } else {
-                    snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent)
+                    snapshots = DeletedEventSnapshots(series: masterEvent, removed: masterEvent, seriesFloating: { self.seriesIsFloating(of: $0) })
                     let removedStart = masterEvent.startDate, removedSlot = masterEvent.occurrenceDate
                     try eventStore.remove(masterEvent, span: span)
                     // An occurrence edited on its own reads back without rules; with span future its
@@ -2655,7 +2659,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // the copy was given.
             // #321: a split occurrence is tied to its series, which its undo's slot check compares.
             let copied = EventSnapshot(from: subject, includeRecurrence: false, alarms: planned.alarms)
-            let snapshot = isSplit ? copied.withOccurrenceOrigin(OccurrenceOrigin.of(subject, floating: OccurrenceOrigin.isFloating(master))) : copied
+            let snapshot = isSplit ? copied.withOccurrenceOrigin(OccurrenceOrigin.of(subject, floating: self.seriesIsFloating(of: master))) : copied
             let copy = Self.makeCopy(of: subject, alarms: planned.alarms, in: targetCalendar, store: self.eventStore)
             let outcome = try EventCopyOperation.execute(source: snapshot, saveCopy: {
                 // A refused copy names its location, email or sound alarms; the source is removed

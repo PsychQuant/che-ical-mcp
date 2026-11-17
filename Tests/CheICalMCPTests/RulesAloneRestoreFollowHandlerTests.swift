@@ -52,7 +52,10 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
                                                  detached: [record(SlotReadings(instant: slot(1).addingTimeInterval(8 * hour), wallClock: slot(1))),
                                                             record(SlotReadings(instant: slot(1), wallClock: slot(1).addingTimeInterval(-8 * hour)))])),
          ("E: ends before it starts", SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
-                                                       detached: [record(SlotReadings(instant: slot(1)), end: slot(1).addingTimeInterval(-30 * 60))]))]
+                                                       detached: [record(SlotReadings(instant: slot(1)), end: slot(1).addingTimeInterval(-30 * 60))])),
+         // PR #558 round 2 (ruling I): the first slot not a plain occurrence at the capture.
+         ("I: first slot not plain", SeriesExceptions(window: window, keptSlots: [slot(2), slot(3)],
+                                                      detached: [record(SlotReadings(instant: slot(1).addingTimeInterval(8 * hour), wallClock: slot(1)))]))]
     }
 
     func testANotAppliedRestoreMovesTheOlderRecordsToTheRecreatedSeries() async throws {
@@ -80,10 +83,38 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
         }
     }
 
+    /// PR #558 round 2 (H30): a floating series whose record of two readings is placed and applied writes the
+    /// edited occurrence as a separate event, so #538 flags the older records of the series instead of moving
+    /// them, through the production arm (`undoDeletedEvent(_:removedID:)`), as for a series with a time zone.
+    func testAPlacedFloatingRecordFlagsTheOlderRecords() async throws {
+        let store = FakeSeriesExceptionsStore()
+        store.seriesSlots = (0...3).map(slot)
+        let history = CalendarUndoManager()
+        let exceptions = SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
+                                          detached: [record(SlotReadings(instant: slot(1).addingTimeInterval(8 * hour), wallClock: slot(1)))])
+        let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0).withExceptions(exceptions)
+        await history.record(.createEvent(id: "S", title: "Standup", created: series))
+        await history.record(.deleteEvent(id: "S", snapshot: series))
+        let server = try await CheICalMCPServer(
+            undoManager: history,
+            undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe(), seriesExceptionsStore: store, undoHistory: history))
+
+        let result = await server.handleToolCallForTesting(name: "undo", arguments: [:])
+
+        XCTAssertNotEqual(result.isError, true)
+        let answer = try text(result)
+        XCTAssertTrue(answer.contains("1 occurrence(s) edited on their own came back as separate one-off events"), answer)
+        XCTAssertEqual(store.events.filter { $0.title == "Edited" }.map(\.start), [slot(1)], "the edit, once")
+        let older = await history.popUndo()
+        XCTAssertEqual(older?.seriesNotFollowed, true, "flagged, not moved")
+        XCTAssertEqual(older?.operation.eventIdentifiersNamed, ["S"])
+    }
+
     /// The decision itself, for the outcome each not-applied path returns.
     func testTheDecisionForEachNotAppliedOutcomeIsFollow() {
         for outcome in [SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true),
-                        SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true)] {
+                        SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true),
+                        SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true, firstSlotNotPlain: true)] {
             XCTAssertEqual(DeleteUndoFollow.decision(removedID: "S", newID: "R", isOccurrenceRecord: false,
                                                      outcome: .seriesWithExceptions(outcome)), .follow("R"))
         }
