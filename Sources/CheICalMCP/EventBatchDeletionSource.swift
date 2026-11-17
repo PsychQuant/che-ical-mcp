@@ -101,6 +101,6 @@ extension EventKitManager: EventBatchDeletionSource {
                 id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: .thisEvent, wholeSeries: true),
                 goneInTheCall: goneInTheCall),
               resolved.event.hasRecurrenceRules else { return 0 }
-        return unplacedEditsAtDelete(captureSeriesExceptions(of: resolved.event), of: resolved.event, id: identifier, viaStandIn: resolved.viaStandIn)
+        return unplacedEditsAtDelete(captureSeriesExceptions(of: resolved.event, viaStandIn: resolved.viaStandIn), of: resolved.event, id: identifier, viaStandIn: resolved.viaStandIn)
     }
 }

@@ -28,6 +28,11 @@ struct SeriesExceptions {
     /// window from its first occurrence here (the window before #319) beside `window`, always (round 7).
     /// Empty for every other series.
     var extraWindows: [DateInterval] = []
+    /// PR #558 round 2 (ruling I (a)): the delete reached the series through a stand-in, the earliest
+    /// plain occurrence left (#326), because the series object did not refresh (its first occurrence was
+    /// deleted or edited on its own). Set from the resolution the delete made (`viaStandIn`), as the
+    /// forecast reads it; false for every other capture.
+    var throughStandIn: Bool = false
 
     /// `window` and `extraWindows`: every slot judged, kept or removed is inside one of them.
     var windows: [DateInterval] { [window] + extraWindows }
@@ -388,7 +393,27 @@ enum SeriesExceptionsPlanner {
         result.seriesStartsBeforeWindow = exceptions.seriesStartsBeforeWindow
         result.seriesContinuesAfterWindow = exceptions.seriesContinuesAfterWindow
         result.seriesMayContinueAfterWindow = exceptions.seriesMayContinueAfterWindow
+        result.throughStandIn = exceptions.throughStandIn
         return result
+    }
+
+    /// PR #558 round 2 (ruling I; verify findings H1, H4, H5): whether the records are not applied because
+    /// of the recreated series' first slot. With at least one record of two readings, nothing is applied
+    /// when (a) the delete reached the series through a stand-in (`throughStandIn`), or (b) the recreated
+    /// series' first slot, `seriesStart`, lies inside a window and was not a plain occurrence at the
+    /// capture (not a kept slot: deleted or edited on its own). The restore keeps that first slot from the
+    /// rule whatever the record says (it is the series' anchor), so a stale record placed on it, or placed
+    /// on another slot while the first slot's own occurrence is edited, loses an occurrence or writes a
+    /// second event there (H1, H4); through a stand-in the recreated series starts at a later slot than the
+    /// series did, and a stale record placed on a slot deleted on its own wrote a second event (the 40 cells
+    /// of the round's matrix, device cell SA). A first slot outside every window (a series begun years
+    /// before the delete, #319) is not asked: it was never listed. A record of one reading is never the
+    /// reason: with none of two readings this is false, as before #539. Shared by the restore
+    /// (`SeriesExceptionsRestorer.restore`) and the forecast at the delete (`unplacedEdits`).
+    static func firstSlotStopsTheRestore(_ exceptions: SeriesExceptions, seriesStart: Date) -> Bool {
+        guard exceptions.detached.contains(where: { $0.readings.wallClock != nil }) else { return false }
+        if exceptions.throughStandIn { return true }
+        return inWindows(seriesStart, exceptions.windows) && !InstantSet(exceptions.keptSlots).contains(seriesStart)
     }
 
     /// #539 step 6: how many of the recorded occurrences edited on their own the series' rule does not
@@ -405,9 +430,13 @@ enum SeriesExceptionsPlanner {
     /// does not follow, more slots than it takes, or (PR #558 round 1, ruling G, the #503 verdict's own
     /// guard) a recorded occurrence not edited on its own that is no slot of the expander, so the
     /// expander is wrong here.
+    /// PR #558 round 2 (ruling I): first, when `firstSlotStopsTheRestore` holds for `seriesStart` (the
+    /// start the recreated series will have: the series', or the stand-in's), every recorded edited
+    /// occurrence is counted, without the expander: the restore applies none of them.
     static func unplacedEdits(_ exceptions: SeriesExceptions, rules: [DeletedOccurrenceCheck.Rule], firstSlot: Date?,
-                              calendar: Calendar) -> Int? {
+                              seriesStart: Date, calendar: Calendar) -> Int? {
         guard !exceptions.detached.isEmpty else { return 0 }
+        if firstSlotStopsTheRestore(exceptions, seriesStart: seriesStart) { return exceptions.detached.count }
         guard rules.count == 1, let firstSlot, let end = exceptions.windows.map(\.end).max() else { return nil }
         guard case .slots(let slots) = DeletedOccurrenceCheck.expansion(of: rules[0], firstStart: firstSlot,
                                                                          until: end.addingTimeInterval(SlotReadings.largestOffset),
@@ -503,6 +532,10 @@ enum SeriesExceptionsRestorer {
         /// #539 (device cell DS1): with `notApplied`, why: a placed record of two readings ends before
         /// it starts as this process reads it, so no one-off can be saved for it.
         var endsBeforeStart: Bool = false
+        /// PR #558 round 2 (ruling I): with `notApplied`, why: a record of two readings, and the series'
+        /// first occurrence was not a plain occurrence when it was deleted, or the delete reached the series
+        /// through a later occurrence (`SeriesExceptionsPlanner.firstSlotStopsTheRestore`).
+        var firstSlotNotPlain: Bool = false
     }
 
     /// The sanitized code of a failed write (#398): `eventkit_error_<N>`, `error_<domain>_<N>` for
@@ -543,6 +576,10 @@ enum SeriesExceptionsRestorer {
         // `UndoPostState.sameInstant` as before, and the index answers with the first entry of
         // `generated` at the slot, in its own order, as `first { }` did.
         let generatedSlots = generated.map(\.slot)
+        // PR #558 round 2 (ruling I): the first slot decides before any record is placed.
+        if SeriesExceptionsPlanner.firstSlotStopsTheRestore(recorded, seriesStart: seriesStart) {
+            return Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true, firstSlotNotPlain: true)
+        }
         // #539: each record placed on its slot first; one that cannot be placed applies nothing.
         guard let exceptions = SeriesExceptionsPlanner.placeDetached(recorded, among: generatedSlots + marginSlots) else {
             return Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true)

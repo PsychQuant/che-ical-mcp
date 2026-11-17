@@ -15,8 +15,17 @@ enum SeriesExceptionsUndo {
     /// #539: `zone` is the zone an edited occurrence's wall-clock reading is taken in (`SlotReadings`),
     /// which is taken only when the series has no time zone as read now (`isFloating`, PR #558 round 1,
     /// ruling A).
+    /// PR #558 round 2 (ruling I (a)): `viaStandIn`, the delete's resolution reached `series` through a
+    /// stand-in (#326), is kept on the record (`SeriesExceptions.throughStandIn`) for the restore.
     static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store, now: Date = Date(),
-                                                            zone: TimeZone = .current) -> SeriesExceptions? {
+                                                            zone: TimeZone = .current, viaStandIn: Bool = false) -> SeriesExceptions? {
+        var exceptions = captureListed(of: series, in: store, now: now, zone: zone)
+        exceptions?.throughStandIn = viaStandIn
+        return exceptions
+    }
+
+    private static func captureListed<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store, now: Date,
+                                                                         zone: TimeZone) -> SeriesExceptions? {
         let ids = store.identifiers(of: series)
         guard let id = ids.eventIdentifier, !id.isEmpty, store.hasCalendar(series) else { return nil }
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: ids.externalIdentifier)

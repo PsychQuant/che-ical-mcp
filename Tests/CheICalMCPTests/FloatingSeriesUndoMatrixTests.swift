@@ -147,7 +147,7 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         let now = cell.yearsBefore > 0 ? original[0].addingTimeInterval(Double(cell.yearsBefore) * 365 * day)
                                        : min(original[0], moved[0]).addingTimeInterval(-30 * day)
         let target = resolved.event
-        let capture = SeriesExceptionsUndo.capture(of: target, in: store, now: now, zone: host)
+        let capture = SeriesExceptionsUndo.capture(of: target, in: store, now: now, zone: host, viaStandIn: resolved.viaStandIn)
         guard let exceptions = capture else { return Run(kind: .noCapture) }
         let start = store.startDate(of: target)
         let ruleSlots = moved.filter { $0 >= start }
@@ -193,6 +193,8 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             }
             if final != expected { fail("applied, left \(final), before \(before), answer \(restore)") }
             if restore.firstOccurrenceKeptFromRule == anchorWasPlain, anchorInWindow { fail("first kept flag \(restore.firstOccurrenceKeptFromRule)") }
+            // Ruling I: with a record of two readings, a first slot kept from the rule only outside every window.
+            if twoReadings, restore.firstOccurrenceKeptFromRule, anchorInWindow { fail("two readings applied with the first slot not plain") }
             // The counts: a slot of the recreated series removed with no event there before stayed deleted;
             // each one-off counted was written.
             let recreatedID = after.events.first { $0.hasRules }?.id
@@ -307,9 +309,20 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             if !run.asOnMain.isEmpty { asOnMain += 1 }
             if !run.failures.isEmpty, run.kind == .twoApplied || run.kind == .twoNotApplied { twoReadingFailures += 1 }
         }
-        let redCells = Set(failures.map { $0.components(separatedBy: ": ")[0] }).count
+        let redLabels = Set(failures.map { $0.components(separatedBy: ": ")[0] })
+        let redCells = redLabels.count
+        let byRoute = Dictionary(grouping: redLabels) { label in label.components(separatedBy: ", ").last ?? "" }.mapValues(\.count)
+        print("MATRIX red by route \(byRoute.sorted { $0.key < $1.key })")
         print("MATRIX cells \(all.count) kinds \(kinds.sorted { $0.key < $1.key }) red \(redCells) two-reading red \(twoReadingFailures) one-reading as on main but rejected \(asOnMain)")
         XCTAssertEqual(redCells, 0, failures.prefix(12).joined(separator: "\n"))
+        // The totals of the round's record (PR #558 round 2): a change of the restore that moves a cell from
+        // one outcome to another shows here.
+        XCTAssertEqual(all.count, 7812)
+        XCTAssertEqual(kinds["notRestorable"], 1188)
+        XCTAssertEqual(kinds["oneReading"], 1044)
+        XCTAssertEqual(kinds["twoApplied"], 1236)
+        XCTAssertEqual(kinds["twoNotApplied"], 4344)
+        XCTAssertEqual(asOnMain, 452)
     }
 
     // MARK: - named cells

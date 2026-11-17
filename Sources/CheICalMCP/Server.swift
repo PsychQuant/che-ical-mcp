@@ -1640,7 +1640,7 @@ class CheICalMCPServer {
     }
 
     private static func rulesAloneReason(_ unplacedEdits: Int) -> String {
-        "\(unplacedEdits) occurrence(s) edited on their own cannot be placed on the series' rule as it was read at the delete (no slot or two slots match their original time, the slot had an occurrence not edited on its own, it falls outside the checked window, or two take the same slot), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back."
+        "\(unplacedEdits) occurrence(s) edited on their own cannot be placed on the series' rule as it was read at the delete (no slot or two slots match their original time, the slot had an occurrence not edited on its own, it falls outside the checked window, two take the same slot, or one has a recorded time that can be wall-clock time or an instant while the series' first occurrence was not a plain occurrence at the delete or the delete reached the series through a later occurrence), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back."
     }
 
     /// #539 step 6: the rows of `rules_alone_on_undo`, each with its note.

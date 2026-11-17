@@ -330,12 +330,18 @@ extension UndoOperation {
         }
     }
 
+    /// PR #558 round 2 (ruling I): a restore stopped by the series' first slot (`Outcome.firstSlotNotPlain`).
+    static let seriesFirstSlotNotPlainNote = "Restored from the series rules alone: the series had no time zone, an occurrence edited on its own has a recorded time that can be wall-clock time or an instant, and the series' first occurrence was not a plain occurrence when the series was deleted (it was deleted or edited on its own, or the delete reached the series through a later occurrence), so which slot that edit belongs to cannot be shown and none of the recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
+
     /// #285: what a restore that put the series' exceptions back says, with counts. The window
     /// limit is stated because an exception outside it was never listed. #319: by its instants, with
     /// the side(s) on which the series has occurrences outside it, when the record holds them.
     static func seriesExceptionsRestoredNote(_ outcome: SeriesExceptionsRestorer.Outcome, exceptions: SeriesExceptions? = nil) -> String {
         if outcome.endsBeforeStart {
             return "Restored from the series rules alone: an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of the recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
+        }
+        if outcome.firstSlotNotPlain {
+            return seriesFirstSlotNotPlainNote
         }
         if outcome.notApplied {
             return "Restored from the series rules alone: the recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"

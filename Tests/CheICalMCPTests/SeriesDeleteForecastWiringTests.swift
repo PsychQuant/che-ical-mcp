@@ -29,22 +29,23 @@ final class SeriesDeleteForecastWiringTests: XCTestCase {
     }
 
     /// Each capture point: the capture, then the count from what it captured and how the series was
-    /// reached, then the removal.
+    /// reached, then the removal. PR #558 round 2 (ruling I (a)): the capture is handed the same
+    /// `viaStandIn` as the count, from the one resolution.
     func testEachCapturePointCountsFromItsCaptureBeforeItRemoves() throws {
-        assertInOrder(["seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) })",
+        assertInOrder(["seriesExceptions: { self.captureSeriesExceptions(of: masterEvent, viaStandIn: resolved.viaStandIn) })",
                        "unplacedEdits = unplacedEditsAtDelete(snapshots.series.exceptions, of: masterEvent, id: identifier, viaStandIn: resolved.viaStandIn)",
                        "try eventStore.remove(occurrence, span: span)"],
                       in: try body("func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws -> Int {"),
                       "delete_event span future")
-        assertInOrder(["EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })",
+        assertInOrder(["EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event, viaStandIn: resolved.viaStandIn) })",
                        "let unplacedEdits = unplacedEditsAtDelete(snapshot.exceptions, of: event, id: identifier, viaStandIn: resolved.viaStandIn)",
                        "try eventStore.remove(event, span: .futureEvents)"],
                       in: try body("func deleteEventSeries(identifier: String) async throws -> SeriesDeleteRoute {"), "delete_event span all")
-        assertInOrder(["EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event) })",
+        assertInOrder(["EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptions(of: event, viaStandIn: resolved.viaStandIn) })",
                        "let unplacedEdits = unplacedEditsAtDelete(snapshot.exceptions, of: event, id: id, viaStandIn: resolved.viaStandIn)",
                        "try eventStore.remove(event, span: .futureEvents)"],
                       in: try body("func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult {"), "batch span all")
-        assertInOrder(["seriesExceptions: { self.captureSeriesExceptions(of: masterEvent) })",
+        assertInOrder(["seriesExceptions: { self.captureSeriesExceptions(of: masterEvent, viaStandIn: resolvedRow.viaStandIn) })",
                        "unplacedEdits = unplacedEditsAtDelete(snapshots.series.exceptions, of: masterEvent, id: item.identifier, viaStandIn: resolvedRow.viaStandIn)",
                        "try eventStore.remove(occurrence, span: span)"],
                       in: try body(Self.batchDeclaration), "batch span future")
@@ -72,13 +73,15 @@ final class SeriesDeleteForecastWiringTests: XCTestCase {
 
     /// The first slot is the one #503 proves (`wholeSeriesBaseline`), and only a plain first occurrence
     /// at its own start counts (`.stored`): a stand-in or a first occurrence edited on its own gives no
-    /// count. The zone and the rules are those #503's verdict expands in.
+    /// count. The zone and the rules are those #503's verdict expands in. PR #558 round 2 (ruling I):
+    /// before that guard, the first-slot stop the restore asks, with the start the recreated series takes.
     func testTheCountReadsTheFirstSlotAsTheCheckOf503Does() throws {
         assertInOrder(["guard let exceptions, !exceptions.detached.isEmpty else { return 0 }",
+                       "if SeriesExceptionsPlanner.firstSlotStopsTheRestore(exceptions, seriesStart: series.startDate) { return exceptions.detached.count }",
                        "let first = wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn)",
                        "guard first.baseline == .stored else { return 0 }",
                        "let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)",
-                       "return SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init), firstSlot: first.slot, calendar: .gregorian(in: zone)) ?? 0"],
+                       "return SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init), firstSlot: first.slot, seriesStart: series.startDate, calendar: .gregorian(in: zone)) ?? 0"],
                       in: try body("func unplacedEditsAtDelete(_ exceptions: SeriesExceptions?, of series: EKEvent, id: String, viaStandIn: Bool) -> Int {",
                                    in: "EventKit/EventKitManager+SeriesExceptions.swift"), "the count")
         // #263's capture of a whole-series update does not compute it.
@@ -92,7 +95,7 @@ final class SeriesDeleteForecastWiringTests: XCTestCase {
         let manager = try body("func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> Int { guard", in: "EventBatchDeletionSource.swift")
         assertInOrder(["freshEventWithOrigin( id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: .thisEvent, wholeSeries: true), goneInTheCall: goneInTheCall)",
                        "resolved.event.hasRecurrenceRules else { return 0 }",
-                       "return unplacedEditsAtDelete(captureSeriesExceptions(of: resolved.event), of: resolved.event, id: identifier, viaStandIn: resolved.viaStandIn)"],
+                       "return unplacedEditsAtDelete(captureSeriesExceptions(of: resolved.event, viaStandIn: resolved.viaStandIn), of: resolved.event, id: identifier, viaStandIn: resolved.viaStandIn)"],
                       in: manager, "the manager's dry-run forecast")
         let rows = try body("private func previewDeletionRows(_ eventIds: [String], spanStr: String) async -> [[String: Any]] {", in: "Server.swift")
         assertInOrder(["case .deletes(let start, let end):",

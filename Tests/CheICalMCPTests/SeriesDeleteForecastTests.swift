@@ -74,7 +74,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
                 edit(occurrences[3], rid: floatingRID(slots[3], in: zone), title: "Moved", moved: 3600)
             }
             XCTAssertEqual(exceptions.detached.count, 2, zone.identifier)
-            let count = try XCTUnwrap(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0],
+            let count = try XCTUnwrap(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0], seriesStart: slots[0],
                                                                             calendar: .gregorian(in: zone)), zone.identifier)
             XCTAssertEqual(count, 0, zone.identifier)
             // The answer has no undo_note: delete_event gives it only for a count above 0 (the record's
@@ -92,7 +92,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
                 edit(occurrences[2], rid: zonedRID(slots[2]), title: "Retitled")
                 edit(occurrences[3], rid: zonedRID(slots[3]), title: "Moved", moved: 3600)
             }
-            XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0],
+            XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0], seriesStart: slots[0],
                                                                 calendar: .gregorian(in: zone)), 0, zone.identifier)
         }
     }
@@ -105,7 +105,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
             edit(occurrences[2], rid: floatingRID(slots[2].addingTimeInterval(3 * 3600), in: taipei), title: "Retitled")
             edit(occurrences[3], rid: floatingRID(slots[3], in: taipei), title: "Placed")
         }
-        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0],
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0], seriesStart: slots[0],
                                                             calendar: .gregorian(in: taipei)), 1)
     }
 
@@ -119,7 +119,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
             occurrences[2].occurrenceDate = occurrences[2].start
         }
         XCTAssertEqual(exceptions.detached.first?.readings.wallClock, nil)
-        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0],
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0], seriesStart: slots[0],
                                                             calendar: .gregorian(in: taipei)), 1)
     }
 
@@ -127,7 +127,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
         let slots = weekly(from: date(2027, 2, 11, 10, in: taipei), count: 6)
         let exceptions = try captured(slots, zone: taipei) { _ in }
         XCTAssertTrue(exceptions.detached.isEmpty)
-        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0],
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0], seriesStart: slots[0],
                                                             calendar: .gregorian(in: taipei)), 0)
     }
 
@@ -138,15 +138,15 @@ final class SeriesDeleteForecastTests: XCTestCase {
             edit(occurrences[2], rid: floatingRID(slots[2].addingTimeInterval(3 * 3600), in: taipei), title: "Off the rule")
         }
         let calendar = Calendar.gregorian(in: taipei)
-        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [], firstSlot: slots[0], calendar: calendar), "no rule")
-        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6), rule(.daily)], firstSlot: slots[0],
+        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [], firstSlot: slots[0], seriesStart: slots[0], calendar: calendar), "no rule")
+        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6), rule(.daily)], firstSlot: slots[0], seriesStart: slots[0],
                                                           calendar: calendar), "two rules")
-        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(otherParts: true)], firstSlot: slots[0],
+        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(otherParts: true)], firstSlot: slots[0], seriesStart: slots[0],
                                                           calendar: calendar), "a rule the expander does not follow")
-        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: nil, calendar: calendar),
+        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: nil, seriesStart: slots[0], calendar: calendar),
                      "the first slot cannot be shown")
         // A daily rule from 60 years back gives more slots than the expander takes.
-        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(.daily)], firstSlot: slots[0].addingTimeInterval(-60 * 365 * day),
+        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(.daily)], firstSlot: slots[0].addingTimeInterval(-60 * 365 * day), seriesStart: slots[0],
                                                           calendar: calendar), "too many slots")
     }
 
@@ -167,7 +167,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
             edit(occurrences[260], rid: floating ? floatingRID(slots[260], in: taipei) : zonedRID(slots[260]), title: "Before the edge")
             let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now, zone: taipei))
             XCTAssertEqual(exceptions.detached.count, floating ? 1 : 0, "recorded by its instant reading only when floating")
-            XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule()], firstSlot: slots[0],
+            XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule()], firstSlot: slots[0], seriesStart: slots[0],
                                                                 calendar: .gregorian(in: taipei)), floating ? 1 : 0)
         }
     }
@@ -184,11 +184,11 @@ final class SeriesDeleteForecastTests: XCTestCase {
         let hours: TimeInterval = 3600
         let onKept = SeriesExceptions(window: window, keptSlots: slots.filter { $0 != slots[2] },
                                       detached: [record(SlotReadings(instant: slots[1].addingTimeInterval(8 * hours), wallClock: slots[1]))])
-        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(onKept, rules: [rule(count: 6)], firstSlot: slots[0], calendar: calendar), 1)
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(onKept, rules: [rule(count: 6)], firstSlot: slots[0], seriesStart: slots[0], calendar: calendar), 1)
         let shared = SeriesExceptions(window: window, keptSlots: [slots[0], slots[1], slots[4], slots[5]],
                                       detached: [record(SlotReadings(instant: slots[2].addingTimeInterval(8 * hours), wallClock: slots[2])),
                                                  record(SlotReadings(instant: slots[2], wallClock: slots[2].addingTimeInterval(-8 * hours)))])
-        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(shared, rules: [rule(count: 6)], firstSlot: slots[0], calendar: calendar), 2)
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(shared, rules: [rule(count: 6)], firstSlot: slots[0], seriesStart: slots[0], calendar: calendar), 2)
     }
 
     /// Ruling G (the #503 verdict's own guard): a recorded occurrence not edited on its own that is no
@@ -199,7 +199,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
             edit(occurrences[2], rid: floatingRID(slots[2].addingTimeInterval(3 * 3600), in: taipei), title: "Off the rule")
             occurrences[4].occurrenceDate = slots[4].addingTimeInterval(3600)
         }
-        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0],
+        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0], seriesStart: slots[0],
                                                           calendar: .gregorian(in: taipei)))
     }
 
@@ -223,7 +223,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
             }
             XCTAssertEqual(exceptions.detached.count, 1)
             XCTAssertEqual(exceptions.detached.first?.readings.wallClock, slots[2], "Foundation's instant for that wall-clock time")
-            XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: first, calendar: calendar), 0)
+            XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: first, seriesStart: first, calendar: calendar), 0)
         }
     }
 
@@ -241,7 +241,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
             occurrences[2].end = slots[2].addingTimeInterval(-30 * 60)
         }
         XCTAssertLessThan(try XCTUnwrap(exceptions.detached.first).snapshot.endDate, try XCTUnwrap(exceptions.detached.first).snapshot.startDate)
-        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: first, calendar: calendar), 0)
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: first, seriesStart: first, calendar: calendar), 0)
     }
 
     // MARK: - RulesAloneForecast
@@ -280,11 +280,12 @@ final class SeriesDeleteForecastTests: XCTestCase {
 
     // MARK: - Texts
 
-    /// The plan's texts (#539, "4. The note at the delete"), word for word.
+    /// The plan's texts (#539, "4. The note at the delete"), word for word; PR #558 round 2 (ruling I)
+    /// adds the first-slot cause to the list.
     func testTheNotesSayTheForecastWithItsCount() {
         XCTAssertEqual(CheICalMCPServer.rulesAloneUndoNote(unplacedEdits: 2),
-                       "Undo is expected to bring this series back from its rules alone: 2 occurrence(s) edited on their own cannot be placed on the series' rule as it was read at the delete (no slot or two slots match their original time, the slot had an occurrence not edited on its own, it falls outside the checked window, or two take the same slot), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back.")
+                       "Undo is expected to bring this series back from its rules alone: 2 occurrence(s) edited on their own cannot be placed on the series' rule as it was read at the delete (no slot or two slots match their original time, the slot had an occurrence not edited on its own, it falls outside the checked window, two take the same slot, or one has a recorded time that can be wall-clock time or an instant while the series' first occurrence was not a plain occurrence at the delete or the delete reached the series through a later occurrence), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back.")
         XCTAssertEqual(CheICalMCPServer.batchPreviewRulesAloneNote(unplacedEdits: 1),
-                       "Undo of this row would be expected to bring the series back from its rules alone: 1 occurrence(s) edited on their own cannot be placed on the series' rule as it was read at the delete (no slot or two slots match their original time, the slot had an occurrence not edited on its own, it falls outside the checked window, or two take the same slot), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back.")
+                       "Undo of this row would be expected to bring the series back from its rules alone: 1 occurrence(s) edited on their own cannot be placed on the series' rule as it was read at the delete (no slot or two slots match their original time, the slot had an occurrence not edited on its own, it falls outside the checked window, two take the same slot, or one has a recorded time that can be wall-clock time or an instant while the series' first occurrence was not a plain occurrence at the delete or the delete reached the series through a later occurrence), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back.")
     }
 }

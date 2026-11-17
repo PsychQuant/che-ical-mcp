@@ -71,7 +71,9 @@ extension UndoOperation {
         if !applied.isEmpty { notes.append(seriesExceptionsBatchNote(applied)) }
         // #539: the ones stopped by a record that ends before it starts are told apart.
         let endsBeforeStart = restores.filter(\.endsBeforeStart).count
-        let notApplied = restores.count - applied.count - endsBeforeStart
+        // PR #558 round 2 (ruling I): and the ones stopped by their first slot.
+        let firstSlotNotPlain = restores.filter(\.firstSlotNotPlain).count
+        let notApplied = restores.count - applied.count - endsBeforeStart - firstSlotNotPlain
         if notApplied > 0 {
             notes.append(notApplied == 1
                 ? "1 series was restored from its rules alone: its recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
@@ -81,6 +83,11 @@ extension UndoOperation {
             notes.append(endsBeforeStart == 1
                 ? "1 series was restored from its rules alone: an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of its recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
                 : "\(endsBeforeStart) series were restored from their rules alone: in each, an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of their recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)")
+        }
+        if firstSlotNotPlain > 0 {
+            notes.append(firstSlotNotPlain == 1
+                ? "1 series was restored from its rules alone: it had no time zone, an occurrence edited on its own has a recorded time that can be wall-clock time or an instant, and the series' first occurrence was not a plain occurrence when it was deleted (deleted or edited on its own, or the delete reached the series through a later occurrence), so none of its recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)"
+                : "\(firstSlotNotPlain) series were restored from their rules alone: each had no time zone, an occurrence edited on its own has a recorded time that can be wall-clock time or an instant, and the series' first occurrence was not a plain occurrence when it was deleted (deleted or edited on its own, or the delete reached the series through a later occurrence), so none of their recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)")
         }
         return notes.isEmpty ? nil : notes.joined(separator: ". ")
     }
