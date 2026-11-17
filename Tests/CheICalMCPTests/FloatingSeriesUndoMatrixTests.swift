@@ -28,7 +28,7 @@ import XCTest
 ///   capture, and the cell is counted apart. What a delete from a stand-in leaves is not measured in
 ///   every shape, so two models: it removes every occurrence (`leavesNothing`), or it leaves the
 ///   occurrences before the stand-in (`leavesEarlier`). Device cell SA (2026-11-17) also saw the stand-in
-///   itself left behind, on `main` and on this PR alike; that is `main`'s own defect (filed apart) and is
+///   itself left behind, on `main` and on this PR alike; that is `main`'s own defect (#561) and is
 ///   not modelled: a recreated series starting at a left stand-in would be a second event there on any
 ///   build.
 ///
