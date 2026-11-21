@@ -85,6 +85,11 @@ final class SeriesDeleteForecastWiringTests: XCTestCase {
                                    in: "EventKit/EventKitManager+SeriesExceptions.swift"), "the count")
         let manager = try code("EventKit/EventKitManager+SeriesExceptions.swift")
         XCTAssertFalse(manager.contains("holdsAFloatingEdit"), "no cause but the rule's slots")
+        // C3: the first slot's listing leaves out what the dry run counts as gone, as `firstEditedOccurrenceID` does.
+        let baseline = try body("func wholeSeriesBaseline(of series: EKEvent, id: String, viaStandIn: Bool, excluding gone: Set<String> = []) -> (baseline: DeletedOccurrenceCheck.StoredBaseline, slot: Date?) {",
+                                in: "EventKit/FirstRemainingOccurrence.swift")
+        assertInOrder(["guard let (_, listed) = seriesOccurrences(of: series, id: id), case let candidates = listed.filter({ !gone.contains($0.eventIdentifier ?? \"\") }), !candidates.isEmpty else { return (.unproven, nil) }"],
+                      in: baseline, "the first slot's listing")
         // #263's capture of a whole-series update does not compute it.
         XCTAssertFalse(try code("EventKit/EventKitManager+SeriesUpdateUndo.swift").contains("unplacedEditsAtDelete("))
     }
