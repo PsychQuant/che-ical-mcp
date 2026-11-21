@@ -161,26 +161,9 @@ final class SeriesExceptionsTests: XCTestCase {
         let edited = observed(ids: .init(eventIdentifier: "SERIES/RID=\(Int(at(atEnd).timeIntervalSinceReferenceDate))", externalIdentifier: nil),
                               detached: true, start: atEnd, occurrenceDate: atEnd, title: "Edited at the end")
         let inside = observed(detached: false, start: slot1, occurrenceDate: slot1)
-        // #539: the capture's verdict on the edited one now depends on the host zone, which is named.
-        // At UTC and west of it, neither reading of its `/RID=` is inside: not recorded, as before.
-        for zone in ["UTC", "America/Los_Angeles"].map({ TimeZone(identifier: $0)! }) {
-            let result = SeriesExceptionsPlanner.capture([inside, plain, edited], of: series, window: window, zone: zone)
-            XCTAssertEqual(result?.keptSlots, [at(slot1)], zone.identifier)
-            XCTAssertEqual(result?.detached.isEmpty, true, zone.identifier)
-        }
-        // East of UTC, on a series with a time zone, it has the instant reading only (PR #558 round 1,
-        // ruling A): not recorded, as before #539.
-        let taipei = TimeZone(identifier: "Asia/Taipei")!
-        let zoned = SeriesExceptionsPlanner.capture([inside, plain, edited], of: series, window: window, zone: taipei)
-        XCTAssertEqual(zoned?.keptSlots, [at(slot1)])
-        XCTAssertEqual(zoned?.detached.isEmpty, true)
-        // On a series without one its wall-clock reading (8 hours earlier at +08:00) is inside, so it is
-        // recorded, as a record of two readings, which applies nothing (PR #558 round 3; round 1's ruling C
-        // gave the same answer by placing it outside). Rewritten in rounds 1 and 3.
-        let east = SeriesExceptionsPlanner.capture([inside, plain, edited], of: series, window: window, zone: taipei, floating: true)
-        XCTAssertEqual(east?.keptSlots, [at(slot1)])
-        XCTAssertEqual(east?.detached.map(\.slot), [at(atEnd)])
-        XCTAssertEqual(east.map(SeriesExceptionsPlanner.holdsAFloatingEdit), true, "a record of two readings: nothing applied")
+        let result = captured([inside, plain, edited], of: series, window: window)
+        XCTAssertEqual(result.keptSlots, [at(slot1)])
+        XCTAssertTrue(result.detached.isEmpty)
     }
 
     func testAListingThatOnlyReachedTheMarginsIsNotAListing() {

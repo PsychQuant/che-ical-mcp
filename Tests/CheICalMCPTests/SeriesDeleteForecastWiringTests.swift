@@ -72,30 +72,35 @@ final class SeriesDeleteForecastWiringTests: XCTestCase {
 
     /// The first slot is the one #503 proves (`wholeSeriesBaseline`), and only a plain first occurrence
     /// at its own start counts (`.stored`): a stand-in or a first occurrence edited on its own gives no
-    /// count. The zone and the rules are those #503's verdict expands in. PR #558 round 3: before that
-    /// guard, a capture holding a floating edit counts every recorded edit, with its own cause.
+    /// count. The zone and the rules are those #503's verdict expands in. PR #558 fix round 4: there is no
+    /// other cause (round 3's count of every edit of a floating record is removed with its restore).
     func testTheCountReadsTheFirstSlotAsTheCheckOf503Does() throws {
         assertInOrder(["guard let exceptions, !exceptions.detached.isEmpty else { return nil }",
-                       "if SeriesExceptionsPlanner.holdsAFloatingEdit(exceptions) { return RulesAloneOnUndo(edits: exceptions.detached.count, floatingEdit: true) }",
-                       "let first = wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn)",
+                       "let first = wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn, excluding: goneInTheCall)",
                        "guard first.baseline == .stored else { return nil }",
                        "let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)",
                        "let edits = SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init), firstSlot: first.slot, calendar: .gregorian(in: zone)) ?? 0",
-                       "return edits > 0 ? RulesAloneOnUndo(edits: edits, floatingEdit: false) : nil"],
-                      in: try body("func unplacedEditsAtDelete(_ exceptions: SeriesExceptions?, of series: EKEvent, id: String, viaStandIn: Bool) -> RulesAloneOnUndo? {",
+                       "return edits > 0 ? RulesAloneOnUndo(edits: edits) : nil"],
+                      in: try body("func unplacedEditsAtDelete(_ exceptions: SeriesExceptions?, of series: EKEvent, id: String, viaStandIn: Bool, goneInTheCall: Set<String> = []) -> RulesAloneOnUndo? {",
                                    in: "EventKit/EventKitManager+SeriesExceptions.swift"), "the count")
+        let manager = try code("EventKit/EventKitManager+SeriesExceptions.swift")
+        XCTAssertFalse(manager.contains("holdsAFloatingEdit"), "no cause but the rule's slots")
         // #263's capture of a whole-series update does not compute it.
         XCTAssertFalse(try code("EventKit/EventKitManager+SeriesUpdateUndo.swift").contains("unplacedEditsAtDelete("))
     }
 
     /// The dry run resolves the row as `previewEventDeletion` does and captures it as the real call
-    /// does, and asks before the row counts as gone; only the manager answers it.
+    /// does, and asks before the row counts as gone; only the manager answers it. PR #558 fix round 4 (C3):
+    /// the occurrences the call's earlier rows delete are left out of the capture and of the first slot's
+    /// listing, as the real call's series row no longer sees them (`SeriesDeleteForecastTests`).
     func testTheDryRunForecastsTheRowAsTheRealCallRecordsIt() throws {
         // The manager's own, not the protocol's default for doubles (which answers nil).
         let manager = try body("func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> RulesAloneOnUndo? { guard", in: "EventBatchDeletionSource.swift")
         assertInOrder(["freshEventWithOrigin( id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: .thisEvent, wholeSeries: true), goneInTheCall: goneInTheCall)",
                        "resolved.event.hasRecurrenceRules else { return nil }",
-                       "return unplacedEditsAtDelete(captureSeriesExceptions(of: resolved.event), of: resolved.event, id: identifier, viaStandIn: resolved.viaStandIn)"],
+                       "let series = resolved.event",
+                       "let exceptions = captureSeriesExceptions(of: series) .map { $0.excluding(goneInTheCall, ofSeries: series.eventIdentifier ?? \"\", isAllDay: series.isAllDay) }",
+                       "return unplacedEditsAtDelete(exceptions, of: series, id: identifier, viaStandIn: resolved.viaStandIn, goneInTheCall: goneInTheCall)"],
                       in: manager, "the manager's dry-run forecast")
         let rows = try body("private func previewDeletionRows(_ eventIds: [String], spanStr: String) async -> [[String: Any]] {", in: "Server.swift")
         assertInOrder(["case .deletes(let start, let end):",

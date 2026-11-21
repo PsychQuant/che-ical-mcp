@@ -3,11 +3,11 @@ import XCTest
 @testable import CheICalMCP
 
 /// #539 step 6: the forecast a whole-series delete makes before anything is removed
-/// (`SeriesExceptionsPlanner.unplacedEdits`). PR #558 round 3: a capture holding a record of two readings (a
-/// series with no time zone, a host not at offset 0) counts every recorded edit; otherwise a record whose
-/// one reading is no slot of the rule expanded from the series' first slot is counted. A count above 0 means
-/// the undo is expected to restore the series from its rules alone. Which rows of a call carry that forecast
-/// is `RulesAloneForecast`. Each test names its host zone; none reads the process's.
+/// (`SeriesExceptionsPlanner.unplacedEdits`): a record whose slot (its `/RID=` read as an instant) is no slot
+/// of the rule expanded from the series' first slot is counted, as the restore's check (`main`'s, PR #558 fix
+/// round 4) applies none of the exceptions for it. A count above 0 means the undo is expected to restore the
+/// series from its rules alone. Which rows of a call carry that forecast is `RulesAloneForecast`. Each test
+/// names its host zone; none reads the process's.
 final class SeriesDeleteForecastTests: XCTestCase {
     private let day: TimeInterval = 86_400
     private let taipei = TimeZone(identifier: "Asia/Taipei")!
@@ -52,22 +52,22 @@ final class SeriesDeleteForecastTests: XCTestCase {
     }
 
     /// The capture of a six-week series from `slots[0]`, with `edits` applied, as the delete records it.
-    /// `floating`: the series has no time zone (PR #558 round 1, ruling A: only then two readings).
-    private func captured(_ slots: [Date], zone: TimeZone, floating: Bool = true, file: StaticString = #filePath, line: UInt = #line,
+    private func captured(_ slots: [Date], zone: TimeZone, file: StaticString = #filePath, line: UInt = #line,
                           edits: ([FakeSeriesExceptionsStore.Event]) -> Void) throws -> SeriesExceptions {
         let store = FakeSeriesExceptionsStore()
-        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots, floating: floating)
+        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots)
         edits(occurrences)
-        return try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: slots[0].addingTimeInterval(-30 * day), zone: zone),
+        return try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: slots[0].addingTimeInterval(-30 * day)),
                              file: file, line: line)
     }
 
     // MARK: - unplacedEdits
 
     /// F1's shape (the third retitled, the fourth moved, both while the series had no zone): away from
-    /// offset 0 both records have two readings and both are counted (rounds 0 to 2 placed them and counted
-    /// none); at UTC they have one reading each, on its slot, and none is counted.
-    // spec-example: undo-history-discard / the delete counts every floating edit
+    /// offset 0 each `/RID=` read as an instant is off its slot by the host's offset, no slot of the rule,
+    /// and both are counted (the restore, `main`'s, applies nothing for them); at UTC each is on its slot and
+    /// none is counted. Rewritten in PR #558 fix round 4 (round 3 counted them as records of two readings).
+    // spec-example: undo-history-discard / the delete forecasts a floating edit
     func testAFloatingSeriesWithEditsCountsEveryEditAwayFromOffsetZero() throws {
         for zone in [taipei, losAngeles, utc] {
             let slots = weekly(from: date(2027, 2, 11, 10, in: zone), count: 6, in: zone)
@@ -79,7 +79,6 @@ final class SeriesDeleteForecastTests: XCTestCase {
             let count = try XCTUnwrap(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0],
                                                                             calendar: .gregorian(in: zone)), zone.identifier)
             XCTAssertEqual(count, zone == utc ? 0 : 2, zone.identifier)
-            XCTAssertEqual(SeriesExceptionsPlanner.holdsAFloatingEdit(exceptions), zone != utc, zone.identifier)
         }
     }
 
@@ -87,7 +86,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
     func testAZonedSeriesWithEditsIsPlaced() throws {
         for zone in [taipei, losAngeles] {
             let slots = weekly(from: date(2027, 2, 11, 9, in: zone), count: 6, in: zone)
-            let exceptions = try captured(slots, zone: zone, floating: false) { occurrences in
+            let exceptions = try captured(slots, zone: zone) { occurrences in
                 edit(occurrences[2], rid: zonedRID(slots[2]), title: "Retitled")
                 edit(occurrences[3], rid: zonedRID(slots[3]), title: "Moved", moved: 3600)
             }
@@ -101,7 +100,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
     /// slot is not. Rewritten in round 3 (it was a floating series, whose records now all count).
     func testAnEditNoSlotOfTheRuleHoldsIsCounted() throws {
         let slots = weekly(from: date(2027, 2, 11, 10, in: taipei), count: 6)
-        let exceptions = try captured(slots, zone: taipei, floating: false) { occurrences in
+        let exceptions = try captured(slots, zone: taipei) { occurrences in
             edit(occurrences[2], rid: zonedRID(slots[2].addingTimeInterval(3 * 3600)), title: "Retitled")
             edit(occurrences[3], rid: zonedRID(slots[3]), title: "Placed")
         }
@@ -118,7 +117,6 @@ final class SeriesDeleteForecastTests: XCTestCase {
             occurrences[2].start = slots[2].addingTimeInterval(3600)
             occurrences[2].occurrenceDate = occurrences[2].start
         }
-        XCTAssertEqual(exceptions.detached.first?.readings.wallClock, nil)
         XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0],
                                                             calendar: .gregorian(in: taipei)), 1)
     }
@@ -135,7 +133,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
     /// series (round 3: a floating record counts without the expander).
     func testNoForecastWhereTheRuleCannotBeExpanded() throws {
         let slots = weekly(from: date(2027, 2, 11, 10, in: taipei), count: 6)
-        let exceptions = try captured(slots, zone: taipei, floating: false) { occurrences in
+        let exceptions = try captured(slots, zone: taipei) { occurrences in
             edit(occurrences[2], rid: zonedRID(slots[2].addingTimeInterval(3 * 3600)), title: "Off the rule")
         }
         let calendar = Calendar.gregorian(in: taipei)
@@ -152,9 +150,10 @@ final class SeriesDeleteForecastTests: XCTestCase {
     }
 
     /// An open weekly series begun years before the delete, an occurrence edited on its own just before
-    /// the window's start (4 hours, a host at +08:00). Floating, its instant reading is inside the
-    /// window, so it is recorded, and as a record of two readings it is counted. Zoned, it has one reading,
-    /// outside the window, and is not recorded, as before #539. Renamed in round 3 (no record is placed).
+    /// the window's start (4 hours, a host at +08:00). Floating, its `/RID=` read as an instant is 8 hours
+    /// later, inside the window, so it is recorded and, off the rule, counted. Zoned, its instant is outside
+    /// the window and it is not recorded. Renamed in round 3; fix round 4: the capture is `main`'s, which
+    /// gives these answers by the instant alone.
     func testARecordJustOutsideTheWindowIsCountedOnlyWhenFloating() throws {
         let now = date(2026, 11, 16, 9, in: taipei)
         let window = SeriesExceptionsPlanner.deleteWindow(firstStart: now.addingTimeInterval(-3000 * day), end: .open, deletedAt: now).window
@@ -163,9 +162,9 @@ final class SeriesDeleteForecastTests: XCTestCase {
         for floating in [true, false] {
             let store = FakeSeriesExceptionsStore()
             store.seriesEnd = .open
-            let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots, floating: floating)
+            let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots)
             edit(occurrences[260], rid: floating ? floatingRID(slots[260], in: taipei) : zonedRID(slots[260]), title: "Before the edge")
-            let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now, zone: taipei))
+            let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now))
             XCTAssertEqual(exceptions.detached.count, floating ? 1 : 0, "recorded by its instant reading only when floating")
             XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule()], firstSlot: slots[0],
                                                                 calendar: .gregorian(in: taipei)), floating ? 1 : 0)
@@ -176,7 +175,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
     /// slot of the expander means the expander is wrong here, so no forecast.
     func testAKeptSlotOffTheExpanderGivesNoForecast() throws {
         let slots = weekly(from: date(2027, 2, 11, 10, in: taipei), count: 6)
-        let exceptions = try captured(slots, zone: taipei, floating: false) { occurrences in
+        let exceptions = try captured(slots, zone: taipei) { occurrences in
             edit(occurrences[2], rid: zonedRID(slots[2].addingTimeInterval(3 * 3600)), title: "Off the rule")
             occurrences[4].occurrenceDate = slots[4].addingTimeInterval(3600)
         }
@@ -184,10 +183,11 @@ final class SeriesDeleteForecastTests: XCTestCase {
                                                           calendar: .gregorian(in: taipei)))
     }
 
-    /// Verify F33: the note does not count a record of one reading on its slot that ends before it starts
-    /// (the restore stops for it and says so, the delete gives no note). DS1's shape (listed from 03:30 to
-    /// 03:00 PDT) has two readings at Los Angeles and is counted since round 3, as a floating edit; the
-    /// same occurrence without a `/RID=` (one reading, its `occurrenceDate`) is not counted.
+    /// Verify F33: the note does not count a record on its slot that ends before it starts (the restore,
+    /// `main`'s, writes its one-off; on a device that save failed and the undo rolled back). DS1's shape
+    /// (listed from 03:30 to 03:00 PDT) has a `/RID=` that read as an instant is no slot at Los Angeles, so it
+    /// is counted, and the restore applies nothing; the same occurrence without a `/RID=` (its
+    /// `occurrenceDate`) is on its slot and is not counted. Rewritten in fix round 4.
     func testARecordOfOneReadingThatEndsBeforeItStartsIsNotCounted() throws {
         let calendar = Calendar.gregorian(in: losAngeles)
         let first = date(2027, 2, 28, 2, 30, in: losAngeles)
@@ -200,13 +200,12 @@ final class SeriesDeleteForecastTests: XCTestCase {
             occurrences[2].end = slots[2].addingTimeInterval(-30 * 60)
         }
         XCTAssertLessThan(try XCTUnwrap(exceptions.detached.first).snapshot.endDate, try XCTUnwrap(exceptions.detached.first).snapshot.startDate)
-        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: first, calendar: calendar), 1, "DS1: two readings")
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: first, calendar: calendar), 1, "DS1: off the rule")
         let oneReading = try captured(slots, zone: losAngeles) { occurrences in
             occurrences[2].detached = true
             occurrences[2].title = "Edited on the change"
             occurrences[2].end = slots[2].addingTimeInterval(-30 * 60)
         }
-        XCTAssertNil(oneReading.detached.first?.readings.wallClock)
         XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(oneReading, rules: [rule(count: 6)], firstSlot: first, calendar: calendar), 0, "one reading")
     }
 
@@ -216,16 +215,16 @@ final class SeriesDeleteForecastTests: XCTestCase {
         .deleteEvent(id: "S", snapshot: UndoSnapshotFixtures.event(title: title, weeklyOccurrences: 6, startDate: Date(timeIntervalSinceReferenceDate: 0)))
     }
 
-    private func edits(_ count: Int, floating: Bool = false) -> RulesAloneOnUndo { RulesAloneOnUndo(edits: count, floatingEdit: floating) }
+    private func edits(_ count: Int) -> RulesAloneOnUndo { RulesAloneOnUndo(edits: count) }
 
-    /// Only a whole-series record with a forecast forecasts, in the order the rows were recorded, with its cause.
+    /// Only a whole-series record with a forecast forecasts, in the order the rows were recorded.
     func testOnlyAWholeSeriesRecordWithUnplacedEditsForecasts() {
         var forecast = RulesAloneForecast()
-        forecast.recorded(wholeSeries(), identifier: "A", unplacedEdits: edits(2, floating: true))
+        forecast.recorded(wholeSeries(), identifier: "A", unplacedEdits: edits(2))
         forecast.recorded(wholeSeries(), identifier: "B", unplacedEdits: nil)
         forecast.recorded(.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(), notCarriedOver: []), identifier: "C", unplacedEdits: edits(3))
         forecast.recorded(wholeSeries(), identifier: "D", unplacedEdits: edits(1))
-        XCTAssertEqual(forecast.expected, [.init(identifier: "A", forecast: edits(2, floating: true)), .init(identifier: "D", forecast: edits(1))])
+        XCTAssertEqual(forecast.expected, [.init(identifier: "A", forecast: edits(2)), .init(identifier: "D", forecast: edits(1))])
     }
 
     /// A delete of an occurrence and the following ones makes the whole batch's undo refuse, so that
@@ -246,18 +245,54 @@ final class SeriesDeleteForecastTests: XCTestCase {
                                                  unplacedEdits: edits(2)))
     }
 
+    // MARK: - C3: the dry run leaves out what earlier rows delete
+
+    /// PR #558 fix round 4 (verify finding C3): a `delete_events_batch` call with span `all` naming an edited
+    /// occurrence's own identifier and its series runs the occurrence's row first, so the real call captures
+    /// the series without it. The dry run captures before anything is deleted and leaves that occurrence out
+    /// (`SeriesExceptions.excluding`): the record, and so the forecast, are the real call's.
+    // spec-example: undo-history-discard / the dry run leaves out what an earlier row deletes
+    func testTheDryRunLeavesOutAnOccurrenceAnEarlierRowDeletes() throws {
+        let slots = weekly(from: date(2027, 2, 11, 10, in: taipei), count: 6)
+        func store(dropping gone: Bool) -> (FakeSeriesExceptionsStore, FakeSeriesExceptionsStore.Event, String) {
+            let store = FakeSeriesExceptionsStore()
+            let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots)
+            // The third edited off the rule (a stale `/RID=`, cell N1), the fourth on its slot.
+            edit(occurrences[2], rid: zonedRID(slots[2].addingTimeInterval(3 * 3600)), title: "Off the rule")
+            edit(occurrences[3], rid: zonedRID(slots[3]), title: "On its slot")
+            let goneID = occurrences[2].id!
+            if gone { store.drop(occurrences[2]) }
+            return (store, occurrences[0], goneID)
+        }
+        let now = slots[0].addingTimeInterval(-30 * day)
+        let (dry, first, goneID) = store(dropping: false)
+        let before = try XCTUnwrap(SeriesExceptionsUndo.capture(of: first, in: dry, now: now))
+        let preview = before.excluding([goneID], ofSeries: "S", isAllDay: false)
+        let (real, realFirst, _) = store(dropping: true)
+        let after = try XCTUnwrap(SeriesExceptionsUndo.capture(of: realFirst, in: real, now: now))
+        XCTAssertEqual(preview.keptSlots, after.keptSlots)
+        XCTAssertEqual(preview.detached.map(\.slot), after.detached.map(\.slot))
+        XCTAssertEqual(preview.windows, after.windows)
+        let calendar = Calendar.gregorian(in: taipei)
+        func forecast(_ exceptions: SeriesExceptions) -> Int? {
+            SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 6)], firstSlot: slots[0], calendar: calendar)
+        }
+        XCTAssertEqual(forecast(before), 1, "without the cut the dry run would forecast the rules alone")
+        XCTAssertEqual(forecast(preview), forecast(after))
+        XCTAssertEqual(forecast(preview), 0)
+        // An identifier of another series, or one without a `/RID=`, cuts nothing.
+        XCTAssertEqual(before.excluding(["T" + goneID.dropFirst()], ofSeries: "S", isAllDay: false).detached.count, 2)
+        XCTAssertEqual(before.excluding(["S"], ofSeries: "S", isAllDay: false).detached.count, 2)
+    }
+
     // MARK: - Texts
 
-    /// The texts, word for word, by cause. PR #558 round 3: a floating edit names its own reason; the
-    /// other cause (a recorded slot off the rule) lists what is left of the plan's causes.
-    func testTheNotesSayTheForecastWithItsCountAndCause() {
-        XCTAssertEqual(CheICalMCPServer.rulesAloneUndoNote(edits(2, floating: true)),
-                       "Undo is expected to bring this series back from its rules alone: the series has no time zone and 2 of its occurrences were edited on their own. The original slot of an occurrence of a series with no time zone edited on its own cannot be read reliably (its recorded time can be wall-clock time or an instant), so undo applies none of the recorded exceptions: the series comes back with the occurrences its rules give, without the edits and deletions made to single occurrences.")
+    /// The text, word for word (PR #558 fix round 4: one cause, the restore's check; L7: the count is of the
+    /// recorded edits).
+    func testTheNotesSayTheForecastWithItsCount() {
         XCTAssertEqual(CheICalMCPServer.rulesAloneUndoNote(edits(2)),
-                       "Undo is expected to bring this series back from its rules alone: 2 occurrence(s) edited on their own have a recorded original time that is no slot of the series' rule as it was read at the delete (for example the series was moved after they were edited), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back.")
-        XCTAssertEqual(CheICalMCPServer.batchPreviewRulesAloneNote(edits(1, floating: true)),
-                       "Undo of this row would be expected to bring the series back from its rules alone: the series has no time zone and 1 of its occurrences were edited on their own. " + CheICalMCPServer.floatingEditReason)
+                       "Undo is expected to bring this series back from its rules alone: 2 recorded occurrence(s) edited on their own have an original time, as this server reads it from their identifier, that is no slot of the series' rule as it was read at the delete, so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back.")
         XCTAssertEqual(CheICalMCPServer.batchPreviewRulesAloneNote(edits(1)),
-                       "Undo of this row would be expected to bring the series back from its rules alone: 1 occurrence(s) edited on their own have a recorded original time that is no slot of the series' rule as it was read at the delete (for example the series was moved after they were edited), so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back.")
+                       "Undo of this row would be expected to bring the series back from its rules alone: 1 recorded occurrence(s) edited on their own have an original time, as this server reads it from their identifier, that is no slot of the series' rule as it was read at the delete, so undo applies none of the recorded exceptions: every occurrence edited on its own comes back without its edit, and one deleted on its own earlier comes back.")
     }
 }

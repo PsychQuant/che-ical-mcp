@@ -94,13 +94,18 @@ extension EventKitManager: EventBatchDeletionSource {
     }
 
     /// #539 step 6: resolved as `previewEventDeletion` resolves a row with span `all`, and captured as
-    /// `deleteEventSeriesBatch` captures it before its removal.
+    /// `deleteEventSeriesBatch` captures it before its removal. PR #558 fix round 4 (verify finding C3): the
+    /// occurrences that earlier rows of the call delete are left out of the capture and of the first slot's
+    /// listing, as the real call's series row no longer sees them.
     func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> RulesAloneOnUndo? {
         guard (try? await ensureCalendarAccess()) != nil,
               let resolved = try? freshEventWithOrigin(
                 id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: .thisEvent, wholeSeries: true),
                 goneInTheCall: goneInTheCall),
               resolved.event.hasRecurrenceRules else { return nil }
-        return unplacedEditsAtDelete(captureSeriesExceptions(of: resolved.event), of: resolved.event, id: identifier, viaStandIn: resolved.viaStandIn)
+        let series = resolved.event
+        let exceptions = captureSeriesExceptions(of: series)
+            .map { $0.excluding(goneInTheCall, ofSeries: series.eventIdentifier ?? "", isAllDay: series.isAllDay) }
+        return unplacedEditsAtDelete(exceptions, of: series, id: identifier, viaStandIn: resolved.viaStandIn, goneInTheCall: goneInTheCall)
     }
 }

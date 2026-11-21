@@ -64,7 +64,7 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
         // The whole series' delete, thirty days before its first occurrence.
         let now = slots[0].addingTimeInterval(-30 * day)
         let exceptions = try XCTUnwrap(onMain ? SeriesUndoOnMain.capture(of: first, in: store, now: now)
-                                              : SeriesExceptionsUndo.capture(of: first, in: store, now: now, zone: host))
+                                              : SeriesExceptionsUndo.capture(of: first, in: store, now: now))
         let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: slots.count, startDate: slots[0])
             .withExceptions(exceptions).withSeriesIdentity(.init(eventIdentifier: "S", externalIdentifier: "X-S"))
         let after = FakeSeriesExceptionsStore()
@@ -102,8 +102,9 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
             }
             // B, the fourth, retitled while the series had its zone, at its time now.
             edit(occurrences[3], rid: zonedRID(moved[3]), title: "B edited")
-            // `clear_timezone` at the same wall-clock time: the instants stay.
-            for occurrence in occurrences { occurrence.floating = true }
+            // `clear_timezone` at the same wall-clock time: the instants stay. The capture does not read the
+            // series' zone (PR #558 fix round 4; at `eb568983` the fake's series was marked floating here, so
+            // its capture took a second reading); A's origin takes it from the series (`run`).
             return (store, occurrences[1], occurrences[0], moved)
         }
         let production = build()

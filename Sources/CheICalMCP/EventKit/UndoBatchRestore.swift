@@ -322,7 +322,7 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
             let item = failingTitle.map { "'\(undoShownTitle($0))'" + (failingWhen.map { " (\($0))" } ?? "") }
             let written: String
             if refusedAtItsSlot {
-                written = " \(item ?? "The item that failed") was refused before anything of it was written (this server could not tell whether its series already holds its time, as its own error says), so running undo again does not add a copy of it."
+                written = " \(item ?? "The item that failed") was refused before anything of it was written (this server could not tell whether its series already holds its time, as its own error says), so this attempt left no copy of it."
             } else if failedBeforeWrite {
                 written = " \(item ?? "The item that failed") failed before anything of it was written (its calendar or list was not found), so running undo again does not add a copy of it."
             } else {

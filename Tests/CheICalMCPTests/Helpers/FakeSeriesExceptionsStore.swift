@@ -23,9 +23,6 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
         var hasRules: Bool
         /// #539: the end its snapshot reads; an hour after `start` when nil.
         var end: Date?
-        /// PR #558 round 1 (ruling A): the event is timed and has no time zone (`isFloating`). False
-        /// by default, as a new event has a zone, so a test of a series without one says so.
-        var floating = false
 
         init(id: String? = nil, external: String? = nil, calendar: String? = nil, title: String = "",
              start: Date = .distantPast, occurrenceDate: Date? = nil, detached: Bool = false, hasRules: Bool = false) {
@@ -72,14 +69,11 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     /// #539: the host zone `slotHolders` reads an all-day `/RID=`'s local day in.
     var zone: TimeZone = .current
 
-    /// A series already in the store: one occurrence per slot, sharing `id`. `floating`: the series
-    /// has no time zone (PR #558 round 1).
+    /// A series already in the store: one occurrence per slot, sharing `id`.
     @discardableResult
-    func addSeries(id: String, calendar: String, title: String, slots: [Date], floating: Bool = false) -> [Event] {
-        let occurrences = slots.map { slot -> Event in
-            let event = Event(id: id, external: "X-\(id)", calendar: calendar, title: title, start: slot, occurrenceDate: slot, hasRules: true)
-            event.floating = floating
-            return event
+    func addSeries(id: String, calendar: String, title: String, slots: [Date]) -> [Event] {
+        let occurrences = slots.map {
+            Event(id: id, external: "X-\(id)", calendar: calendar, title: title, start: $0, occurrenceDate: $0, hasRules: true)
         }
         events += occurrences
         return occurrences
@@ -107,8 +101,6 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     func seriesEnd(of series: Event) -> SeriesExceptionsPlanner.SeriesEnd { seriesEnd }
 
     func startDate(of event: Event) -> Date { event.start }
-
-    func isFloating(_ series: Event) -> Bool { series.floating }
 
     func slot(of occurrence: Event) -> Date { occurrence.occurrenceDate ?? occurrence.start }
 

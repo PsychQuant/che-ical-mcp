@@ -5,9 +5,8 @@ import XCTest
 @testable import CheICalMCP
 
 /// PR #558 round 1 with #538 merged: what the undo of a whole-series delete that applies none of the
-/// recorded exceptions (a record of two readings, PR #558 round 3; a record of one reading that ends before
-/// it starts, ruling E; a recorded slot the recreated series does not generate, as before #539) does with
-/// older undo records of the series. It brings the series back from its
+/// recorded exceptions (a recorded slot the recreated series does not generate, `main`'s only such path
+/// since fix round 4 removed round 3's two) does with older undo records of the series. It brings the series back from its
 /// rules alone, with no occurrence as a separate event, so `DeleteUndoFollow.decision` gives `follow`:
 /// the older records move to the recreated series, and none is flagged. Then the slot guard's refusal
 /// (`OccurrenceSlotWallClockRefusal`) through `handleUndo`, for an entry #538 flagged and for one it did
@@ -31,10 +30,9 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
     private func slot(_ week: Int) -> Date { s0.addingTimeInterval(Double(week) * 7 * day) }
     private var window: DateInterval { DateInterval(start: s0.addingTimeInterval(-day), end: slot(3).addingTimeInterval(day)) }
 
-    private func record(_ readings: SlotReadings, end: Date? = nil) -> DetachedOccurrence {
-        let start = readings.wallClock ?? readings.instant
-        return DetachedOccurrence(slot: readings.instant, snapshot: UndoSnapshotFixtures.event(title: "Edited", startDate: start, endDate: end),
-                                  readings: readings)
+    /// A record at `slot` (its `/RID=` read as an instant) of an occurrence that starts at `start`.
+    private func record(slot: Date, start: Date? = nil) -> DetachedOccurrence {
+        DetachedOccurrence(slot: slot, snapshot: UndoSnapshotFixtures.event(title: "Edited", startDate: start ?? slot))
     }
 
     private func text(_ result: CallTool.Result) throws -> String {
@@ -42,16 +40,15 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
         return text
     }
 
-    /// The three shapes, each a series of four weekly slots whose undo applies none of its exceptions.
-    /// Rewritten in round 3: rulings B, C, D and I were withdrawn with the placement; each of their records
-    /// had two readings, which is now the one floating shape.
+    /// The two shapes, each a series of four weekly slots whose undo applies none of its exceptions: an
+    /// occurrence edited while the series had no time zone, its `/RID=` read as an instant 8 hours off its
+    /// slot (a host at `+08:00`, #539), and a stale record of a series moved after the edit (cell N1).
+    /// Rewritten in rounds 3 and fix round 4 (its floating and ruling E shapes were removed with their paths).
     private var shapes: [(String, SeriesExceptions)] {
         [("floating edit", SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
-                                            detached: [record(SlotReadings(instant: slot(1).addingTimeInterval(8 * hour), wallClock: slot(1)))])),
-         ("E: ends before it starts", SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
-                                                       detached: [record(SlotReadings(instant: slot(1)), end: slot(1).addingTimeInterval(-30 * 60))])),
+                                            detached: [record(slot: slot(1).addingTimeInterval(8 * hour), start: slot(1))])),
          ("did not match", SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
-                                            detached: [record(SlotReadings(instant: slot(1).addingTimeInterval(3 * hour)))]))]
+                                            detached: [record(slot: slot(1).addingTimeInterval(3 * hour)))]))]
     }
 
     func testANotAppliedRestoreMovesTheOlderRecordsToTheRecreatedSeries() async throws {
@@ -87,7 +84,7 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
         store.seriesSlots = (0...3).map(slot)
         let history = CalendarUndoManager()
         let exceptions = SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
-                                          detached: [record(SlotReadings(instant: slot(1)))])
+                                          detached: [record(slot: slot(1))])
         let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0).withExceptions(exceptions)
         await history.record(.createEvent(id: "S", title: "Standup", created: series))
         await history.record(.deleteEvent(id: "S", snapshot: series))
@@ -106,14 +103,10 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
         XCTAssertEqual(older?.operation.eventIdentifiersNamed, ["S"])
     }
 
-    /// The decision itself, for the outcome each not-applied path returns.
+    /// The decision itself, for the outcome the not-applied path returns.
     func testTheDecisionForEachNotAppliedOutcomeIsFollow() {
-        for outcome in [SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true),
-                        SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true),
-                        SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true, floatingEdit: true)] {
-            XCTAssertEqual(DeleteUndoFollow.decision(removedID: "S", newID: "R", isOccurrenceRecord: false,
-                                                     outcome: .seriesWithExceptions(outcome)), .follow("R"))
-        }
+        XCTAssertEqual(DeleteUndoFollow.decision(removedID: "S", newID: "R", isOccurrenceRecord: false,
+                                                 outcome: .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true))), .follow("R"))
     }
 
     /// The refusal reaches the caller unchanged for a flagged entry (its catch is for a not-found only)

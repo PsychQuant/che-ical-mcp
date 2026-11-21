@@ -13,21 +13,13 @@ import Foundation
 /// the same digits taken as year, month, day, hour, minute and second in `zone` (the zone this
 /// process places a floating event in).
 ///
-/// PR #558 round 3: the undo of a whole-series delete no longer places either reading on a slot (the
-/// placement of rounds 0 to 2 is withdrawn): a record with two readings applies none of the series'
-/// exceptions (`SeriesExceptionsPlanner.holdsAFloatingEdit`). The capture still records an edited
-/// occurrence when either reading is inside a window, and the #321 check still reads both
-/// (`OccurrenceSlotGuard.answer`).
-///
-/// PR #558 verify round 1 (ruling A): only an occurrence of a series that has no time zone when it is
-/// read gets both (`SeriesExceptionsPlanner.capture`, `OccurrenceOrigin.of`, each told by its caller).
-/// After a whole-series time move an edited occurrence keeps its `/RID=` at the old slot (#539 cell
-/// N1), so on a series with a time zone the digits read as wall-clock time could be a slot of the moved
-/// series where the instant is none, and the restore and the #321 check of round 0 took that slot (cell S1,
-/// iCloud, 2026-11-17: an occurrence lost, and an undo that wrote nothing). An occurrence of a zoned
-/// series keeps the instant alone, as `UndoPostState.ruleSlot` gave it before #539. An occurrence
-/// edited while its series had no time zone, in a series that reads a zone again before the delete
-/// (seen on a Google calendar for #541), is then read as an instant, as before #539.
+/// PR #558 fix round 4: one reader takes both, the #321 check whether a restored series holds a deleted
+/// occurrence's slot (`OccurrenceSlotGuard.answer`, through `OccurrenceOrigin.of`), and only for an
+/// occurrence of a series that has no time zone when it is read (ruling J). It answers held by the instant
+/// reading, as before #539, and refuses, writing nothing, where only the wall-clock reading is held (ruling
+/// F). Every other reader of a `/RID=` reads the instant only (`UndoPostState.ruleSlot`), the capture and
+/// the restore of a whole-series delete included: they are `main`'s (rounds 0 to 3 read both there, and
+/// each round found a shape worse than `main`).
 ///
 /// An all-day occurrence keeps its one reading (`UndoPostState.ruleSlot`'s local day), and so does an
 /// occurrence without a `/RID=` (its `occurrenceDate`). On a host at offset 0 when the slot falls
@@ -45,9 +37,6 @@ struct SlotReadings: Equatable {
         self.instant = instant
         self.wallClock = wallClock.flatMap { UndoPostState.sameInstant($0, instant) ? nil : $0 }
     }
-
-    /// Every reading, `instant` first.
-    var all: [Date] { [instant] + (wallClock.map { [$0] } ?? []) }
 
     /// The readings of an occurrence, from its identifiers (the event identifier first, as
     /// `UndoPostState.originalSlot` reads them). Nil with neither a `/RID=` nor an `occurrenceDate`.

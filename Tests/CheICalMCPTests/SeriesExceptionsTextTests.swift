@@ -99,19 +99,6 @@ final class SeriesExceptionsTextTests: XCTestCase {
         XCTAssertEqual(message, "Undone batch (2 operations). 2 series were restored from their rules alone: their recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)")
     }
 
-    /// #539 (device cell DS1): a placed record whose own end is before its start says why nothing was
-    /// applied, alone and in a batch beside a record that did not match.
-    func testTheUndoTextSaysAnEditedOccurrenceEndingBeforeItStartsStoppedTheExceptions() {
-        let inverted = SeriesExceptionsRestorer.Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true, endsBeforeStart: true)
-        XCTAssertEqual(UndoOperation.seriesExceptionsRestoredNote(inverted),
-                       "Restored from the series rules alone: an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of the recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)")
-        let one = UndoOperation.batchUndoneMessage(count: 2, events: [
-            .seriesWithExceptions(inverted), .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true))])
-        XCTAssertEqual(one, "Undone batch (2 operations). 1 series was restored from its rules alone: its recorded exceptions did not match the occurrences of the recreated series, so none was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit). 1 series was restored from its rules alone: an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of its recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)")
-        let two = UndoOperation.batchUndoneMessage(count: 2, events: [.seriesWithExceptions(inverted), .seriesWithExceptions(inverted)])
-        XCTAssertEqual(two, "Undone batch (2 operations). 2 series were restored from their rules alone: in each, an occurrence edited on its own ends before it starts as this Mac's time zone reads it (its time falls in a daylight-saving change), so it cannot be written as a one-off event, and none of their recorded exceptions was applied (an occurrence deleted on its own earlier comes back, one edited on its own comes back without its edit)")
-    }
-
     func testAlreadyRestoredOccurrenceSaysNothingWasWritten() {
         XCTAssertEqual(UndoOperation.occurrenceAlreadyRestoredMessage(title: "Standup"),
                        "Undone: the deleted occurrence of 'Standup' is already restored by its series, so nothing was written (a one-off event beside it would have been a duplicate)")

@@ -30,30 +30,30 @@ extension EventKitManager {
     /// origin (`OccurrenceOrigin.seriesIsFloating`): through an occurrence's own identifier, the series
     /// object stored under the part before `/RID=`; nil (one reading) when it cannot be read.
     func seriesIsFloating(of event: EKEvent) -> Bool {
-        OccurrenceOrigin.seriesIsFloating(eventIdentifier: event.eventIdentifier, ownFloating: OccurrenceOrigin.isFloating(event),
+        OccurrenceOrigin.seriesIsFloating(eventIdentifier: event.eventIdentifier, externalIdentifier: event.calendarItemExternalIdentifier,
+                                          ownFloating: OccurrenceOrigin.isFloating(event),
                                           seriesFloating: { id in ((try? self.storedEvent(id: id)) ?? nil).map(OccurrenceOrigin.isFloating) })
     }
 
     /// #539 step 6: the forecast of a whole-series delete, read before the removal: how many of the
-    /// occurrences edited on their own that `exceptions` (this delete's capture) recorded the restore is
-    /// expected not to apply (`SeriesExceptionsPlanner.unplacedEdits`), and why; nil for none.
-    /// PR #558 round 3: when the capture holds a floating edit (`SeriesExceptionsPlanner.holdsAFloatingEdit`),
-    /// every recorded edited occurrence, through a stand-in too, since the restore applies none of them.
-    /// Otherwise the rule is expanded from the first slot #503's check proves (`wholeSeriesBaseline`), in
-    /// the zone its verdict expands in, and only when that slot is a plain first occurrence at its own
-    /// start (`.stored`): through a stand-in, or with a first occurrence edited on its own, nil, as when the
-    /// expander cannot tell. The series is listed for it only when the capture recorded an edited occurrence.
-    func unplacedEditsAtDelete(_ exceptions: SeriesExceptions?, of series: EKEvent, id: String, viaStandIn: Bool) -> RulesAloneOnUndo? {
+    /// occurrences edited on their own that `exceptions` (this delete's capture) recorded have a slot that is
+    /// no slot of the rule (`SeriesExceptionsPlanner.unplacedEdits`), so the restore, `main`'s, applies none
+    /// of the exceptions; nil for none. The rule is expanded from the first slot #503's check proves
+    /// (`wholeSeriesBaseline`), in the zone its verdict expands in, and only when that slot is a plain first
+    /// occurrence at its own start (`.stored`): through a stand-in, or with a first occurrence edited on its
+    /// own, nil, as when the expander cannot tell. The series is listed for it only when the capture recorded
+    /// an edited occurrence. `goneInTheCall` (PR #558 fix round 4, verify finding C3): a dry run's
+    /// occurrences that earlier rows of the call delete, left out of the first slot's listing as the real
+    /// call no longer lists them (the capture is cut by the caller, `SeriesExceptions.excluding`).
+    func unplacedEditsAtDelete(_ exceptions: SeriesExceptions?, of series: EKEvent, id: String, viaStandIn: Bool,
+                               goneInTheCall: Set<String> = []) -> RulesAloneOnUndo? {
         guard let exceptions, !exceptions.detached.isEmpty else { return nil }
-        if SeriesExceptionsPlanner.holdsAFloatingEdit(exceptions) {
-            return RulesAloneOnUndo(edits: exceptions.detached.count, floatingEdit: true)
-        }
-        let first = wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn)
+        let first = wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn, excluding: goneInTheCall)
         guard first.baseline == .stored else { return nil }
         let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
         let edits = SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
                                                           firstSlot: first.slot, calendar: .gregorian(in: zone)) ?? 0
-        return edits > 0 ? RulesAloneOnUndo(edits: edits, floatingEdit: false) : nil
+        return edits > 0 ? RulesAloneOnUndo(edits: edits) : nil
     }
 
     /// The `.deleteEvent` undo arm (`SeriesExceptionsUndo.recreateDeletedEvent`).

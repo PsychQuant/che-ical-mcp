@@ -34,7 +34,7 @@ final class OccurrenceSlotWallClockRefusalTests: XCTestCase {
         XCTAssertEqual(partial.restoredCount, 1)
         XCTAssertEqual(partial.failing, .runsLast)
         XCTAssertTrue(partial.message.hasSuffix(": " + refusal.message), partial.message)
-        XCTAssertTrue(partial.message.contains("'Third' was refused before anything of it was written (this server could not tell whether its series already holds its time, as its own error says), so running undo again does not add a copy of it."), partial.message)
+        XCTAssertTrue(partial.message.contains("'Third' was refused before anything of it was written (this server could not tell whether its series already holds its time, as its own error says), so this attempt left no copy of it."), partial.message)
         XCTAssertFalse(partial.message.contains("may have left something written"), partial.message)
         XCTAssertFalse(partial.message.contains("its calendar or list was not found"), partial.message)
         XCTAssertEqual(UndoFailureDisposition.of(partial), .restore)

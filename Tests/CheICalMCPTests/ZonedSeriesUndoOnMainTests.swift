@@ -54,8 +54,7 @@ final class ZonedSeriesUndoOnMainTests: XCTestCase {
         for zone in zones {
             let slots = daily(from: date(2027, 3, 1, 6, in: zone), count: 6)
             let (store, occurrences, moved) = movedSeries(slots: slots, edited: 1, move: 16 * 3600)
-            let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: slots[0].addingTimeInterval(-30 * day), zone: zone))
-            XCTAssertTrue(exceptions.detached.allSatisfy { $0.readings.wallClock == nil }, "one reading, \(zone.identifier)")
+            let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: slots[0].addingTimeInterval(-30 * day)))
 
             let recorded = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 6, startDate: moved[0]).withExceptions(exceptions)
                 .withSeriesIdentity(.init(eventIdentifier: "S", externalIdentifier: "X-S"))
@@ -111,14 +110,13 @@ final class ZonedSeriesUndoOnMainTests: XCTestCase {
                         let now = slots[0].addingTimeInterval(-30 * day)
                         let label = "\(zone.identifier) move \(move / 3600) h, step \(step / day) d, edited \(edited)"
 
-                        let current = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now, zone: zone), label)
+                        let current = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: now), label)
                         let window = current.window
                         let observed = store.events.map(store.observed)
                         let onMain = try XCTUnwrap(SeriesExceptionsPlanner.captureOnMain(observed, of: .init(eventIdentifier: "S", externalIdentifier: "X-S"),
                                                                                          windows: [window]), label)
                         XCTAssertEqual(current.keptSlots, onMain.keptSlots, label)
                         XCTAssertEqual(current.detached.map { $0.slot }, onMain.detached.map { $0.slot }, label)
-                        XCTAssertTrue(current.detached.allSatisfy { $0.readings == SlotReadings(instant: $0.slot) }, label)
 
                         let (answer, log, left) = restore(current, slots: moved, zone: zone, onMain: false)
                         let main = restore(onMain, slots: moved, zone: zone, onMain: true)

@@ -4,7 +4,7 @@ import XCTest
 
 /// #539: the two readings of an edited occurrence's `/RID=` (`SlotReadings`). Every test names its host
 /// zone; none reads the process's. PR #558 round 3: the placement of a reading on the series' slots is
-/// withdrawn, and its tests with it.
+/// withdrawn, and its tests with it; fix round 4: only the #321 slot check reads the wall-clock reading.
 final class SlotReadingsTests: XCTestCase {
     private let taipei = TimeZone(identifier: "Asia/Taipei")!
     private let losAngeles = TimeZone(identifier: "America/Los_Angeles")!
@@ -16,6 +16,9 @@ final class SlotReadingsTests: XCTestCase {
     }
 
     private func rid(_ instant: Date) -> String { "S/RID=\(Int(instant.timeIntervalSinceReferenceDate))" }
+
+    /// Every reading, the instant first.
+    private func all(_ readings: SlotReadings) -> [Date] { [readings.instant] + (readings.wallClock.map { [$0] } ?? []) }
 
     // MARK: - the two readings
 
@@ -29,7 +32,7 @@ final class SlotReadingsTests: XCTestCase {
                                                      isAllDay: false, zone: taipei))
         XCTAssertEqual(readings.instant, digits)
         XCTAssertEqual(readings.wallClock, date(2027, 2, 25, 10, in: taipei))
-        XCTAssertEqual(readings.all, [digits, date(2027, 2, 25, 10, in: taipei)])
+        XCTAssertEqual(all(readings), [digits, date(2027, 2, 25, 10, in: taipei)])
     }
 
     /// West of UTC the wall-clock reading is later than the instant one (cell L1).
@@ -47,7 +50,7 @@ final class SlotReadingsTests: XCTestCase {
         let readings = try XCTUnwrap(SlotReadings.of(eventIdentifier: rid(digits), externalIdentifier: nil, occurrenceDate: nil,
                                                      isAllDay: false, zone: utc))
         XCTAssertNil(readings.wallClock)
-        XCTAssertEqual(readings.all, [digits])
+        XCTAssertEqual(all(readings), [digits])
     }
 
     /// The external identifier is read when the event identifier has no `/RID=`, as `originalSlot` does.
@@ -55,7 +58,7 @@ final class SlotReadingsTests: XCTestCase {
         let digits = date(2027, 2, 25, 10, in: utc)
         let readings = try XCTUnwrap(SlotReadings.of(eventIdentifier: "S", externalIdentifier: "UID-" + rid(digits), occurrenceDate: nil,
                                                      isAllDay: false, zone: taipei))
-        XCTAssertEqual(readings.all, [digits, date(2027, 2, 25, 10, in: taipei)])
+        XCTAssertEqual(all(readings), [digits, date(2027, 2, 25, 10, in: taipei)])
     }
 
     /// An all-day occurrence keeps the one reading `ruleSlot` gave it: local midnight of its day.
@@ -63,7 +66,7 @@ final class SlotReadingsTests: XCTestCase {
         let digits = date(2028, 5, 8, in: utc)
         let readings = try XCTUnwrap(SlotReadings.of(eventIdentifier: rid(digits), externalIdentifier: nil, occurrenceDate: nil,
                                                      isAllDay: true, zone: taipei))
-        XCTAssertEqual(readings.all, [date(2028, 5, 8, in: taipei)])
+        XCTAssertEqual(all(readings), [date(2028, 5, 8, in: taipei)])
     }
 
     /// Without a `/RID=`, the `occurrenceDate`, one reading; with neither, none.
@@ -71,7 +74,7 @@ final class SlotReadingsTests: XCTestCase {
         let slot = date(2027, 2, 25, 10, in: taipei)
         let readings = try XCTUnwrap(SlotReadings.of(eventIdentifier: "S", externalIdentifier: "UID-S", occurrenceDate: slot,
                                                      isAllDay: false, zone: taipei))
-        XCTAssertEqual(readings.all, [slot])
+        XCTAssertEqual(all(readings), [slot])
         XCTAssertNil(SlotReadings.of(eventIdentifier: "S", externalIdentifier: nil, occurrenceDate: nil, isAllDay: false, zone: taipei))
     }
 
@@ -80,6 +83,6 @@ final class SlotReadingsTests: XCTestCase {
         let at = date(2027, 2, 25, 10, in: utc)
         let readings = SlotReadings(instant: at, wallClock: at.addingTimeInterval(0.3))
         XCTAssertNil(readings.wallClock)
-        XCTAssertEqual(readings.all, [at])
+        XCTAssertEqual(all(readings), [at])
     }
 }

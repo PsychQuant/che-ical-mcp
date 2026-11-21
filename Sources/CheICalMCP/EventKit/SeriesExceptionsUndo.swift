@@ -12,11 +12,7 @@ enum SeriesExceptionsUndo {
     /// around `now`, #319), split into those that stay and those edited on their own. Nil when they
     /// cannot be listed (no identifier or calendar, or no occurrence of the series found inside the
     /// window), so the record says so instead of claiming there were none.
-    /// #539: `zone` is the zone an edited occurrence's wall-clock reading is taken in (`SlotReadings`),
-    /// which is taken only when the series has no time zone as read now (`isFloating`, PR #558 round 1,
-    /// ruling A).
-    static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store, now: Date = Date(),
-                                                            zone: TimeZone = .current) -> SeriesExceptions? {
+    static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store, now: Date = Date()) -> SeriesExceptions? {
         let ids = store.identifiers(of: series)
         guard let id = ids.eventIdentifier, !id.isEmpty, store.hasCalendar(series) else { return nil }
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: ids.externalIdentifier)
@@ -24,7 +20,6 @@ enum SeriesExceptionsUndo {
         let placed = SeriesExceptionsPlanner.deleteWindow(firstStart: store.startDate(of: series), end: seriesEnd,
                                                           deletedAt: now)
         let window = placed.window
-        let floating = store.isFloating(series)
         // PR #494 rounds 4-5: a count (known or not) whose window around the delete starts after
         // its first occurrence is also listed over the window from its first occurrence, the window
         // before #319, which placed every count as open-ended. Its end is unknown or only an upper
@@ -42,14 +37,14 @@ enum SeriesExceptionsUndo {
             // that history (rounds 5-6 dropped it when its early part listed nothing, which brought a
             // user's early deletions back from the rules).
             let windows = [window, fromFirst]
-            guard var exceptions = SeriesExceptionsPlanner.capture(both, of: seriesIDs, windows: windows, zone: zone, floating: floating) else { return nil }
+            guard var exceptions = SeriesExceptionsPlanner.capture(both, of: seriesIDs, windows: windows) else { return nil }
             exceptions.seriesStartsBeforeWindow = false
             exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
             exceptions.seriesMayContinueAfterWindow = placed.seriesMayContinueAfter
             return exceptions
         }
         let observed = observedOccurrences(of: series, ids: seriesIDs, over: SeriesExceptionsPlanner.listingRanges(for: window), in: store)
-        guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window, zone: zone, floating: floating) else { return nil }
+        guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window) else { return nil }
         exceptions.seriesStartsBeforeWindow = placed.seriesStartsBefore
         exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
         exceptions.seriesMayContinueAfterWindow = placed.seriesMayContinueAfter
@@ -61,8 +56,6 @@ enum SeriesExceptionsUndo {
     /// (`SeriesUpdateUndo.diff`). Listed as `capture(of:in:now:)` lists (each window and a year on each
     /// side, merged); nil when nothing can be listed (no windows, identifier or calendar). The
     /// coverage flags are left false: whether the windows cover the series is `SeriesUpdateUndo.covers`.
-    /// Each record has the instant reading of its `/RID=` only, as before #539 (PR #558 round 1: the two
-    /// readings are for the delete's record).
     static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store,
                                                             windows: [DateInterval]) -> SeriesExceptions? {
         let ids = store.identifiers(of: series)
@@ -201,9 +194,9 @@ enum SeriesExceptionsUndo {
          origin.edited ? .editedOccurrenceAlreadyHeld : .occurrenceAlreadyHeld)
     }
 
-    /// PR #558 round 1 (ruling F): the slot check's answer for an occurrence record, as the undo acts on
-    /// it: nil to write the one-off, the held answer, or a thrown refusal (nothing written, the record
-    /// kept: `OccurrenceSlotWallClockRefusal`).
+    /// PR #558 ruling F: the slot check's answer for an occurrence record, as the undo acts on it: nil to
+    /// write the one-off, the held answer, or a thrown refusal (nothing written, the record kept:
+    /// `OccurrenceSlotWallClockRefusal`).
     private static func slotCheck<Store: SeriesExceptionsStoreSource>(_ snapshot: EventSnapshot, _ origin: OccurrenceOrigin,
                                                                       kind: EventRestoreKind, calendar: Store.Calendar,
                                                                       in store: Store) throws -> (text: String, outcome: UndoEventOutcome)? {

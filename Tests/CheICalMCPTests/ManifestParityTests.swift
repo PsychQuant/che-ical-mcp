@@ -674,64 +674,50 @@ final class ManifestParityTests: XCTestCase {
     }
 
     /// #539: the three surfaces that describe the undo of a whole-series delete, and the undo of an
-    /// occurrence's delete, say how an occurrence edited while its timed series had no time zone is
-    /// read: each once per description, and in the manifest summary of undo.
+    /// occurrence's delete, say how an occurrence edited while its timed series had no time zone is read:
+    /// each once per description, and in the manifest summary of undo. PR #558 fix round 4: the
+    /// whole-series undo is `main`'s (the `/RID=` read as an instant); the guard's refusal (ruling F) stays.
     func testUndoSurfacesSayHowAnOccurrenceEditedWithoutATimeZoneIsRead() throws {
-        // PR #558 round 1: the two readings only for a series with no time zone (ruling A) and the guard's
-        // refusal (F); round 3: the placement withdrawn, such a record applies nothing.
-        let placed = "#539: measured on iCloud, an occurrence edited while its timed series had no time zone carries its original time as wall-clock time; for a series with no time zone when it is deleted, on a Mac whose offset from UTC is not 0 at that time, that time can be wall-clock time or an instant, so the occurrence's original slot cannot be read reliably"
-        let zoned = "a series with a time zone is read as an instant, as before #539"
-        let guarded = "when the series had no time zone at that delete (read on the series, also for an occurrence deleted through its own identifier) and only an occurrence of it not edited on its own is at that slot read as wall-clock time (#539)"
+        let read = "#539: measured on iCloud, an occurrence edited while its timed series had no time zone carries its original time as wall-clock time, which this undo reads as an instant, so on a Mac not at offset 0 at that time such an edit seldom matches and the series comes back from its rules alone, its edits lost; #539 stays open for restoring them"
+        let guarded = "when the occurrence's series had no time zone at that delete (read on the series, also for an occurrence deleted through its own identifier) and only an occurrence of it not edited on its own is at that slot read as wall-clock time (#539)"
         let declared = CheICalMCPServer.defineTools()
-        for name in ["delete_event", "delete_events_batch", "undo"] {
-            let description = declared.first { $0.name == name }?.description ?? ""
-            for phrase in [placed, zoned, guarded] {
-                XCTAssertEqual(description.components(separatedBy: phrase).count - 1, 1, "defineTools() \(name): \(phrase)")
-            }
-        }
         for name in ["delete_event", "undo"] {
             let description = declared.first { $0.name == name }?.description ?? ""
-            for phrase in ["the series comes back from its rules alone, its edits lost, and the undo says why (the edits of a series with no time zone are not restored by this undo; #539 stays open for that); on a Mac at offset 0 that time has one reading and is applied as before #539;",
-                           "the undo is refused, nothing is written and the entry is kept, since this server cannot tell which reading is the slot; it can be given up with discard_id."] {
+            for phrase in [read, guarded,
+                           "the undo is refused, nothing is written and the entry is kept, since this server cannot tell which reading is the slot (it wrote a one-off there before); it can be given up with discard_id"] {
                 XCTAssertEqual(description.components(separatedBy: phrase).count - 1, 1, "defineTools() \(name): \(phrase)")
             }
         }
         let batch = declared.first { $0.name == "delete_events_batch" }?.description ?? ""
-        for phrase in ["none of that series' exceptions is applied: it comes back from its rules alone, its edits lost, and the undo says why;",
+        for phrase in [guarded, "(#539: an occurrence edited while its timed series had no time zone, read as an instant, seldom matches on a Mac not at offset 0, as delete_event says)",
                        "that member is refused, nothing is written for it, and it is kept in the entry."] {
             XCTAssertEqual(batch.components(separatedBy: phrase).count - 1, 1, "defineTools() delete_events_batch: \(phrase)")
         }
         let move = declared.first { $0.name == "move_events_batch" }?.description ?? ""
-        XCTAssertEqual(move.components(separatedBy: "when the series had no time zone at the move and only an occurrence of it not edited on its own is at that slot read as wall-clock time, #539, the undo is refused instead, nothing is written, the copy stays and the entry is kept").count - 1, 1, move)
+        XCTAssertEqual(move.components(separatedBy: "when the series had no time zone at the move and only an occurrence of it not edited on its own is at that slot read as wall-clock time, #539, the undo is refused instead: nothing is written, the copy is not looked up or touched, and the entry is kept").count - 1, 1, move)
         let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
         let summary = (manifest?["tools"] as? [[String: Any]] ?? []).first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
-        for phrase in ["(#539: for a series with no time zone, whose edited occurrence's original time can be wall-clock time or an instant on a Mac not at offset 0, none is applied and the undo says so)",
+        for phrase in ["(#539: an occurrence edited while its series had no time zone is read as an instant, so on a Mac not at offset 0 it seldom matches and none is applied; #539 stays open)",
                        "and is refused, the entry kept, when the series had no time zone and only an occurrence not edited on its own is at that slot read as wall-clock time, #539"] {
             XCTAssertEqual(summary.components(separatedBy: phrase).count - 1, 1, "mcpb/manifest.json undo: \(phrase)")
         }
     }
 
-    /// #539 (coordinator ruling 2026-11-17): the limit for DS1's shape, as each delete surface states it.
-    /// PR #558 round 3: only for a record of one reading (DS1's own record has two at Los Angeles and is
-    /// forecast as a floating edit).
-    static let placedButEndsBeforeStart = "an edited occurrence whose original time has one reading and that ends before it starts as this Mac reads it (its time falls in a daylight-saving change): the delete gives no note and the undo brings the series back from its rules alone"
-
     /// #539 step 6: the two delete tools say when their answer forecasts that undo restores a series
-    /// from its rules alone, where the note is, and when there is none; both copies, once each.
+    /// from its rules alone, where the note is, and when there is none; both copies, once each. PR #558 fix
+    /// round 4: one cause, the restore's check (C3: the dry run leaves out what earlier rows delete; C11:
+    /// its reads are not counted against the limit).
     func testTheDeleteSurfacesSayWhenTheUndoIsForecastFromTheRulesAlone() throws {
         let declared = CheICalMCPServer.defineTools()
         let phrases = [
-            "delete_event": ["the answer adds undo_note saying that undo is expected to bring the series back from its rules alone, with how many",
+            "delete_event": ["checks each one's original time, read as the undo reads it, against the slots the series' rule gives from its first slot (#539); when one is no slot (for example the series was moved after the edit, or it had no time zone when the edit was made and this Mac is not at offset 0), the undo applies none of the recorded exceptions, and the answer adds undo_note saying that undo is expected to bring the series back from its rules alone, with how many.",
                              "That is a forecast made at the delete: the undo decides on the recreated series.",
-                             "Otherwise there is no such note when the series' first occurrence is not a plain occurrence at its own start (for example edited or deleted on its own, or when it cannot be shown)",
-                             // PR #558 round 3: the floating cause, through any route.
-                             "For a series with no time zone that records one whose original time has two readings, the answer adds undo_note saying that undo is expected to bring the series back from its rules alone because its edits are not restored, with the number of edits recorded, through any route.",
-                             "or when an occurrence not edited on its own that the delete records is no slot of that rule, nor for",
-                             Self.placedButEndsBeforeStart],
+                             "There is no such note when the delete reaches the series through a stand-in or its first occurrence is not a plain occurrence at its own start (for example edited or deleted on its own, or when it cannot be shown)",
+                             "or when an occurrence not edited on its own that the delete records is no slot of that rule; the delete is not refused either way."],
             "delete_events_batch": ["the real call lists each row whose undo is forecast to bring its series back from its rules alone under rules_alone_on_undo, as event_id and undo_note (with the reason, as delete_event words it)",
                                     "and lists none when a row of the call is recorded as a delete of an occurrence and the later occurrences of its series (every row listed under following_occurrences_deleted is one), which makes the call's undo refuse",
-                                    Self.placedButEndsBeforeStart,
-                                    "The dry run forecasts only for rows with span all: it gives that undo_note in the series' row (by date range, in the row of every listed occurrence of that series), before anything is deleted, and the dry run with span future gives none."]
+                                    "The dry run forecasts only for rows with span all: it gives that undo_note in the series' row (by date range, in the row of every listed occurrence of that series), before anything is deleted, leaving out the occurrences the call's earlier rows delete, as the real call does, and the dry run with span future gives none",
+                                    "for each series it forecasts for, it lists that series over its checked window, and those reads are not counted against the limit on deletes by date range."]
         ]
         for (name, list) in phrases {
             let description = declared.first { $0.name == name }?.description ?? ""
@@ -741,33 +727,39 @@ final class ManifestParityTests: XCTestCase {
         }
         let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
         let tools = manifest?["tools"] as? [[String: Any]] ?? []
-        for (name, phrase) in [("delete_event", "a whole-series delete can add undo_note (a forecast, not given in every case) when undo is expected to restore the series from its rules alone: the series has no time zone and records an occurrence edited on its own, or such an occurrence's original time is no slot of the series' rule, #539"),
+        for (name, phrase) in [("delete_event", "a whole-series delete can add undo_note (a forecast, not given in every case) when undo is expected to restore the series from its rules alone: an occurrence edited on its own whose original time, read as the undo reads it, is no slot of the series' rule, #539"),
                                ("delete_events_batch", "series rows whose undo is forecast to restore from the rules alone can be listed in rules_alone_on_undo with an undo_note (not in every case), and the span all dry run gives it in the row, #539")] {
             let summary = tools.first { $0["name"] as? String == name }?["description"] as? String ?? ""
             XCTAssertEqual(summary.components(separatedBy: phrase).count - 1, 1, "mcpb/manifest.json \(name)")
         }
     }
 
-    /// #539 (device cell DS1): the three surfaces that list what the undo of a whole-series delete does
-    /// not restore say that a placed record ending before it starts stops the exceptions, once each.
-    func testUndoSurfacesSayAPlacedEditEndingBeforeItStartsStopsTheExceptions() {
-        // PR #558 round 1 (ruling E): any edited occurrence; round 3: a record of two readings stops them first.
-        let phrase = "an edited occurrence that ends before it starts as this Mac reads it, its time falling in a daylight-saving change, stops them as well, since no one-off can be written for it"
-        for name in ["delete_event", "delete_events_batch", "undo"] {
-            let description = CheICalMCPServer.defineTools().first { $0.name == name }?.description ?? ""
-            XCTAssertEqual(description.components(separatedBy: phrase).count - 1, 1, "defineTools() \(name)")
+    /// PR #558 fix round 4: no surface describes the restore rounds 0 to 3 changed and fix round 4 gave back
+    /// to `main`: two readings of a whole-series delete's record, a floating edit that stops it, a record
+    /// ending before it starts that stops it (ruling E).
+    func testNoSurfaceDescribesTheWithdrawnRestore() throws {
+        var texts = CheICalMCPServer.defineTools().map { "\($0.description ?? "") \(String(describing: $0.inputSchema))" }
+        let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
+        texts += (manifest?["tools"] as? [[String: Any]] ?? []).compactMap { $0["description"] as? String }
+        for text in texts {
+            for retired in ["cannot be read reliably", "two readings", "stops them as well", "ends before it starts as this Mac reads it",
+                            "on a Mac at offset 0 that time has one reading and is applied as before #539"] {
+                XCTAssertFalse(text.contains(retired), retired)
+            }
         }
     }
 
     /// #541: the `clear_timezone` parameter of `update_event` says the event is left floating, not in
-    /// the system time zone, with what was measured on iCloud and on Google, once each.
+    /// the system time zone, with what was measured on iCloud and on Google, once each (fix round 4, C8:
+    /// the #503 refusal as measured and the conditions under which the check sees it).
     func testClearTimezoneSaysTheEventIsLeftFloating() throws {
         let update = CheICalMCPServer.defineTools().first { $0.name == "update_event" }
         let text = "\(String(describing: update?.inputSchema))"
         XCTAssertFalse(text.contains("revert to system timezone"), "the retired claim")
         for phrase in ["The event does not take the system time zone: it is left with none (floating, item_timezone null)",
                        "on a Google calendar the series read a time zone again within 90 seconds",
-                       "a whole-series time zone write is refused by the #503 check once an occurrence was edited on its own while the series had no time zone (measured on iCloud with this Mac at +08:00, #553; on a Mac at UTC the check would not see it)",
+                       "a time that zone skips at a daylight-saving change being shown at a time it has",
+                       "On iCloud with this Mac at +08:00, a whole-series time zone write on a series with such an occurrence was refused by the #503 check (#553): the check reads that time as an instant, so it sees the occurrence off its slot only on a Mac not at offset 0 at that time, and only within the dates it lists (#506).",
                        "and which zone it read was not recorded"] {
             XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, phrase)
         }

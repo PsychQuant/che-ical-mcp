@@ -9,8 +9,8 @@ import XCTest
 /// The note never replaces the `undo_note` of #436 or #452: in `delete_event` the routes exclude each
 /// other, and in `delete_events_batch` the forecast is per row while those notes are top-level (the
 /// real call) or on rows the forecast is not asked for (the dry run).
-/// A forecast of `edits`; `floating` for the cause of PR #558 round 3.
-private func forecastOf(_ edits: Int, floating: Bool = false) -> RulesAloneOnUndo { RulesAloneOnUndo(edits: edits, floatingEdit: floating) }
+/// A forecast of `edits`.
+private func forecastOf(_ edits: Int) -> RulesAloneOnUndo { RulesAloneOnUndo(edits: edits) }
 
 private actor ForecastDeletes: EventDeletionSource {
     let route: SeriesDeleteRoute
@@ -87,8 +87,8 @@ final class SeriesDeleteForecastHandlerTests: XCTestCase {
     // MARK: - delete_event
 
     func testSpanAllWritesTheNoteWhenAnEditCannotBePlaced() async throws {
-        let answer = try await deleteEvent(ForecastDeletes(route: .series(unplacedEdits: forecastOf(2, floating: true))), ["event_id": .string("S"), "span": .string("all")])
-        XCTAssertEqual(answer["undo_note"] as? String, CheICalMCPServer.rulesAloneUndoNote(forecastOf(2, floating: true)))
+        let answer = try await deleteEvent(ForecastDeletes(route: .series(unplacedEdits: forecastOf(2))), ["event_id": .string("S"), "span": .string("all")])
+        XCTAssertEqual(answer["undo_note"] as? String, CheICalMCPServer.rulesAloneUndoNote(forecastOf(2)))
         XCTAssertNil(answer["occurrence_id"])
         XCTAssertEqual(answer["action"] as? String, "deleted", "the delete is not refused")
     }
@@ -119,14 +119,14 @@ final class SeriesDeleteForecastHandlerTests: XCTestCase {
     /// The forecast is a row of `rules_alone_on_undo`; #436's top-level `undo_note` is left as it is.
     func testTheRealCallListsTheForecastPerRowBesideTheTopLevelNote() async throws {
         var result = BatchDeleteResult(successCount: 2, failedCount: 0, failures: [], throughFirstOccurrence: [(identifier: "T", occurrenceID: "T/RID=1")])
-        result.rulesAloneOnUndo = [.init(identifier: "S", forecast: forecastOf(1, floating: true))]
+        result.rulesAloneOnUndo = [.init(identifier: "S", forecast: forecastOf(1))]
         let answer = try await batch(ForecastBatch(result: result),
                                      ["event_ids": .array([.string("S"), .string("T")]), "span": .string("all"), "dry_run": .bool(false)])
         XCTAssertEqual(answer["undo_note"] as? String, CheICalMCPServer.batchSeriesDeletedThroughOccurrenceNote)
         let forecast = try rows(answer, "rules_alone_on_undo")
         XCTAssertEqual(forecast.count, 1)
         XCTAssertEqual(forecast.first?["event_id"] as? String, "S")
-        XCTAssertEqual(forecast.first?["undo_note"] as? String, CheICalMCPServer.rulesAloneUndoNote(forecastOf(1, floating: true)))
+        XCTAssertEqual(forecast.first?["undo_note"] as? String, CheICalMCPServer.rulesAloneUndoNote(forecastOf(1)))
     }
 
     func testTheRealCallWithoutAForecastHasNoForecastRows() async throws {
@@ -159,11 +159,11 @@ final class SeriesDeleteForecastHandlerTests: XCTestCase {
     // MARK: - delete_events_batch, the dry run
 
     func testTheDryRunWithSpanAllWritesTheNoteInTheSeriesRow() async throws {
-        let fake = ForecastBatch(forecasts: ["S": forecastOf(2, floating: true)])
+        let fake = ForecastBatch(forecasts: ["S": forecastOf(2)])
         let answer = try await batch(fake, ["event_ids": .array([.string("S"), .string("U")]), "span": .string("all"), "dry_run": .bool(true)])
         let preview = try rows(answer)
         XCTAssertEqual(preview.first { $0["event_id"] as? String == "S" }?["undo_note"] as? String,
-                       CheICalMCPServer.batchPreviewRulesAloneNote(forecastOf(2, floating: true)))
+                       CheICalMCPServer.batchPreviewRulesAloneNote(forecastOf(2)))
         XCTAssertNil(preview.first { $0["event_id"] as? String == "U" }?["undo_note"])
         let asked = await fake.forecastAsks
         XCTAssertEqual(asked, ["S", "U"])
