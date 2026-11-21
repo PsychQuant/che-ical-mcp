@@ -371,8 +371,10 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         XCTAssertEqual(mainDuplicates, 326)
         // Where the forecast can be read it agreed with the undo in every cell (checked per cell above).
         XCTAssertEqual(forecasts, ["none": 3264, "rulesAlone": 4848])
-        XCTAssertEqual(rejectedBy, [:], "pinned after the first run")
-        XCTAssertEqual(duplicateBy, [:], "pinned after the first run")
+        XCTAssertEqual(rejectedBy, ["floating offsetN applied": 230, "floating offset0 applied": 382,
+                                    "zoned offsetN applied": 1850, "zoned offset0 applied": 370])
+        XCTAssertEqual(duplicateBy, ["floating offsetN applied": 6, "floating offset0 applied": 56,
+                                     "zoned offsetN applied": 220, "zoned offset0 applied": 44])
     }
 
     // MARK: - named cells
