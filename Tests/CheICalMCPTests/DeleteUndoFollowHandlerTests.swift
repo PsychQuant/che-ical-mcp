@@ -280,7 +280,8 @@ final class DeleteUndoFollowHandlerTests: XCTestCase {
             (.updateSeries(SeriesUpdateRecord(id: "S", externalIdentifier: "X-S", old: UndoSnapshotFixtures.event(title: "Series before"),
                                               saved: UndoSnapshotFixtures.event(title: "Series after"), fields: ["title"],
                                               before: exceptions, after: exceptions)), "Series before"),
-            // A move by copy is not flagged (#559): its undo restores the original and reports the copy.
+            // A move by copy is not flagged (#559): its undo restores the original first and then reports
+            // a copy it does not find as not found.
         ]
         for (operation, title) in cases {
             let history = CalendarUndoManager()

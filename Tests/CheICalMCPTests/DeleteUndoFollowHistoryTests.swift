@@ -282,9 +282,9 @@ final class DeleteUndoFollowHistoryTests: XCTestCase {
 
     /// The marker, a batch and the record of a move by copy carry no not-followed title, so none is
     /// flagged; every kind that is flagged has one (#538 fix 1, R3, F33). A move by copy names its copy,
-    /// and its undo never answers the not-followed text: it restores the original and reports the copy
-    /// as not found (`MoveByCopyUndo.copyState`), so flagging it would count an entry whose undo does
-    /// not say why (#559, G3 to G5, G17).
+    /// and its undo never answers the not-followed text: it restores the original first and then reports
+    /// a copy it does not find as not found (`MoveByCopyUndo.copyState`), so flagging it would count an
+    /// entry whose undo does not say why (#559, G3 to G5, G17).
     func testOnlyKindsWithANotFollowedTitleAreFlagged() async throws {
         let history = CalendarUndoManager()
         await history.record(.batch([.createEvent(id: "S", title: "Standup", created: event("Standup"))]))
@@ -354,5 +354,28 @@ final class DeleteUndoFollowHistoryTests: XCTestCase {
 
         let undo = await undoIDs(history)
         XCTAssertEqual(undo, [["T"], ["T"], ["S"], ["T"]])
+    }
+
+    /// PR #562 verify r2 (M10, M21): the record of a move by copy names its copy, and the rewrite
+    /// after a recreate moves it whatever the change, on both stacks: a copy that was made a series,
+    /// deleted whole and recreated with no occurrence as a separate event (`DeleteUndoFollow.decision`
+    /// gives `.follow`) is looked up under its new identifier and found. So the copy-not-found answer
+    /// of its undo comes from a recreate only when the records were not followed: the series' edited
+    /// occurrences came back as separate events (`.flag`), which is the cause the answer names.
+    func testAMoveByCopyRecordFollowsTheCopyARecreateWroteAnew() async throws {
+        let history = CalendarUndoManager()
+        await history.record(.moveByCopy(original: event("Standup"), isSplit: false, notCarriedOver: [], copyID: "S",
+                                         copy: event("Standup")))
+        await history.record(.moveByCopy(original: event("Review"), isSplit: true, notCarriedOver: [], copyID: "S",
+                                         copy: event("Review")))
+        let begun = try await history.beginUndo()
+        await history.finishHistoryOperation(try XCTUnwrap(begun))
+
+        await history.replaceEventIdentifier("S", with: "T", change: .recreated)
+
+        let redo = await history.popRedo()
+        XCTAssertEqual(ids(try XCTUnwrap(redo).operation), ["T"], "redo stack")
+        let undo = await undoIDs(history)
+        XCTAssertEqual(undo, [["T"], ["T"]], "undo stack: the redo record popRedo put back, then the older one")
     }
 }

@@ -211,9 +211,13 @@ final class MoveByCopyUndoTests: XCTestCase {
         }
         // PR #562 verify r1 (K15): a copy given rules, deleted whole and brought back by its delete's
         // undo with an edited occurrence as a separate event is not followed (#538), so the move's
-        // undo meets not found there too; the causes name that way.
+        // undo meets not found there too; the causes name that way. PR #562 verify r2 (M10, M21): only
+        // that way: a copy series recreated with no occurrence as a separate event is followed
+        // (`DeleteUndoFollowHistoryTests.testAMoveByCopyRecordFollowsTheCopyARecreateWroteAnew`), so
+        // the cause names the separate events.
         let notFound = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .notFound)
-        XCTAssertTrue(notFound.contains("was not found under its recorded identifier (deleted, given a new identifier by its account, or, made a series, recreated as a new series by the undo of its delete)"), notFound)
+        XCTAssertTrue(notFound.contains("was not found under its recorded identifier (deleted, given a new identifier by its account, or, made a series, recreated by the undo of its delete as a new series whose occurrences edited on their own came back as separate events)"), notFound)
+        XCTAssertFalse(notFound.contains("recreated as a new series by the undo of its delete)"), "the wider cause of round 1: \(notFound)")
         let changed = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .changed(["title", "alarms"]))
         XCTAssertTrue(changed.contains("was changed after the move (title, alarms)") && changed.contains("COPY-1"), changed)
         let moved = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .changed(["calendar", "title"]))

@@ -909,7 +909,9 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertEqual(text.components(separatedBy: pin).count - 1, 1, "\(place): exactly one \"\(pin)\" in: \(text)", line: line)
         }
         let update = try descriptions(of: "update_event")
-        assertOnce("calendar_name moves the event to another calendar and the store gives it a new identifier there: a calendar in another account, and within a Google account another calendar of the same account (measured; within an iCloud account the identifier stayed the same; Exchange was not measured)", in: update.declared, "update_event")
+        // PR #562 verify r2 (D7): the condition is the new identifier; the accounts are the instances measured.
+        assertOnce("calendar_name moves the event to another calendar and the store gives it a new identifier there (measured: a calendar in another account, and within a Google account another calendar of the same account; within an iCloud account the identifier stayed the same; Exchange was not measured)", in: update.declared, "update_event")
+        XCTAssertFalse(update.declared.contains("gives it a new identifier there: a calendar in another account"), "D7: the closed-list colon: \(update.declared)")
         XCTAssertFalse(update.declared.contains("calendar_name moves the event to a calendar in another account ("), "the old first case: \(update.declared)")
         assertOnce("After a calendar change over the whole event (a one-off event, or a series with span 'all' through its own identifier), older undo entries of the event follow it to the new identifier (#484); a split of the series is not followed, nor is span 'future' from the series' first occurrence with calendar_name, which moved the whole series under a new identifier within a Google account while older entries kept the old one (#551).", in: update.declared, "update_event")
         assertOnce("a move to another calendar (measured: another account, or within a Google account; Exchange not measured)", in: update.summary, "manifest update_event")
@@ -944,8 +946,12 @@ final class ManifestParityTests: XCTestCase {
         assertOnce("no entry follows a series whose edited occurrences came back as separate events; when entries of it whose undo looks it up remain (not when it reads back under its old identifier), the delete's undo says so", in: undo.summary, "manifest undo")
         // #559 (G6, G9, G15, G16, G32): the limit of entries named by an occurrence's own identifier is the #426 move's,
         // in both texts; the delete's undo is the one that says so; a recreated series under the removed identifier flags nothing.
-        assertOnce("entries naming the series by an occurrence's own identifier (a whole-series move made through it, #426) are neither moved nor flagged, and their undo answers the generic not-found while the removed identifier no longer resolves (as on iCloud);", in: undo.summary, "manifest undo")
-        assertOnce("Entries that name the series by the own identifier of one of its occurrences (a whole-series move made through it, #426) are neither moved nor flagged, and their undo answers the generic not-found while the removed identifier no longer resolves (as on iCloud).", in: undo.declared, "undo")
+        // PR #562 verify r2 (D10): the calendar the move goes back to is read first, as for every move.
+        assertOnce("entries naming the series by an occurrence's own identifier (a whole-series move made through it, #426) are neither moved nor flagged, and their undo, once the calendar it moves back to is found (a missing one is refused first), answers the generic not-found while the removed identifier no longer resolves (as on iCloud);", in: undo.summary, "manifest undo")
+        assertOnce("Entries that name the series by the own identifier of one of its occurrences (a whole-series move made through it, #426) are neither moved nor flagged, and their undo, once the calendar it moves the series back to is found (a missing one is refused first), answers the generic not-found while the removed identifier no longer resolves (as on iCloud).", in: undo.declared, "undo")
+        // PR #562 verify r2 (M24, D8): the entry of a move by copy is not among the flagged ones, in both texts.
+        assertOnce("(its create, an update of it while it was one-off, an in-place move of the whole event, a whole-series update that undo could restore, #263; not the entry of a move by copy, whose undo restores the original first and reports a copy it does not find as not found)", in: undo.declared, "undo")
+        assertOnce("a move by copy's entry is not flagged: its undo restores the original first and reports a copy it does not find as not found;", in: undo.summary, "manifest undo")
         assertOnce("the answer of the delete's undo (a batch undo's too) says so", in: undo.declared, "undo")
         assertOnce("when the recreated series reads back under the removed identifier, no entry is flagged and nothing is said.", in: undo.declared, "undo")
         XCTAssertFalse(undo.declared.contains("a whole-series move or an update made through it"), "#559 G15: such an update is a marker")

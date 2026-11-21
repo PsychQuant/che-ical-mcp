@@ -527,8 +527,9 @@ enum UndoOperation {
     /// with nil here: a recurring update's marker (#538 fix 1, R3: its undo is refused and the record
     /// discarded before any lookup, so it never answers not found and needs no `discard_id`), a batch
     /// (no batch recorded today names a live event), the record of a move by copy (#559: it names its copy,
-    /// and its undo restores the original and reports the copy as not found, `MoveByCopyUndo.copyState`,
-    /// so it never answers the not-followed text), delete records, reminders and calendar operations.
+    /// and its undo restores the original first and only then looks the copy up, answering not found
+    /// when the copy is not under its recorded identifier, `MoveByCopyUndo.copyState`; it never answers
+    /// the not-followed text), delete records, reminders and calendar operations.
     /// Exhaustive.
     var notFollowedTitle: String? {
         switch self {

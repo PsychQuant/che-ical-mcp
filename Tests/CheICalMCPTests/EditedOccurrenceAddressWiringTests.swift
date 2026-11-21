@@ -140,7 +140,9 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
             XCTAssertFalse(day.contains(slot), "dayReadings reads \(slot)")
         }
         // PR #562 verify r1 (K8): the initializer the loop calls reads the four fields and nothing
-        // else, the start from `startDate`, not a slot (`occurrenceDate` in its place passed every pin).
+        // else, the start from `startDate`, not a slot. The body is pinned exactly, where the
+        // deny-lists above and in `testTheSearchReadsNoSlotAndListsNoSeries` name only spellings
+        // (which already turn red on `occurrenceDate` in its place, PR #562 verify r2).
         let reading = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "init(_ event: EKEvent)",
                                                                                    in: try SourcePins.source("EventKit/EditedOccurrenceAddress.swift"))))
         XCTAssertEqual(reading, "init(_ event: EKEvent) { self.init(eventIdentifier: event.eventIdentifier, isAllDay: event.isAllDay, start: event.startDate, timeZone: event.timeZone) }")
