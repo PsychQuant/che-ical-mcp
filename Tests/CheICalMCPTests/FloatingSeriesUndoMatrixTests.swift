@@ -103,6 +103,8 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         var mainDuplicate = false
         /// The forecast could be read: whether it said the rules alone.
         var forecast: Bool? = nil
+        /// `main`'s restore applied the recorded exceptions (its answer is not "not applied").
+        var mainApplied = false
     }
 
     // MARK: - building a cell
@@ -214,6 +216,7 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         let starts = main.calendar.map { $0.split(separator: " ")[0] }
         var run = Run(kind: .rejected)
         run.mainDuplicate = Set(starts).count != starts.count
+        run.mainApplied = !restore.notApplied
         let anchor = "\(Int(start.timeIntervalSinceReferenceDate)) "
         if restore.notApplied {
             if main.calendar == rulesAlone { run.kind = .rulesAlone }
@@ -333,6 +336,11 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         var byRID: [String: Int] = [:]
         var mainDuplicates = 0
         var forecasts: [String: Int] = [:]
+        // `main`'s rejected and duplicate cells by the edit's `/RID=` kind, the host at offset 0 or not, and
+        // whether `main` applied the record (the shape the earlier rounds' 40 and 6 were counted in is
+        // floating, offset not 0, applied).
+        var rejectedBy: [String: Int] = [:]
+        var duplicateBy: [String: Int] = [:]
         let all = cells()
         for cell in all {
             let run = try run(cell)
@@ -340,12 +348,16 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             byRID["\(cell.rid.rawValue) \(run.kind.rawValue)", default: 0] += 1
             failures += run.failures
             if run.mainDuplicate { mainDuplicates += 1 }
+            let bucket = "\(cell.rid.rawValue) \(cell.host.secondsFromGMT() == 0 ? "offset0" : "offsetN") \(run.mainApplied ? "applied" : "notApplied")"
+            if run.kind == .rejected { rejectedBy[bucket, default: 0] += 1 }
+            if run.mainDuplicate { duplicateBy[bucket, default: 0] += 1 }
             if let forecast = run.forecast { forecasts[forecast ? "rulesAlone" : "none", default: 0] += 1 }
         }
         let redCells = Set(failures.map { $0.components(separatedBy: ": ")[0] }).count
         print("MATRIX cells \(all.count) main's kinds \(kinds.sorted { $0.key < $1.key }) main's duplicates \(mainDuplicates) red \(redCells)")
         print("MATRIX by rid \(byRID.sorted { $0.key < $1.key })")
         print("MATRIX forecasts \(forecasts.sorted { $0.key < $1.key })")
+        print("MATRIX main rejected by \(rejectedBy.sorted { $0.key < $1.key }) duplicates by \(duplicateBy.sorted { $0.key < $1.key })")
         XCTAssertEqual(redCells, 0, failures.prefix(12).joined(separator: "\n"))
         // `main`'s own outcomes over the matrix, recorded on #539 (PR #558 fix round 4): a change of the
         // undo that moves a cell from one outcome to another shows here, and so does a change of the cells.
@@ -359,6 +371,8 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         XCTAssertEqual(mainDuplicates, 326)
         // Where the forecast can be read it agreed with the undo in every cell (checked per cell above).
         XCTAssertEqual(forecasts, ["none": 3264, "rulesAlone": 4848])
+        XCTAssertEqual(rejectedBy, [:], "pinned after the first run")
+        XCTAssertEqual(duplicateBy, [:], "pinned after the first run")
     }
 
     // MARK: - named cells

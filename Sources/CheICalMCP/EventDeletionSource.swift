@@ -7,7 +7,7 @@ protocol EventDeletionSource: Sendable {
     /// The zone a date-only `occurrence_date` is read in (`EventKitManager.occurrenceDateTimeZone`).
     func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone?
     /// #539 step 6: returns the forecast of a whole-series delete (`RulesAloneOnUndo`): the recorded
-    /// occurrences edited on their own that the restore is expected not to apply, and why; nil unless it
+    /// occurrences edited on their own whose recorded slot is no slot of the rule; nil unless it
     /// recorded a whole-series delete with such a record.
     func deleteEvent(identifier: String, span: EKSpan, occurrenceDate: Date?) async throws -> RulesAloneOnUndo?
     func deleteEventSeries(identifier: String) async throws -> SeriesDeleteRoute

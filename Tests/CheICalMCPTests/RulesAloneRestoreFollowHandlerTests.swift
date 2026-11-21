@@ -76,9 +76,9 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
         }
     }
 
-    /// PR #558 round 2 (H30), rewritten in round 3 (no record of two readings is applied any more): a record of
-    /// one reading applied writes the edited occurrence as a separate event, so #538 flags the older records of
-    /// the series instead of moving them, through the production arm (`undoDeletedEvent(_:removedID:)`).
+    /// PR #558 round 2 (H30), rewritten in round 3 and fix round 4: a record applied (its slot a slot of the
+    /// recreated series, as on `main`) writes the edited occurrence as a separate event, so #538 flags the older
+    /// records of the series instead of moving them, through the production arm (`undoDeletedEvent(_:removedID:)`).
     func testAnAppliedRecordFlagsTheOlderRecords() async throws {
         let store = FakeSeriesExceptionsStore()
         store.seriesSlots = (0...3).map(slot)

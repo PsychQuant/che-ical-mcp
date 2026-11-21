@@ -4,15 +4,21 @@ import Foundation
 
 /// PR #558 fix round 4 (verify findings C1, C10, L14): the undo of a whole-series delete, and of one
 /// occurrence's delete, as `main` runs them, so a test runs one sequence through this server's production
-/// path and through `main`'s and compares the calendars and answers. Copied from `main` at 92d9b796
-/// (`SeriesExceptionsUndo.capture(of:in:now:)` with its lister, `recreateDeletedEvent`,
-/// `undoDeleteOccurrence`, `seriesHoldsSlot`, `held`, `slotLength`; `OccurrenceSlotGuard.isHeld`) without
-/// a change but their names, the names of the copies they call and their comments (left out): the planner's capture is
-/// `SeriesExceptionsPlanner.captureOnMain` (bdcb8f9e, the same as 92d9b796's) and the store-level restore
-/// `SeriesExceptionsUndo.restoreOnMain` (ba98641, before #527 replaced its scans; #538 did not change it;
-/// `UndoSlotComparisonEquivalenceTests` compares it with the current one). The shared builders they call
-/// (the texts, `DeleteUndoFollow.removedIdentifier`, the store) are production's. The old behaviour on
-/// purpose: do not update them when the current functions change their answers.
+/// path and through `main`'s and compares the calendars and answers. Which commit each copy is of:
+/// - copied from `main` at 92d9b796, without a change but their names, the names of the copies they call and
+///   their comments (left out): the store-level capture (`SeriesExceptionsUndo.capture(of:in:now:)`) with its
+///   lister, `recreateDeletedEvent`, `undoDeleteOccurrence`, `seriesHoldsSlot`, `held`, `slotLength`, and
+///   `OccurrenceSlotGuard.isHeld` (below, `isHeldOnMain`);
+/// - the planner's capture they call, `SeriesExceptionsPlanner.captureOnMain`, is bdcb8f9e's, the same as
+///   92d9b796's;
+/// - the store-level restore they call, `SeriesExceptionsUndo.restoreOnMain`, is ba98641's, before #527
+///   replaced its scans (#538 did not change it; `UndoSlotComparisonEquivalenceTests` compares it with the
+///   current one).
+/// They share with production what neither side changed: `SeriesExceptionsPlanner.deleteWindow`,
+/// `listingRanges`, `inWindows` and `ruleSlot(of:)`, `UndoPostState.seriesScanWindow`, `isOccurrence` and
+/// `sameInstant`, `SeriesExceptionsUndo.restoreFailure`, the texts, `DeleteUndoFollow.removedIdentifier` and the
+/// store (PR #558 fix round 4 changes none of them). The old behaviour on purpose: do not update them when the
+/// current functions change their answers.
 enum SeriesUndoOnMain {
     static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store, now: Date = Date()) -> SeriesExceptions? {
         let ids = store.identifiers(of: series)
