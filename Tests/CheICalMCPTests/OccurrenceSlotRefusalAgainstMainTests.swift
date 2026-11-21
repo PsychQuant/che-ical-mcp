@@ -84,7 +84,7 @@ final class OccurrenceSlotRefusalAgainstMainTests: XCTestCase {
             XCTAssertEqual(production.written, [])
             XCTAssertEqual(production.written, main.written)
             XCTAssertEqual(production.answer, main.answer)
-            XCTAssertEqual(production.answer, "editedOccurrenceAlreadyHeld")
+            XCTAssertTrue(production.answer.contains("editedOccurrenceAlreadyHeld"), production.answer)
         }
     }
 

@@ -48,7 +48,7 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
         [("floating edit", SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
                                             detached: [record(slot: slot(1).addingTimeInterval(8 * hour), start: slot(1))])),
          ("did not match", SeriesExceptions(window: window, keptSlots: [slot(0), slot(2), slot(3)],
-                                            detached: [record(slot: slot(1).addingTimeInterval(3 * hour)))]))]
+                                            detached: [record(slot: slot(1).addingTimeInterval(3 * hour))]))]
     }
 
     func testANotAppliedRestoreMovesTheOlderRecordsToTheRecreatedSeries() async throws {

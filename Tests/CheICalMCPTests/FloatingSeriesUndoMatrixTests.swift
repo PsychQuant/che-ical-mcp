@@ -350,9 +350,15 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         // `main`'s own outcomes over the matrix, recorded on #539 (PR #558 fix round 4): a change of the
         // undo that moves a cell from one outcome to another shows here, and so does a change of the cells.
         XCTAssertEqual(all.count, 15696)
-        XCTAssertEqual(kinds, [:], "pinned after the first run")
-        XCTAssertEqual(mainDuplicates, -1, "pinned after the first run")
-        XCTAssertEqual(forecasts, [:], "pinned after the first run")
+        XCTAssertEqual(kinds, ["notRestorable": 2324, "asBefore": 2234, "firstKeptFromRule": 660, "rulesAlone": 7646, "rejected": 2832])
+        XCTAssertEqual(byRID, ["floating notRestorable": 1188, "floating asBefore": 746, "floating firstKeptFromRule": 260,
+                               "floating rulesAlone": 5078, "floating rejected": 612,
+                               "zoned notRestorable": 1136, "zoned asBefore": 1488, "zoned firstKeptFromRule": 400,
+                               "zoned rulesAlone": 2568, "zoned rejected": 2220])
+        // Of `main`'s rejected calendars, those with two events at one start (L12: counted by a check, not stated).
+        XCTAssertEqual(mainDuplicates, 326)
+        // Where the forecast can be read it agreed with the undo in every cell (checked per cell above).
+        XCTAssertEqual(forecasts, ["none": 3264, "rulesAlone": 4848])
     }
 
     // MARK: - named cells
