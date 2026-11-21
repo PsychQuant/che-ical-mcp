@@ -55,7 +55,7 @@ final class SingleListingWiringTests: XCTestCase {
         XCTAssertEqual(count("seriesOccurrences(of: series, id: id, ranges: ranges)", in: verdict), 1)
         XCTAssertEqual(count("seriesOccurrences(", in: verdict), 1)
         // Both read the value facts taken at listing time, not the listed objects.
-        XCTAssertTrue(baseline.contains("guard let (_, candidates) = seriesOccurrences("))
+        XCTAssertTrue(baseline.contains("guard let (_, listed) = seriesOccurrences("), "PR #558 fix round 4: the listing, less a dry run's gone rows")
         XCTAssertTrue(verdict.contains("guard let (_, candidates) = seriesOccurrences("))
     }
 

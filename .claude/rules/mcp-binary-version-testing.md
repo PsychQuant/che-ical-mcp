@@ -1355,7 +1355,7 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 副本（`SeriesUndoOnMain`）斷言（`FloatingSeriesExceptionsUndoTests`、`WholeSeriesUndoChainOnMainTests`、`ZonedSeriesUndoOnMainTests`、矩陣）；裝置上沒有跑 `main`。
 另外做 #538 gate 第 1、3 步（#538 Implementation Complete 編號的 sequence 1 與 8）。
 
-GATE_RECORD
+PR #558 fix round 4（2026-11-22）用 `f868bfce` 的 Developer ID 簽章 release build（有時間戳記）在 stdio process 上做第 1 到 8 步（第 8 步 server 在 `TZ=America/Los_Angeles`）與 #538 gate 第 1、3 步，結果都如上：F1、D2、R2、MA、FR、N1、S1、S2 的刪除帶規則外的說明，undo 都是對不上的還原；C1 沒有說明，第一次 undo 回 `1 … stayed deleted, 1 … came back`，第二次寫回第 2 場，讀回與刪除前相同；MA 與 FR 的第二次 undo 被拒絕、什麼都沒寫，FR 的紀錄以 `discard_id` 移除；S1、S2 的 (b) 寫回一次性事件；S2 的 `clear_timezone` 被 #503 拒絕；#538 gate 第 1 步讀回空日曆，第 3 步的第二次 undo 回 #538 的 flagged 文字、紀錄以 `discard_id` 移除。13 個拋棄式日曆依 id 刪除；01:49:33 與 01:50:34（+08:00）兩次計數，名稱含 `#539` 的都是 0（只有 #484 的兩個 Google 日曆）。
 
 **沒做、出版前要補或記成未量**：
 
