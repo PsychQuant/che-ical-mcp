@@ -287,7 +287,7 @@ if [[ "$SHOULD_SIGN" == "true" ]]; then
     shasum -a 256 "$UNIVERSAL_BINARY" | awk '{print $1}' > "$SHA256_FILE"
     echo ""
     echo "Post-sign SHA-256: $(cat "$SHA256_FILE")"
-    echo "  → upload alongside binary: \`gh release create vX.Y.Z $UNIVERSAL_BINARY $SHA256_FILE ...\`"
+    echo "  → upload alongside binary: \`gh release create vX.Y.Z $UNIVERSAL_BINARY $SHA256_FILE ... --target <full SHA this was built from>\` (README: Per-release flow)"
 fi
 
 # Signing rewrote the file that gets packaged, so run it once more (#238).

@@ -41,7 +41,7 @@
 - #528 的祖先：第 1 輪給維護者的做法「合併 `5547876c`、衝突一律取 `main` 這邊」不對（M1、M2）：git 合併 `CHANGELOG.md` 時沒有衝突，卻在 `[Unreleased]` 底下多插一個 `[1.23.0]` 標題。正確的是 squash 之後 `git merge -s ours 5547876c`，合併後 `git diff HEAD^1 HEAD` 是空的；另一條路是用 merge commit 合併 PR #562 本身，不必解衝突。兩條都需要管理員略過 required linear history。
 - 發布程序（兩份 README）重寫成依序三步：在 `main` 上經 PR 升版本號並摺疊兩份 changelog；checkout 那個合併 commit、從它 build；在同一個 commit 上打 tag（`gh release create --target <完整 SHA>`，或先用 git 建 tag 再帶 `--verify-tag`）（D1、M33）。另寫要發布的點落後 `main` 的 HEAD 時怎麼辦，以及 v1.23.0 是怎麼變成這樣的（PR #370 摺疊後沒有打 tag，之後從 `7947921` 開 branch 切出）（M25）。`gh` 的兩個參數只對照 `gh release create --help`，沒有執行。
 - `-s ours` 的做法與用 merge commit 合併 PR 的做法，都在一個停用 push 的 scratch clone 上模擬過（squash 用 `git commit-tree` 建出）：`-s ours` 之後 `git diff HEAD^1 HEAD` 是空的，`5547876c` 成為祖先；用 merge commit 合併 PR 沒有衝突，樹與 PR head 相同；`-X ours` 則在 `CHANGELOG.md` 多出第二個 `[1.23.0]`。管理員略過本身沒有執行，只讀了 protection API（`required_linear_history` 開、`enforce_admins` 關）。
-- 本 change 的兩份 delta spec 對齊 main spec，逐個 requirement 比對（去掉 trace 註解）沒有差異：補上第 1 輪直接寫進 main spec 的 #426 條件（M3、M12），以及這一輪的修改：單筆拒絕給 ID 的條件（D5）、「不寫原本的日期」（M11）、#263 紀錄何時被標記（D9）、#426 的 undo 先讀日曆（D10）、move by copy 的 undo 先還原再查副本（M23、D8）。
+- 本 change 的兩份 delta spec 對齊 main spec，逐個 requirement 比對（去掉 trace 註解）沒有差異：補上第 1 輪直接寫進 main spec 的 #426 條件（M3、M12），以及這一輪的修改：單筆拒絕給 ID 的條件（D5）、「不寫原本的日期」（M11）、#263 紀錄何時被標記（D9）、#426 的 undo 先讀日曆（D10）、move by copy 的 undo 先還原再查副本（M23、D8）、被標記的種類裡的「原地的 move」。這些 requirement 措辭的修改直接改在本 change 與 main spec，沒有另開 Spectra change：本 change 屬於還沒合併的 PR #562，它的 delta 本來就是這兩個 requirement。
 - tasks 1.2 的「驗證：文件測試通過」：沒有測試讀這一句（M32），驗證是對照 git 與 branch protection 的讀取，見 tasks 1.2 的註記。
 - 其餘修正見 PR #562 的 Verify-fix (round 2) 留言。
 
@@ -69,4 +69,4 @@
   - `README.md`、`README_zh-TW.md`、`CHANGELOG.md`、`.claude/rules/mcp-binary-version-testing.md`
   - #528 的合併：`plugin/CHANGELOG.md`、`plugin/README.md`（2026-11-18 PR #562 verify r1 K13 補上）
   - verify 第 1 輪的修正：`CLAUDE.md`（測試命名表加 manager 層一列）、`Sources/CheICalMCP/EventKit/MoveByCopyUndo.swift`（副本找不到的原因多一個）、`Tests/CheICalMCPTests/MoveByCopyUndoTests.swift`、`Tests/CheICalMCPTests/DeleteUndoFollowHistoryTests.swift`（註解）
-  - verify 第 2 輪的修正：`plugin/skills/quota/SKILL.md`（#333 在 v1.23.0 就已出貨）、`Tests/CheICalMCPTests/DeleteUndoFollowHistoryTests.swift`（一個新測試）、`Tests/CheICalMCPTests/DeleteUndoFollowHandlerTests.swift`（註解）；其餘是上面已列的檔案
+  - verify 第 2 輪的修正：`plugin/skills/quota/SKILL.md`（#333 在 v1.23.0 就已出貨）、`Tests/CheICalMCPTests/DeleteUndoFollowHistoryTests.swift`（一個新測試）、`Tests/CheICalMCPTests/DeleteUndoFollowHandlerTests.swift`（註解）、`scripts/build-mcpb.sh`（簽章後印的 `gh release create` 提示加上 `--target`）；其餘是上面已列的檔案

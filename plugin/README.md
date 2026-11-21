@@ -79,7 +79,7 @@ A **trip-folder reminder** (#341): in a folder with a project-level `.claude/.ic
 | `calendar-management` | Comprehensive guide for calendar operations |
 | `troubleshoot-tcc` | 5-step EventKit / TCC permission diagnostic (binary grant + host-app layer; from v1.23.0 the server uses CheICalMCP's own grant whenever the host has no full Calendar and Reminders access of its own, #343) |
 | `archive-event` | Archive an event from a narrative source (meeting notice, announcement, mail thread) with correction tracking and source citation |
-| `quota` | Declare a use-it-or-lose-it quota (weekly limit, monthly credit) in `~/.claude/.ical/quotas.yaml` and keep one reminder per period in sync, matched by the period's reset day: declare, update (a changed schedule replaces the open reminders, after one yes), retire, list (last period used or not, current period open or used), sync (creates the next 90 days; run it at least once per 90 days) (`/che-ical-mcp:quota`; needs the binary release after v1.23.0 for the notification) |
+| `quota` | Declare a use-it-or-lose-it quota (weekly limit, monthly credit) in `~/.claude/.ical/quotas.yaml` and keep one reminder per period in sync, matched by the period's reset day: declare, update (a changed schedule replaces the open reminders, after one yes), retire, list (last period used or not, current period open or used), sync (creates the next 90 days; run it at least once per 90 days) (`/che-ical-mcp:quota`; needs v1.23.0 or later for the notification) |
 | `itinerary-check` | Compare the calendar with what changed about a trip (registration, payment, program, lodging, transport), list the differences, change nothing until you agree (#341) |
 
 ### Commands
