@@ -405,15 +405,18 @@ extension EventKitManager {
     }
 
     /// #416: whether `date` is the day of `occurrence`, by the time it shows or by its original slot:
-    /// a caller can hold either for an occurrence that was moved.
+    /// a caller can hold either for an occurrence that was moved (`OccurrenceDateMatch`).
+    /// #543: the original slot is read with the series' all-day flag, from the series object the
+    /// identifier names (`seriesObject(ofOccurrence:)`, which may fail to refresh, #326: its flag is
+    /// still read); the occurrence's own flag when that object cannot be read.
     func occurrenceDateMatches(_ date: Date?, occurrence: EKEvent, id: String) -> Bool {
         guard let date else { return true }
-        let slot = UndoPostState.originalSlot(eventIdentifier: id, externalIdentifier: occurrence.calendarItemExternalIdentifier,
-                                              occurrenceDate: occurrence.occurrenceDate)
-        return [occurrence.startDate, slot].contains {
-            OccurrenceDay.startsOnRequestedDay(occurrenceStart: $0, isAllDay: occurrence.isAllDay, requested: date,
-                                               in: Self.occurrenceZone(of: occurrence))
-        }
+        let seriesIsAllDay = (try? seriesObject(ofOccurrence: id))?.isAllDay ?? occurrence.isAllDay
+        return OccurrenceDateMatch.matches(
+            requested: date, start: occurrence.startDate, startIsAllDay: occurrence.isAllDay,
+            zone: Self.occurrenceZone(of: occurrence),
+            eventIdentifier: id, externalIdentifier: occurrence.calendarItemExternalIdentifier,
+            occurrenceDate: occurrence.occurrenceDate, seriesIsAllDay: seriesIsAllDay, host: .current)
     }
 
     /// The earliest remaining occurrence of the series `stale` (a series object whose `refresh()`
