@@ -1531,7 +1531,12 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         let manager = try updateBody()
         XCTAssertTrue(manager.contains("if occurrenceDate != nil, !applyToAll, DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: masterEvent.isDetached) { matchedOccurrence = MatchedOccurrence(start: masterEvent.startDate, zone: Self.occurrenceZone(of: masterEvent)) }"), manager)
         let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift")))
-        XCTAssertTrue(source.contains("return [occurrence.startDate, slot].contains {"), "the shown day or the original one")
+        // #543: the shown day or the original one, compared in `OccurrenceDateMatch.matches`, which
+        // `occurrenceDateMatches` calls with the occurrence's start.
+        XCTAssertTrue(source.contains("return OccurrenceDateMatch.matches( requested: date, start: occurrence.startDate,"), "the shown day or the original one")
+        let match = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/OccurrenceDateMatch.swift")))
+        XCTAssertTrue(match.contains("return OccurrenceDay.startsOnRequestedDay(occurrenceStart: start,"), "the shown day")
+        XCTAssertTrue(match.contains("|| OccurrenceDay.startsOnRequestedDay(occurrenceStart: slot,"), "or the original one")
         XCTAssertTrue(source.contains("neighbours: try occurrenceNeighbours(of: event, id: id, namedInTheCall: namedInTheCall))"))
         XCTAssertTrue(source.contains("namedInTheCall: namedInTheCall)"))
     }

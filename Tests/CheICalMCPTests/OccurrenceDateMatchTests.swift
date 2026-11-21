@@ -82,6 +82,25 @@ final class OccurrenceDateMatchTests: XCTestCase {
         XCTAssertFalse(matches(29))
     }
 
+    /// The original slot is compared with the series' flag, not the occurrence's: an all-day series'
+    /// occurrence made timed in a zone far from the host. Host UTC+14: the slot 2026-12-28 00:00 is
+    /// 2026-12-26 23:00 at UTC−11, so compared as a timed instant in the occurrence's zone it would be the 26th.
+    func testTheOriginalSlotIsComparedWithTheSeriesFlag() {
+        let host = TimeZone(identifier: "Pacific/Kiritimati")!
+        let zone = TimeZone(identifier: "Pacific/Pago_Pago")!
+        let rid = Self.day(2026, 12, 28, in: Self.utc)
+        let shown = Self.day(2026, 12, 30, hour: 10, in: zone)
+        func matches(_ requestedDay: Int) -> Bool {
+            OccurrenceDateMatch.matches(requested: Self.day(2026, 12, requestedDay, in: zone), start: shown, startIsAllDay: false,
+                                        zone: zone, eventIdentifier: Self.identifier(rid: rid), externalIdentifier: nil,
+                                        occurrenceDate: shown, seriesIsAllDay: true, host: host)
+        }
+        XCTAssertTrue(matches(28))
+        XCTAssertFalse(matches(26))
+        XCTAssertFalse(matches(27))
+        XCTAssertTrue(matches(30), "the day it shows")
+    }
+
     /// A timed occurrence of a timed series, as on `main`: the /RID= is the slot's instant.
     func testATimedOccurrenceIsReadAsBefore() {
         let zone = TimeZone(identifier: "America/Los_Angeles")!
