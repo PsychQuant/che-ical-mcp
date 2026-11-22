@@ -7,8 +7,9 @@ import Foundation
 /// excludes that day; on an event that is already all-day it includes it. The all-day writes of
 /// `create_event`, `create_events_batch` and `update_event` are therefore normalized first to (start
 /// of the start day, last day at 23:59:59), the one value that reads the same in both states and the
-/// one the tools return when they read the event back. `copy_event` and undo copy the stored dates
-/// unchanged; the device check found no widening there.
+/// one the tools return when they read the event back. Copy paths refuse the recognized
+/// skipped-midnight pairs until a copy can keep their dates. Undo still writes the stored pair.
+/// Preserving the intended days on restore remains open (#568).
 ///
 /// The rule (the exclusive boundary, the iCal `DTEND` reading): an end exactly at a midnight of a
 /// day later than the start day excludes that day; any other end includes its day; start = end is
@@ -35,6 +36,63 @@ enum AllDayRange {
         return (firstDay, lastSecond(of: lastDay, calendar: calendar))
     }
 
+    /// #546: recognize the measured iCloud and Google all-day shapes in the process zone.
+    /// iCloud starts at the first instant of the gap day and ends one second before a later
+    /// day's first instant plus the gap. Google's pair has both boundaries an hour early.
+    static func storedDays(start: Date, end: Date, eventZone: TimeZone? = nil,
+                           calendar: Calendar) -> (start: Date, end: Date) {
+        let raw = (start: start, end: end)
+        // A pair with its own zone can be a normal all-day range there even when it looks shifted
+        // in the process zone. Floating events are materialized in the process zone.
+        guard matchesProcessZone(eventZone, calendar.timeZone) else { return raw }
+        let start = Date(timeIntervalSinceReferenceDate: start.timeIntervalSinceReferenceDate.rounded(.down))
+        let end = Date(timeIntervalSinceReferenceDate: end.timeIntervalSinceReferenceDate.rounded(.down))
+        guard end > start else { return raw }
+
+        let day = calendar.startOfDay(for: start)
+        let gap = secondsAfterMidnight(day, calendar: calendar)
+        if start == day, (60...10_800).contains(gap) {
+            let boundary = end.addingTimeInterval(1 - TimeInterval(gap))
+            if boundary > day, boundary == calendar.startOfDay(for: boundary) {
+                return (day, boundary.addingTimeInterval(-1))
+            }
+        }
+
+        // Google's measured start is at 23:00 before a one-hour midnight gap.
+        let hour = 3600
+        guard secondsAfterMidnight(start, calendar: calendar) == 23 * hour else { return raw }
+        let correctedStart = start.addingTimeInterval(TimeInterval(hour))
+        let correctedEnd = end.addingTimeInterval(TimeInterval(hour))
+        let lastDay = calendar.startOfDay(for: correctedEnd)
+        guard correctedStart == calendar.startOfDay(for: correctedStart),
+              secondsAfterMidnight(correctedStart, calendar: calendar) == hour,
+              correctedEnd == lastSecond(of: lastDay, calendar: calendar) else { return raw }
+        return (correctedStart, correctedEnd)
+    }
+
+    /// #568: a copy writes the raw dates, so it can turn a recognized shifted pair into extra days.
+    static func validateCopy(start: Date?, end: Date?, isAllDay: Bool, eventZone: TimeZone?,
+                             calendar: Calendar) throws {
+        guard isAllDay, let start, let end else { return }
+        let dates = storedDays(start: start, end: end, eventZone: eventZone, calendar: calendar)
+        guard dates.start == start, dates.end == end else {
+            throw EventKitError.skippedMidnightCopyRefused
+        }
+    }
+
+    private static func secondsAfterMidnight(_ date: Date, calendar: Calendar) -> Int {
+        let time = calendar.dateComponents([.hour, .minute, .second], from: date)
+        return (time.hour ?? 0) * 3600 + (time.minute ?? 0) * 60 + (time.second ?? 0)
+    }
+
+    private static func matchesProcessZone(_ zone: TimeZone?, _ processZone: TimeZone) -> Bool {
+        guard let zone, zone != processZone else { return true }
+        // Foundation compares identifiers. IANA aliases have the same complete zone data,
+        // including historical and future transitions.
+        let data = (zone as NSTimeZone).data
+        return !data.isEmpty && data == (processZone as NSTimeZone).data
+    }
+
     /// What `update_event` writes for the dates, decided from the state the event will be in after
     /// the update (the requested `all_day`, else the stored one), not the state before it. #364 T3:
     /// the range used to be checked with the stored flag, so turning a timed event into a one-day
@@ -50,9 +108,16 @@ enum AllDayRange {
     static func planUpdate(
         storedStart: Date, storedEnd: Date, storedAllDay: Bool,
         newStart: Date?, newEnd: Date?, requestedAllDay: Bool?,
-        calendar: Calendar
+        calendar: Calendar, storedZone: TimeZone? = nil, skippedMidnightEndpoint: String? = nil
     ) throws -> UpdatePlan {
         let isAllDay = requestedAllDay ?? storedAllDay
+        if let skippedMidnightEndpoint,
+           !isAllDay || (storedAllDay && !matchesProcessZone(storedZone, calendar.timeZone)) {
+            throw FlexibleDate.invalidDate(skippedMidnightEndpoint)
+        }
+        // #546: only an all-day result inherits corrected days from a stored all-day pair.
+        let (storedStart, storedEnd) = storedAllDay && isAllDay
+            ? storedDays(start: storedStart, end: storedEnd, eventZone: storedZone, calendar: calendar) : (storedStart, storedEnd)
         // A flip of the flag in either direction re-reads the stored pair under the new state
         // (#364 verify round 2: a flag-only `all_day: false` used to skip the timed check).
         let flipsFlag = isAllDay != storedAllDay
@@ -117,7 +182,7 @@ enum AllDayRange {
         "Turning an all-day event into a timed one needs start_time and end_time for the timed event."
 
     /// Noon of the day `date` falls on: two noons are whole days apart however long the days in
-    /// between are, and noon exists on every day (DST changes happen at night).
+    /// between are. If the zone skips noon, fall back to the original instant.
     private static func noon(of date: Date, calendar: Calendar) -> Date {
         calendar.date(bySettingHour: 12, minute: 0, second: 0, of: date) ?? date
     }

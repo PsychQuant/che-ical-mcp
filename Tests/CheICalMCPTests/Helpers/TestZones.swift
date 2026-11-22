@@ -1,10 +1,21 @@
 import Foundation
+import XCTest
 
 /// #270 round 4: an event zone for the zone-behaviour tests that differs from the host's at the
 /// instant tested, so those tests discriminate on any host (with the host in America/New_York a
 /// New York event zone made a host-zone mutation pass). America/New_York, unless the host has
 /// New York's offset then; Asia/Tokyo in that case.
 enum TestZones {
+    /// The dedicated CI step sets TZ before Foundation initializes in the test process.
+    static func requireHavanaProcess(file: StaticString = #filePath, line: UInt = #line) throws {
+        let havana = "America/Havana"
+        if ProcessInfo.processInfo.environment["TZ"] == havana {
+            XCTAssertEqual(TimeZone.current.identifier, havana, file: file, line: line)
+        } else {
+            try XCTSkipUnless(TimeZone.current.identifier == havana, "Run in a Havana process to exercise the midnight gap")
+        }
+    }
+
     static func eventZone(differingFromHostAt instant: Date) -> TimeZone {
         let newYork = TimeZone(identifier: "America/New_York")!
         if newYork.secondsFromGMT(for: instant) != TimeZone.current.secondsFromGMT(for: instant) { return newYork }

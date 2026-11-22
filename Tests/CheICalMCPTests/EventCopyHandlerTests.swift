@@ -26,6 +26,7 @@ private actor CopyFake: EventCopySource {
     func eventTimeZone(identifier: String) async throws -> TimeZone? {
         if identifier == "denied" { throw EventKitError.accessDenied(type: "calendar") }
         if identifier == "lookup-failed" { throw EventKitError.eventLookupFailed(identifier: identifier) }
+        if identifier.hasPrefix("gap-series") { return TimeZone(identifier: "America/Havana") }
         return identifier.hasPrefix("ny-") ? TestZones.eventZone(differingFromHostAt: TestZones.noonUTC("2026-10-21")) : nil
     }
 
@@ -41,6 +42,20 @@ private actor CopyFake: EventCopySource {
         case "reminder-id": throw EventKitError.eventNotFound(identifier: identifier)
         case "refused": throw EventKitError.moveRefused(reason: "fixed refusal reason")
         case "refused-alarms": throw EventKitError.copyRefused(code: "eventkit_error_1", alarmKinds: ["location_alarms", "email_alarms"])
+        case "gap-series", "gap-series/RID=858124800":
+            // In-memory EKEvent normalizes on assignment. Supply the raw pair as returned by the store.
+            let start = ISO8601DateFormatter().date(from: "2028-03-12T05:00:00Z")!
+            let end = start.addingTimeInterval(86_399)
+            let havana = Calendar.gregorian(in: TimeZone(identifier: "America/Havana")!)
+            let result = try EventMoveExecutor.run(
+                .init(isRecurring: true, span: span, hasOccurrenceDate: occurrenceDate != nil, attendeeCount: 0),
+                currentIdentifier: identifier,
+                inPlace: { throw Failure.failed }, restore: {}, copy: { throw Failure.failed },
+                split: {
+                    try AllDayRange.validateCopy(start: start, end: end, isAllDay: true, eventZone: nil, calendar: havana)
+                    return ("copy-" + identifier, [])
+                })
+            return EventMoveValue(result: result, title: identifier)
         case "cross-account":
             return EventMoveValue(result: .init(method: .inPlace, eventIdentifier: "moved-" + identifier, notCarriedOver: []), title: identifier)
         case "fallback":
@@ -75,6 +90,31 @@ final class EventCopyHandlerTests: XCTestCase {
         let raw = try await server.executeToolCall(name: "move_events_batch", arguments: arguments)
         let result = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         return try XCTUnwrap(result["results"] as? [[String: Any]])
+    }
+
+    func testABatchSplitRefusesTheGapPairForEverySelectorSpelling() async throws {
+        // The fake supplies the raw EventKit pair and the split refusal. The wiring test
+        // pins the production copy call; this test checks selector parsing and row reporting.
+        let fake = CopyFake(history: CalendarUndoManager())
+        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let ids = ["gap-series", "gap-series", "gap-series/RID=858124800"]
+        let selectors = ["2028-03-12", "2028-03-12T01:00:00-04:00", "2028-03-12"]
+        let rows = try await move(server, [
+            "event_ids": .array(ids.map(Value.string)), "span": .string("this"),
+            "occurrence_dates": .array(selectors.map(Value.string))
+        ])
+        XCTAssertEqual(rows.map { $0["success"] as? Bool }, [false, false, false])
+        XCTAssertTrue(rows.allSatisfy { ($0["error"] as? String)?.contains("#568") == true })
+        XCTAssertTrue(rows.allSatisfy { ($0["error"] as? String)?.contains("The original event remains in its calendar.") == true })
+        XCTAssertTrue(rows.allSatisfy { $0["new_event_id"] == nil })
+        let calls = await fake.moveCalls
+        let expected = try XCTUnwrap(ISO8601DateFormatter().date(from: "2028-03-12T05:00:00Z"))
+        // An all-day RID encodes the civil date at UTC midnight, separately from the selector instant.
+        let civilDate = try XCTUnwrap(ISO8601DateFormatter().date(from: "2028-03-12T00:00:00Z"))
+        let occurrenceID = try XCTUnwrap(ids.last)
+        XCTAssertTrue(occurrenceID.hasSuffix("/RID=\(Int(civilDate.timeIntervalSinceReferenceDate))"))
+        XCTAssertEqual(calls.map(\.identifier), ids)
+        XCTAssertEqual(calls.map(\.occurrenceDate), Array(repeating: expected, count: 3))
     }
 
     func testInPlaceMoveKeepsTheIdentifierAndSaysSo() async throws {
