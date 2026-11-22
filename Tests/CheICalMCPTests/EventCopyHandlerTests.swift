@@ -42,7 +42,7 @@ private actor CopyFake: EventCopySource {
         case "reminder-id": throw EventKitError.eventNotFound(identifier: identifier)
         case "refused": throw EventKitError.moveRefused(reason: "fixed refusal reason")
         case "refused-alarms": throw EventKitError.copyRefused(code: "eventkit_error_1", alarmKinds: ["location_alarms", "email_alarms"])
-        case "gap-series", "gap-series/RID=858142800":
+        case "gap-series", "gap-series/RID=858124800":
             // In-memory EKEvent normalizes on assignment. Supply the raw pair as returned by the store.
             let start = ISO8601DateFormatter().date(from: "2028-03-12T05:00:00Z")!
             let end = start.addingTimeInterval(86_399)
@@ -97,7 +97,7 @@ final class EventCopyHandlerTests: XCTestCase {
         // pins the production copy call; this test checks selector parsing and row reporting.
         let fake = CopyFake(history: CalendarUndoManager())
         let server = try await CheICalMCPServer(eventCopySource: fake)
-        let ids = ["gap-series", "gap-series", "gap-series/RID=858142800"]
+        let ids = ["gap-series", "gap-series", "gap-series/RID=858124800"]
         let selectors = ["2028-03-12", "2028-03-12T01:00:00-04:00", "2028-03-12"]
         let rows = try await move(server, [
             "event_ids": .array(ids.map(Value.string)), "span": .string("this"),
@@ -109,8 +109,10 @@ final class EventCopyHandlerTests: XCTestCase {
         XCTAssertTrue(rows.allSatisfy { $0["new_event_id"] == nil })
         let calls = await fake.moveCalls
         let expected = try XCTUnwrap(ISO8601DateFormatter().date(from: "2028-03-12T05:00:00Z"))
+        // An all-day RID encodes the civil date at UTC midnight, separately from the selector instant.
+        let civilDate = try XCTUnwrap(ISO8601DateFormatter().date(from: "2028-03-12T00:00:00Z"))
         let occurrenceID = try XCTUnwrap(ids.last)
-        XCTAssertTrue(occurrenceID.hasSuffix("/RID=\(Int(expected.timeIntervalSinceReferenceDate))"))
+        XCTAssertTrue(occurrenceID.hasSuffix("/RID=\(Int(civilDate.timeIntervalSinceReferenceDate))"))
         XCTAssertEqual(calls.map(\.identifier), ids)
         XCTAssertEqual(calls.map(\.occurrenceDate), Array(repeating: expected, count: 3))
     }
