@@ -50,7 +50,7 @@ The date fields of `list_events`, `list_events_quick`, `search_events`, `check_c
 ---
 ### Requirement: An occurrence day ends at the start of the following day
 
-For a day whose midnight is skipped, the timed occurrence lookup and the candidate window SHALL end at the next civil day's first instant if it is earlier than adding one calendar day to the start. Days with an existing midnight retain the existing calendar-day addition.
+For a day whose midnight is skipped, timed occurrence-day matching SHALL use a window ending at the next civil day's first instant if it is earlier than adding one calendar day to the start. The candidate search SHALL apply that bound to the requested day in the search zone and the corresponding civil day in the host zone, then search from the earlier start to the later end. Day matching still uses the search zone's window. Days with an existing midnight retain the existing calendar-day addition.
 
 #### Scenario: The day starts at 01:00
 

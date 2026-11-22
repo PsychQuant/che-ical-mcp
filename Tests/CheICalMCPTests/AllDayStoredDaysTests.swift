@@ -271,14 +271,25 @@ final class AllDayStoredDaysTests: XCTestCase {
             XCTAssertEqual(read.start, rawStart)
             XCTAssertEqual(read.end, rawEnd)
         }
+
+        // This transition lands at 00:30. Advancing the raw 23:00 by an hour
+        // lands at 01:00, which is already half an hour into the day.
+        let toronto = try XCTUnwrap(TimeZone(identifier: "America/Toronto"))
+        let iso = ISO8601DateFormatter()
+        let rawStartToronto = try XCTUnwrap(iso.date(from: "1919-03-31T04:00:00Z"))
+        let rawEndToronto = try XCTUnwrap(iso.date(from: "1919-04-01T02:59:59Z"))
+        let torontoRead = stored(rawStartToronto, rawEndToronto, toronto)
+        XCTAssertEqual(torontoRead.start, rawStartToronto)
+        XCTAssertEqual(torontoRead.end, rawEndToronto)
     }
 
     func testAFirstInstantWithAnUnrecognizedEndIsReturnedUnchanged() throws {
         let (zone, start, next) = try gapDay()
-        let rawEnd = next.addingTimeInterval(-3600)
-        let read = stored(start, rawEnd, zone)
-        XCTAssertEqual(read.start, start)
-        XCTAssertEqual(read.end, rawEnd)
+        for rawEnd in [start.addingTimeInterval(3599), next.addingTimeInterval(-3600)] {
+            let read = stored(start, rawEnd, zone)
+            XCTAssertEqual(read.start, start)
+            XCTAssertEqual(read.end, rawEnd)
+        }
     }
 
     func testAGoogleStartWithAnUnrecognizedEndIsReturnedUnchanged() throws {
@@ -380,6 +391,103 @@ final class AllDayStoredDaysTests: XCTestCase {
             XCTAssertEqual(plan.start, start, identifier)
             XCTAssertEqual(plan.end, end, identifier)
         }
+    }
+
+    func testACanonicalApiaPairAcrossASkippedDateKeepsItsDatesAndAllowsACopy() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "Pacific/Apia"))
+        let calendar = Calendar.gregorian(in: zone)
+        let iso = ISO8601DateFormatter()
+        let start = try XCTUnwrap(iso.date(from: "2010-09-26T11:00:00Z"))
+        let end = try XCTUnwrap(iso.date(from: "2012-04-10T10:59:59Z"))
+
+        let read = stored(start, end, zone)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, end)
+        XCTAssertNoThrow(try AllDayRange.validateCopy(
+            start: start, end: end, isAllDay: true, eventZone: nil, calendar: calendar))
+    }
+
+    func testAGooglePairAcrossASkippedApiaDateIsCorrectedAndRefusesACopy() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "Pacific/Apia"))
+        let calendar = Calendar.gregorian(in: zone)
+        let iso = ISO8601DateFormatter()
+        let start = try XCTUnwrap(iso.date(from: "2010-09-26T11:00:00Z"))
+        let end = try XCTUnwrap(iso.date(from: "2012-04-10T10:59:59Z"))
+        let rawStart = start.addingTimeInterval(-3600)
+        let rawEnd = end.addingTimeInterval(-3600)
+
+        let read = stored(rawStart, rawEnd, zone)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, end)
+        XCTAssertThrowsError(try AllDayRange.validateCopy(
+            start: rawStart, end: rawEnd, isAllDay: true, eventZone: nil, calendar: calendar)) {
+            guard case EventKitError.skippedMidnightCopyRefused = $0 else { return XCTFail("Unexpected error: \($0)") }
+        }
+    }
+
+    func testAnICloudPairAcrossTheHavanaFallBackIsCorrectedAndRefusesACopy() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
+        let calendar = Calendar.gregorian(in: zone)
+        let iso = ISO8601DateFormatter()
+        let start = try XCTUnwrap(iso.date(from: "2028-03-12T05:00:00Z"))
+        let rawEnd = try XCTUnwrap(iso.date(from: "2028-11-07T05:59:59Z"))
+        let end = try XCTUnwrap(iso.date(from: "2028-11-07T04:59:59Z"))
+
+        let read = stored(start, rawEnd, zone)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, end)
+        XCTAssertThrowsError(try AllDayRange.validateCopy(
+            start: start, end: rawEnd, isAllDay: true, eventZone: nil, calendar: calendar)) {
+            guard case EventKitError.skippedMidnightCopyRefused = $0 else { return XCTFail("Unexpected error: \($0)") }
+        }
+    }
+
+    func testABogotaAllDayEventRefusesAHavanaSkippedMidnightStartOnlyUpdate() throws {
+        let havana = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
+        let bogota = try XCTUnwrap(TimeZone(identifier: "America/Bogota"))
+        let iso = ISO8601DateFormatter()
+        let start = try XCTUnwrap(iso.date(from: "2028-03-12T05:00:00Z"))
+        let end = try XCTUnwrap(iso.date(from: "2028-03-13T04:59:59Z"))
+        let newStart = try FlexibleDate.parse(
+            "2028-03-12", defaultTimezone: havana, iso: iso, allowSkippedMidnight: true)
+        XCTAssertEqual(newStart, start)
+        XCTAssertThrowsError(try AllDayRange.planUpdate(
+            storedStart: start, storedEnd: end, storedAllDay: true,
+            newStart: newStart, newEnd: nil, requestedAllDay: nil, calendar: .gregorian(in: havana),
+            storedZone: bogota, skippedMidnightEndpoint: "2028-03-12")) {
+            XCTAssertEqual($0.localizedDescription, FlexibleDate.invalidDate("2028-03-12").localizedDescription)
+        }
+
+        let converted = try AllDayRange.planUpdate(
+            storedStart: start, storedEnd: end, storedAllDay: false,
+            newStart: newStart, newEnd: nil, requestedAllDay: true, calendar: .gregorian(in: havana),
+            storedZone: bogota, skippedMidnightEndpoint: "2028-03-12")
+        XCTAssertEqual(converted.datesToWrite?.start, start)
+    }
+
+    func testTheCubaAliasAllowsCorrectionAndRefusesACopyInHavana() throws {
+        let havana = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
+        let cuba = try XCTUnwrap(TimeZone(identifier: "Cuba"))
+        let calendar = Calendar.gregorian(in: havana)
+        let iso = ISO8601DateFormatter()
+        let start = try XCTUnwrap(iso.date(from: "2028-03-12T05:00:00Z"))
+        let rawEnd = try XCTUnwrap(iso.date(from: "2028-03-13T04:59:59Z"))
+        let end = try XCTUnwrap(iso.date(from: "2028-03-13T03:59:59Z"))
+
+        let read = AllDayRange.storedDays(start: start, end: rawEnd, eventZone: cuba, calendar: calendar)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, end)
+        XCTAssertThrowsError(try AllDayRange.validateCopy(
+            start: start, end: rawEnd, isAllDay: true, eventZone: cuba, calendar: calendar)) {
+            guard case EventKitError.skippedMidnightCopyRefused = $0 else { return XCTFail("Unexpected error: \($0)") }
+        }
+
+        let plan = try AllDayRange.planUpdate(
+            storedStart: start, storedEnd: rawEnd, storedAllDay: true,
+            newStart: start, newEnd: nil, requestedAllDay: nil, calendar: calendar,
+            storedZone: cuba, skippedMidnightEndpoint: "2028-03-12")
+        XCTAssertEqual(plan.datesToWrite?.start, start)
+        XCTAssertEqual(plan.datesToWrite?.end, end)
     }
 
     func testFractionalICloudAndGooglePairsAreRecognizedAtWholeSeconds() throws {

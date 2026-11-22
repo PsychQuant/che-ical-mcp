@@ -47,10 +47,15 @@ final class SkippedMidnightWiringTests: XCTestCase {
 
         let move = try XCTUnwrap(SourcePins.body(of: "func moveEvent(", in: source))
         let selected = try XCTUnwrap(move.range(of: "subject = occurrence"))
-        let checkedMove = try XCTUnwrap(move.range(of: "let copy = try Self.makeCopy(of: subject,"))
-        let savedMove = try XCTUnwrap(move.range(of: "try self.eventStore.save(copy,"))
-        let removed = try XCTUnwrap(move.range(of: "try self.eventStore.remove(subject,"))
-        XCTAssertLessThan(selected.lowerBound, checkedMove.lowerBound)
+        let copyOutDeclaration = "let copyOut: (_ isSplit: Bool) throws -> EventMoveExecutor.Copied = {"
+        let closure = try XCTUnwrap(SourcePins.body(of: copyOutDeclaration, in: move))
+        let copyOut = try XCTUnwrap(move.range(of: copyOutDeclaration))
+        XCTAssertLessThan(selected.lowerBound, copyOut.lowerBound)
+        let checkedMove = try XCTUnwrap(SourcePins.ranges(
+            ofPattern: #"let copy = try Self\.makeCopy\(of: subject,\s*alarms: planned\.alarms,\s*in: targetCalendar,\s*store: self\.eventStore\)"#,
+            in: closure).first)
+        let savedMove = try XCTUnwrap(closure.range(of: "try self.eventStore.save(copy,"))
+        let removed = try XCTUnwrap(closure.range(of: "try self.eventStore.remove(subject,"))
         XCTAssertLessThan(checkedMove.lowerBound, savedMove.lowerBound)
         XCTAssertLessThan(savedMove.lowerBound, removed.lowerBound)
         XCTAssertTrue(move.contains("copy: { try copyOut(false) },"))

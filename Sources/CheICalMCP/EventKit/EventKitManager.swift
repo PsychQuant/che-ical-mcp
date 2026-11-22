@@ -4207,7 +4207,7 @@ enum EventKitError: LocalizedError {
         case .calendarNotEmpty(let reason):
             return reason
         case .skippedMidnightCopyRefused:
-            return "Copy refused because these stored all-day dates can widen the event (#568). See https://github.com/PsychQuant/che-ical-mcp/issues/568"
+            return "Copy refused because these stored all-day dates can widen the event (#568). The original event remains in its calendar. See https://github.com/PsychQuant/che-ical-mcp/issues/568"
         case .copyRefused(let code, let alarmKinds):
             return "Saving the copy failed (\(code)); the original event was not removed. The copy carries \(alarmKinds.joined(separator: ", ")), which some calendars refuse, so they are one possible cause."
         case .undoListMissing(let reminder, let hasIdentifier, let kind):

@@ -30,6 +30,11 @@ final class OccurrenceDayTests: XCTestCase {
             let candidate = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: requested, in: requestedZone, host: zone))
             XCTAssertEqual(candidate.end, nextMidnight, requestedZone.identifier)
         }
+
+        let losAngeles = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        let candidate = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: requested, in: zone, host: losAngeles))
+        XCTAssertEqual(candidate.end, iso.date(from: "2028-03-13T07:00:00Z"))
+        XCTAssertLessThan(nextHalfHour, candidate.end)
     }
 
     func testADayWithMidnightKeepsThePreviousWindowOnHistoricalTransitions() throws {

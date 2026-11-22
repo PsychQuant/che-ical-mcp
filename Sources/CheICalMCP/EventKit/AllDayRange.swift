@@ -8,7 +8,8 @@ import Foundation
 /// `create_event`, `create_events_batch` and `update_event` are therefore normalized first to (start
 /// of the start day, last day at 23:59:59), the one value that reads the same in both states and the
 /// one the tools return when they read the event back. Copy paths refuse the recognized
-/// skipped-midnight pairs until a copy can keep their dates (#568). Undo restores the stored dates.
+/// skipped-midnight pairs until a copy can keep their dates. Undo still writes the stored pair.
+/// Preserving the intended days on restore remains open (#568).
 ///
 /// The rule (the exclusive boundary, the iCal `DTEND` reading): an end exactly at a midnight of a
 /// day later than the start day excludes that day; any other end includes its day; start = end is
@@ -36,40 +37,37 @@ enum AllDayRange {
     }
 
     /// #546: recognize the measured iCloud and Google all-day shapes in the process zone.
-    /// iCloud starts at the first instant of the day and includes an exact multiple of 24 hours.
-    /// Google's Havana pair has both boundaries an hour early. Leave unrecognized pairs intact.
+    /// iCloud starts at the first instant of the gap day and ends one second before a later
+    /// day's first instant plus the gap. Google's pair has both boundaries an hour early.
     static func storedDays(start: Date, end: Date, eventZone: TimeZone? = nil,
                            calendar: Calendar) -> (start: Date, end: Date) {
         let raw = (start: start, end: end)
         // A pair with its own zone can be a normal all-day range there even when it looks shifted
         // in the process zone. Floating events are materialized in the process zone.
-        guard eventZone == nil || eventZone == calendar.timeZone else { return raw }
+        guard matchesProcessZone(eventZone, calendar.timeZone) else { return raw }
         let start = Date(timeIntervalSinceReferenceDate: start.timeIntervalSinceReferenceDate.rounded(.down))
         let end = Date(timeIntervalSinceReferenceDate: end.timeIntervalSinceReferenceDate.rounded(.down))
         guard end > start else { return raw }
 
         let day = calendar.startOfDay(for: start)
-        let inclusiveLength = end.timeIntervalSince(start) + 1
-        if start == day, (60...10_800).contains(secondsAfterMidnight(day, calendar: calendar)),
-           inclusiveLength.truncatingRemainder(dividingBy: 86_400) == 0,
-           let days = Int(exactly: inclusiveLength / 86_400),
-           let lastDay = calendar.date(byAdding: .day, value: days - 1, to: day) {
-            let correctedEnd = lastSecond(of: lastDay, calendar: calendar)
-            return correctedEnd == end ? raw : (day, correctedEnd)
+        let gap = secondsAfterMidnight(day, calendar: calendar)
+        if start == day, (60...10_800).contains(gap) {
+            let boundary = end.addingTimeInterval(1 - TimeInterval(gap))
+            if boundary > day, boundary == calendar.startOfDay(for: boundary) {
+                return (day, boundary.addingTimeInterval(-1))
+            }
         }
 
-        // The Google measurement is specific to an hour skipped at midnight. Checking the wall
-        // time and the offset from the next start keeps other late-evening starts as returned.
-        guard secondsAfterMidnight(start, calendar: calendar) == 23 * 3600,
-              let tomorrow = calendar.date(byAdding: .day, value: 1, to: day) else { return raw }
-        let firstDay = calendar.startOfDay(for: tomorrow)
-        guard secondsAfterMidnight(firstDay, calendar: calendar) == 3600,
-              firstDay.timeIntervalSince(start) == 3600,
-              let days = Int(exactly: (inclusiveLength / 86_400).rounded()), days > 0,
-              let lastDay = calendar.date(byAdding: .day, value: days - 1, to: firstDay) else { return raw }
-        let correctedEnd = lastSecond(of: lastDay, calendar: calendar)
-        guard correctedEnd.timeIntervalSince(end) == 3600 else { return raw }
-        return (firstDay, correctedEnd)
+        // Google's measured start is at 23:00 before a one-hour midnight gap.
+        let hour = 3600
+        guard secondsAfterMidnight(start, calendar: calendar) == 23 * hour else { return raw }
+        let correctedStart = start.addingTimeInterval(TimeInterval(hour))
+        let correctedEnd = end.addingTimeInterval(TimeInterval(hour))
+        let lastDay = calendar.startOfDay(for: correctedEnd)
+        guard correctedStart == calendar.startOfDay(for: correctedStart),
+              secondsAfterMidnight(correctedStart, calendar: calendar) == hour,
+              correctedEnd == lastSecond(of: lastDay, calendar: calendar) else { return raw }
+        return (correctedStart, correctedEnd)
     }
 
     /// #568: a copy writes the raw dates, so it can turn a recognized shifted pair into extra days.
@@ -85,6 +83,14 @@ enum AllDayRange {
     private static func secondsAfterMidnight(_ date: Date, calendar: Calendar) -> Int {
         let time = calendar.dateComponents([.hour, .minute, .second], from: date)
         return (time.hour ?? 0) * 3600 + (time.minute ?? 0) * 60 + (time.second ?? 0)
+    }
+
+    private static func matchesProcessZone(_ zone: TimeZone?, _ processZone: TimeZone) -> Bool {
+        guard let zone, zone != processZone else { return true }
+        // Foundation compares identifiers. IANA aliases have the same complete zone data,
+        // including historical and future transitions.
+        let data = (zone as NSTimeZone).data
+        return !data.isEmpty && data == (processZone as NSTimeZone).data
     }
 
     /// What `update_event` writes for the dates, decided from the state the event will be in after
@@ -105,7 +111,8 @@ enum AllDayRange {
         calendar: Calendar, storedZone: TimeZone? = nil, skippedMidnightEndpoint: String? = nil
     ) throws -> UpdatePlan {
         let isAllDay = requestedAllDay ?? storedAllDay
-        if let skippedMidnightEndpoint, !isAllDay {
+        if let skippedMidnightEndpoint,
+           !isAllDay || (storedAllDay && !matchesProcessZone(storedZone, calendar.timeZone)) {
             throw FlexibleDate.invalidDate(skippedMidnightEndpoint)
         }
         // #546: only an all-day result inherits corrected days from a stored all-day pair.

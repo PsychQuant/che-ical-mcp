@@ -338,13 +338,20 @@ final class ManifestParityTests: XCTestCase {
             "delete_events_batch": "Dry-run rows correct recognized all-day pairs for events with no time zone or with the process time zone. Selection and deletion use the stored dates. The corrected dates in a row can fall outside the searched range.",
             "create_event": "An all-day start_time or end_time given as YYYY-MM-DD uses the first instant of that day if the server process time zone skips its midnight.",
             "create_events_batch": "Each all-day item's date-only endpoints can use the first instant of a day whose midnight the server process time zone skips. Similar-event hints show stored dates.",
-            "update_event": "A date-only endpoint can use the first instant of a day whose midnight the server process time zone skips when the resulting event is all-day. An event that stays all-day uses the corrected pair for planning when it is floating or its zone matches the process zone. occurrence_start shows the stored start of the matched occurrence."
+            "update_event": "A date-only endpoint can use the first instant of a day whose midnight the server process time zone skips when the resulting event is all-day. An existing all-day event in another time zone refuses endpoints that need this fallback. An event that stays all-day uses the corrected pair for planning when it is floating or its zone matches the process zone, including equivalent aliases. occurrence_start shows the stored start of the matched occurrence."
         ]
         for (name, phrase) in phrases {
             let tool = try descriptions(of: name)
             XCTAssertEqual(tool.declared.components(separatedBy: phrase).count, 2, "defineTools() \(name)")
             XCTAssertEqual(tool.summary.components(separatedBy: phrase).count, 2, "mcpb/manifest.json \(name)")
         }
+    }
+
+    func testManifestEndsTheUndoSentenceBeforeTheAllDayCopyRefusal() throws {
+        let copy = try descriptions(of: "copy_event")
+        XCTAssertTrue(copy.summary.contains("unless the copy was changed since then. Copy refuses recognized"))
+        let move = try descriptions(of: "move_events_batch")
+        XCTAssertTrue(move.summary.contains("recorded for undo. A split or fallback copy refuses recognized"))
     }
 
     /// #240: the three event read tools name `alarms` and its sign, in defineTools() and in the
