@@ -198,6 +198,8 @@ When no edited occurrence starts on the day, the answer is not found as before, 
 
 **All-day dates with an offset (#372):** all-day dates are whole days read in this Mac's time zone. A `start_time` or `end_time` written with another offset is converted first and can land on another day (`2027-04-11T23:59:59+07:00` on a `+08:00` Mac is 04-12, so the event gets one more day). The event is still saved that way; `create_event`, each `create_events_batch` result and `update_event` (when the event is all-day after the call, for the dates it gave) add a `warnings` list whose entries name the `field`, its day in the written offset (`written_day`), the day in this Mac's zone the request's dates are written with (`host_day`; a skipped duplicate writes nothing, and its message says the existing event was not changed) and a `message`. The comparison is on the days, so an offset whose day agrees, or a value without an offset, gives no warning. Send all-day dates without an offset.
 
+**All-day dates on a day without a midnight (#546):** in a time zone that moves its clock from 23:59:59 straight to 01:00 (`America/Havana` on 2028-03-12), a date-only value names that day from 01:00, and the event reads from `T01:00:00` to `T23:59:59` of that day. Measured on iCloud with the server's zone set by `TZ=`. A timed event that spans the skipped hour in its own zone is saved an hour short by the store (#566), and `copy_event` of an all-day event on such a day gives two days (#568).
+
 **Alarms on a Google calendar (#317):** measured on a calendar hosted by Google. About a minute after the save, an absolute alarm reads back as a relative alarm at the same time, and a location alarm that `copy_event`, or the undo of `delete_event` on a one-off event, writes becomes a plain alarm at the event's start; the response cannot see either. Relative alarms were kept on every path, including `alarms_minutes_offsets` written by `update_event` on a one-off event. Google never listed an email alarm, on any event measured, nor the location alarm of the event that was not copied, though this Mac still reads both; reading an event back shows this Mac's view only, so it cannot show what Google holds. The absolute-alarm change and the email alarm held for an event this server did not write too. Not measured: Exchange and other accounts, `copy_event` with `delete_original`, the fallback copy and cross-account move of `move_events_batch`, `create_events_batch`, the undo of a series, an occurrence or a batch, sound alarms.
 
 </details>
@@ -376,7 +378,7 @@ All date parameters now accept 4 formats:
 |--------|---------|----------------|
 | Full ISO8601 | `"2026-02-06T14:00:00+08:00"` | Exact date and time (offset preserved) |
 | Without timezone | `"2026-02-06T14:00:00"` | Uses event `timezone` if provided, otherwise system timezone |
-| Date only | `"2026-02-06"` | Midnight in event `timezone` or system timezone; for a reminder `due_date`, a date-only reminder with no time (#267, see "Date-only reminders") |
+| Date only | `"2026-02-06"` | Midnight in event `timezone` or system timezone (on a day whose midnight that zone skips, its first instant, #546); for a reminder `due_date`, a date-only reminder with no time (#267, see "Date-only reminders") |
 | Time only | `"14:00"` | Today at that time |
 
 ### Per-Event Timezone (v1.5.0)
