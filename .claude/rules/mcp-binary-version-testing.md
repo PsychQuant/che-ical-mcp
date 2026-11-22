@@ -1364,8 +1364,16 @@ session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的
 - 五個主機時區（UTC−11 到 UTC+14）；
 - 格子表（`OccurrenceDateMatchCellTests`）：主機 × 系列 × 場次形狀 × 系列讀不讀得到，每一格都和 `main` 的檢查比對。
 
-`occurrenceDateAnswer` 只讀場次資料，接線由 `OccurrenceDateMatchWiringTests` 釘選。00:00 UTC 的 `/RID=` 可能是浮動日期或瞬間；
-現在的全天旗標無法確定原本的寫法。兩種讀法給出同一天才接受原日。拒絕訊息會指向場次顯示的開始日，或省略 `occurrence_date`。
+`occurrenceDateAnswer` 只讀場次資料，接線由 `OccurrenceDateMatchWiringTests` 驗證。現有全天旗標無法確定 00:00 UTC 的
+`/RID=` 如何編碼。比對先檢查開始日。若開始日檢查未通過，UTC 曆日與既有瞬間讀法都符合才接受原日，只有一種符合時以原日無法確定為由拒絕。
+拒絕訊息會列出比對所用的開始日期（全天用主機時區，計時用場次時區，沒有時區則用主機時區），也可省略 `occurrence_date`。
+
+議題 #543 維持開啟，追蹤下列情況：
+
+- UTC 以西的移動後全天場次，原日仍被拒絕，理由改為原日無法確定。
+- 原本只通過瞬間檢查的 00:00 UTC 原日，在開始日檢查也未通過時新增拒絕。例如單獨移動從 19:00 EST、20:00 EDT 或 16:00 PST 開始的計時場次，
+  或傳入等於 recurrence ID 的明確瞬間、該瞬間在請求時區落在不同於 UTC 的曆日。
+- 從 main 繼承的錯日接受包括帶時區的全天場次在主機曆日通過午夜檢查，以及全天開始瞬間相等時跨時區接受另一個曆日。
 
 下列裝置格中，被拒絕的呼叫什麼都不寫。接受的 `update_event` 探測只寫 `notes`；接受的 `delete_event` 探測會刪掉識別碼指的那一場。這些都是 stateless 的，所以用 `--cli` 做（見上表），不用 AppleScript、不用 session MCP，而且只在名稱含 `#543` 的拋棄式日曆上做。
 
@@ -1375,8 +1383,9 @@ session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的
 
 場次自己的識別碼：移動之後，在拋棄式日曆上用 `list_events` 讀出那一場的 `id`（形如 `<series id>/RID=…`）。
 
-2026-11-22 以 Developer ID 簽章的 release build，在 iCloud 上量過第 1 到 3 步（`d33e0988`）和第 4 步（`15c6cca5`）。
-下列步驟以目前的預期結果為準。第 1、2 步的 UTC 以西原日已改成拒絕。既有量測及目前的裝置驗證範圍見 PR #565。
+2026-11-22 的 iCloud 量測使用 Developer ID 簽章的 release build。第 1 步為 A，第 2 步為 C，第 3 步為 B，均使用
+`d33e0988`。A 另有 `041a5b5f` 的舊版對照。第 4 步為 D，使用 `15c6cca5`。
+下列步驟列的是目前預期。第 1、2 步最後規則在 UTC 以西的拒絕結果只經單元測試驗證，尚無裝置量測。
 
 1. 全天每週 ×3 的系列（2026-12-21 起）：
    - setup：`update_event` span `this`、`occurrence_date` 2026-12-28、`all_day: true`、`start_time`／`end_time` 2026-12-30，把那一場單獨移到 12-30。讀回的 `/RID=` 是 2026-12-28 00:00 UTC。
@@ -1394,15 +1403,21 @@ session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的
    - 主機時區下 12-28 `updated`，12-27 被拒絕。
    - 那一場落在 12-29 到 12-30 兩天，不是要求的 12-30 一天。這另開了 #564，不在這裡處理，所以這一列的 12-30 被拒絕。
 4. 全天每週 ×3 的系列，setup 用 `update_event` span `this`、`occurrence_date` 2026-12-28、`all_day: false`、`start_time` 2026-12-30T10:00:00-08:00、`end_time` 11:00、`timezone` `America/Los_Angeles`，把那一場單獨改成計時，並用 `list_events` 讀回它的 `timezone`。之後經它自己的識別碼、span `this`、帶 `notes`：
-   - 讀回的時區是 America/Los_Angeles 時，預期 `TZ=America/Los_Angeles` 與主機時區下都一樣：12-28 與 12-27 都以 round 1 的新理由被拒絕（含 `It may be its original day`），而它開始的那天 `updated`。比對是在場次的時區裡做的，所以結果不隨 process 時區改變。
-   - 讀回的時區不是 America/Los_Angeles，或 setup 被拒絕時，記下讀回的值與回應，這一步不算數。
-   - 這一步驗證場次改成計時且保留 00:00 UTC 尾碼後，拒絕結果依場次時區比對。
-   - 2026-11-22 在 iCloud 上用 fix round 1 的 release build `15c6cca5`（Developer ID 簽章）做過一次，結果和預期相同：
-     - 讀回 `/RID=` 2026-12-28 00:00 UTC，`timezone` America/Los_Angeles。
-     - 開始時間是 2026-12-30 18:00 America/Los_Angeles，不是要求的 10:00，晚了 8 小時，也就是主機的 offset。這另開了 #570，不在這裡處理。
-     - `TZ=America/Los_Angeles` 下：12-28、12-27 以新理由被拒絕；12-29 以 #416 原本的理由被拒絕；12-30 `updated`。
-     - 主機時區下：12-28、12-27 以新理由被拒絕。
-     - 讀回時，只有 12-30 那次寫入了 `notes`。
+   - 讀回的時區須為 America/Los_Angeles。若讀到其他時區或 setup 被拒絕，記下值及回應，這一步不算數。
+   - 各程序時區分別呼叫三次，前兩次預期以原日無法確定為由拒絕，並列出實際讀回的開始日期，第三次預期 `updated`。比對使用場次的時區，因此預期結果相同。
+   - 2026-11-22 的 D 格讀回 `/RID=` 為 2026-12-28 00:00 UTC、時區為 America/Los_Angeles，開始時間為 2026-12-30 18:00。
+     要求的時間是 10:00，兩者相差 8 小時，另由 #570 追蹤。下表的開始日採用該次讀回的 12-30。
+
+     | 程序時區 | `occurrence_date` | 目前預期 | `15c6cca5` 歷史紀錄 |
+     |---|---|---|---|
+     | America/Los_Angeles | 12-27 | 原日無法確定，拒絕並給開始日期 | 拒絕，原日無法確定 |
+     | America/Los_Angeles | 12-28 | 原日無法確定，拒絕並給開始日期 | 拒絕，原日無法確定 |
+     | America/Los_Angeles | 開始日（12-30） | `updated` | `updated` |
+     | Asia/Taipei（主機） | 12-27 | 原日無法確定，拒絕並給開始日期 | 拒絕，原日無法確定 |
+     | Asia/Taipei（主機） | 12-28 | 原日無法確定，拒絕並給開始日期 | 拒絕，原日無法確定 |
+     | Asia/Taipei（主機） | 開始日（12-30） | `updated` | 未記錄 |
+
+   - 歷史量測另在 America/Los_Angeles 傳入 12-29，以 #416 原本的理由拒絕。讀回時只有 12-30 那次寫入 `notes`。
 
 **出版前**：用出版的 binary 重做下列各列（對照組不必重做）：
 - 第 1 步的六列：`TZ=America/Los_Angeles` 四列，主機時區兩列；
@@ -1415,7 +1430,8 @@ session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的
 - 系統時區本身在 UTC 以西的 Mac：`TZ` 只移動 server process；
 - iCloud 以外的來源；
 - `/RID=` 只在外部識別碼上的場次；
-- 帶時區的全天場次；
+- 帶時區的全天場次與跨曆日的全天瞬間相等案例；
+- 移動後仍為計時的 00:00 UTC 時段及等於 recurrence ID 的明確瞬間請求；
 - 場次單獨修改之後系列才在全天與計時之間轉換，以及轉換時 store 會不會重寫 `/RID=`。
 
 結束後依 id 刪掉這次建立的拋棄式日曆，再隔一分鐘以上分兩次確認已記錄的 id 都找不到。只查這次建立的 id。

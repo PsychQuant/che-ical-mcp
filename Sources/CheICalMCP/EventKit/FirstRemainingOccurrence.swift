@@ -424,7 +424,10 @@ extension EventKitManager {
     /// The refusal of an `occurrence_date` that `occurrenceDateMatches` did not take, read again for
     /// its reason (fix round 1). This comparison issues no series lookup.
     func occurrenceDateRefusal(_ date: Date?, occurrence: EKEvent, id: String) -> String {
-        DetachedOccurrenceSpan.occurrenceDateReason(for: occurrenceDateAnswer(date, occurrence: occurrence, id: id))
+        DetachedOccurrenceSpan.occurrenceDateReason(
+            for: occurrenceDateAnswer(date, occurrence: occurrence, id: id),
+            start: occurrence.startDate, startIsAllDay: occurrence.isAllDay,
+            zone: Self.occurrenceZone(of: occurrence), host: .current)
     }
 
     /// The earliest remaining occurrence of the series `stale` (a series object whose `refresh()`

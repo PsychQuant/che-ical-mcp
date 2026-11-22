@@ -133,27 +133,54 @@ final class OccurrenceDateMatchTests: XCTestCase {
         XCTAssertEqual(answer(30), .matches, "the day it shows")
     }
 
-    /// X3: a host that skipped the day (Pacific/Apia went from 2011-12-29 to 2011-12-31). The floating
-    /// date is compared with the requested civil date directly, so the 30th, asked in another zone,
-    /// is found, and the 31st is not taken for it.
+    // spec-example: occurrence-date-own-identifier / A host that skipped the day
+    /// Apia skipped December 30. The all-day comparison needs instant equality for that date.
+    /// The timed comparison in UTC can agree on the civil day without instant equality.
     func testAFloatingDateIsFoundOnADayTheHostSkipped() {
         let host = TimeZone(identifier: "Pacific/Apia")!
         let rid = Self.day(2011, 12, 30, in: Self.utc)
         // An all-day occurrence with a zone of its own (V14), moved to 2012-01-02.
-        func allDay(_ requestedDay: Int) -> OccurrenceDateMatch.Answer {
-            Self.answer(Self.day(2011, 12, requestedDay, in: Self.utc), start: Self.day(2012, 1, 2, in: host), startIsAllDay: true,
+        func allDay(_ requestedDay: Int, hour: Int = 0) -> OccurrenceDateMatch.Answer {
+            Self.answer(Self.day(2011, 12, requestedDay, hour: hour, in: Self.utc), start: Self.day(2012, 1, 2, in: host), startIsAllDay: true,
                         zone: Self.utc, rid: rid, host: host)
         }
         XCTAssertEqual(allDay(29), .undetermined)
-        XCTAssertEqual(allDay(30), .matches)
+        XCTAssertEqual(allDay(30), .matches, "the request equals the recurrence instant")
+        XCTAssertEqual(allDay(30, hour: 9), .undetermined, "the instant's Apia day was the 29th")
         XCTAssertEqual(allDay(31), .differs)
         // Made timed in UTC on its own: both readings give the 30th there.
         func timed(_ requestedDay: Int) -> OccurrenceDateMatch.Answer {
-            Self.answer(Self.day(2011, 12, requestedDay, in: Self.utc), start: Self.day(2012, 1, 2, hour: 10, in: Self.utc),
+            Self.answer(Self.day(2011, 12, requestedDay, hour: 9, in: Self.utc), start: Self.day(2012, 1, 2, hour: 10, in: Self.utc),
                         startIsAllDay: false, zone: Self.utc, rid: rid, host: host)
         }
         XCTAssertEqual(timed(30), .matches)
         XCTAssertEqual(timed(31), .differs)
+    }
+
+    // spec-example: occurrence-date-own-identifier / A moved timed occurrence with wall-clock digits at midnight
+    func testAMovedFloatingTimedOccurrenceRefusesBothMidnightCandidates() {
+        let host = Self.losAngeles
+        let rid = Self.day(2026, 12, 28, in: Self.utc)
+        let start = Self.day(2026, 12, 30, hour: 10, in: host)
+        for requestedDay in [27, 28] {
+            let answer = Self.answer(Self.day(2026, 12, requestedDay, in: host), start: start,
+                                     startIsAllDay: false, zone: nil, rid: rid, host: host)
+            XCTAssertEqual(answer, .undetermined, "candidate 2026-12-\(requestedDay)")
+            let reason = DetachedOccurrenceSpan.occurrenceDateReason(
+                for: answer, start: start, startIsAllDay: false, zone: nil, host: host)
+            XCTAssertTrue(reason.contains("The recurrence ID does not establish its original day here."), reason)
+        }
+    }
+
+    func testTheShownDayTakesPrecedenceWhenTheOriginalDayIsUndetermined() {
+        let host = Self.losAngeles
+        let rid = Self.day(2026, 12, 28, in: Self.utc)
+        for shownDay in [27, 28] {
+            let requested = Self.day(2026, 12, shownDay, hour: 9, in: host)
+            let start = Self.day(2026, 12, shownDay, in: host)
+            XCTAssertEqual(Self.answer(requested, start: start, startIsAllDay: true, zone: nil, rid: rid, host: host),
+                           .matches, "shown day 2026-12-\(shownDay)")
+        }
     }
 
     /// A timed occurrence of a timed series, as on `main`: the /RID= is the slot's instant.
@@ -195,15 +222,43 @@ final class OccurrenceDateMatchTests: XCTestCase {
     /// The refusal of an undetermined date says why and how to name the occurrence; a date that is
     /// not the occurrence keeps the reason of #416.
     func testTheRefusalOfAnUndeterminedDateNamesTheShownDay() {
-        let reason = DetachedOccurrenceSpan.occurrenceDateReason(for: .undetermined)
-        XCTAssertEqual(reason, DetachedOccurrenceSpan.occurrenceDateUndeterminedReason)
-        XCTAssertTrue(reason.contains("occurrence_date is not the day it starts on. It may be its original day"), reason)
-        XCTAssertTrue(reason.contains("is a date or an instant depending on whether the series was all-day when the occurrence was first edited"), reason)
-        XCTAssertTrue(reason.contains("midnight UTC can represent either reading"), reason)
-        XCTAssertTrue(reason.contains("pass the day it starts on (as list_events shows it) as occurrence_date, or leave occurrence_date out"), reason)
+        let start = Self.day(2026, 12, 30, in: Self.losAngeles)
+        let answer = Self.answer(Self.day(2026, 12, 28, in: Self.losAngeles), start: start,
+                                 startIsAllDay: true, zone: nil, rid: nil,
+                                 externalRID: Self.day(2026, 12, 28, in: Self.utc), host: Self.losAngeles)
+        let reason = DetachedOccurrenceSpan.occurrenceDateReason(
+            for: answer, start: start, startIsAllDay: true, zone: nil, host: Self.losAngeles)
+        XCTAssertTrue(reason.contains("The recurrence ID does not establish its original day here."), reason)
+        XCTAssertFalse(reason.contains("/RID="), reason)
+        XCTAssertFalse(reason.contains("is a date or an instant"), reason)
+        XCTAssertTrue(reason.contains("Pass 2026-12-30 as occurrence_date"), reason)
+        XCTAssertTrue(reason.contains("or leave occurrence_date out"), reason)
+        XCTAssertFalse(reason.contains("as list_events shows it"), reason)
         XCTAssertTrue(reason.hasSuffix("Nothing was changed."), reason)
-        XCTAssertFalse(reason.contains("series' identifier"), "that route does not reach an edited occurrence (#532)")
-        XCTAssertEqual(DetachedOccurrenceSpan.occurrenceDateReason(for: .differs), DetachedOccurrenceSpan.occurrenceDateReason)
-        XCTAssertEqual(DetachedOccurrenceSpan.occurrenceDateReason(for: .matches), DetachedOccurrenceSpan.occurrenceDateReason)
+        XCTAssertFalse(reason.contains("series' identifier"), reason)
+        for answer in [OccurrenceDateMatch.Answer.differs, .matches] {
+            XCTAssertEqual(DetachedOccurrenceSpan.occurrenceDateReason(
+                for: answer, start: start, startIsAllDay: true, zone: nil, host: Self.losAngeles),
+                DetachedOccurrenceSpan.occurrenceDateReason)
+        }
+    }
+
+    func testTheUndeterminedRefusalUsesTheSameZoneAsTheShownStartCheck() {
+        let start = Self.day(2026, 12, 30, in: Self.taipei)
+        let allDay = DetachedOccurrenceSpan.occurrenceDateReason(
+            for: .undetermined, start: start, startIsAllDay: true, zone: Self.losAngeles, host: Self.taipei)
+        let timed = DetachedOccurrenceSpan.occurrenceDateReason(
+            for: .undetermined, start: start, startIsAllDay: false, zone: Self.losAngeles, host: Self.taipei)
+        let floating = DetachedOccurrenceSpan.occurrenceDateReason(
+            for: .undetermined, start: start, startIsAllDay: false, zone: nil, host: Self.taipei)
+        XCTAssertTrue(allDay.contains("Pass 2026-12-30 as occurrence_date"), allDay)
+        XCTAssertTrue(timed.contains("Pass 2026-12-29 as occurrence_date"), timed)
+        XCTAssertTrue(floating.contains("Pass 2026-12-30 as occurrence_date"), floating)
+    }
+
+    func testTheUndeterminedRefusalOffersOmissionWhenThereIsNoStart() {
+        let reason = DetachedOccurrenceSpan.occurrenceDateReason(
+            for: .undetermined, start: nil, startIsAllDay: true, zone: nil, host: Self.losAngeles)
+        XCTAssertTrue(reason.contains("Leave occurrence_date out to act on this occurrence."), reason)
     }
 }
