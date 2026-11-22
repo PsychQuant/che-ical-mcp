@@ -54,7 +54,7 @@ private actor BatchDeletionFake: EventBatchDeletionSource {
     }
 
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
-                              goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
+                              goneInTheCall: Set<String>, forecast: BatchDeletionForecastContext?) async throws -> BatchDeletionPreviewRow {
         previewRow
     }
 
@@ -116,7 +116,7 @@ private actor SeriesModel: EventBatchDeletionSource {
     }
 
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
-                              goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
+                              goneInTheCall: Set<String>, forecast: BatchDeletionForecastContext?) async throws -> BatchDeletionPreviewRow {
         if !spanAll {
             if identifier.contains("/RID="), !holds(identifier) { throw EventKitError.eventNotFound(identifier: identifier) }
             if ownHasRules(identifier) { return .refused(EventKitManager.batchOccurrenceDateRequired) }

@@ -61,11 +61,11 @@ private actor RefusingDeletes: EventDeletionSource {
     private(set) var asked: [Asked] = []
     init(error: Error) { self.error = error }
     func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? { taipei }
-    func deleteEvent(identifier: String, span: EKSpan, occurrenceDate: Date?) async throws {
+    func deleteEvent(identifier: String, span: EKSpan, occurrenceDate: Date?) async throws -> RulesAloneOnUndo? {
         asked.append(Asked(identifier: identifier, span: name(span), occurrenceDate: occurrenceDate))
         throw error
     }
-    func deleteEventSeries(identifier: String) async throws -> SeriesDeleteRoute { .series }
+    func deleteEventSeries(identifier: String) async throws -> SeriesDeleteRoute { .series(unplacedEdits: nil) }
 }
 
 private actor RefusingMoves: EventCopySource {

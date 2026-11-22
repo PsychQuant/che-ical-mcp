@@ -146,7 +146,8 @@ final class DeleteUndoFollowWiringTests: XCTestCase {
                          "await CalendarUndoManager.shared.record(.deleteEvent(id: removedID, snapshot: snapshot))"], in: series)
         let batch = try body("func deleteEventSeriesBatch(identifiers: [String])", in: Self.manager)
         try assertOrder([read, "try eventStore.remove(event, span: .futureEvents)",
-                         "undoOperations.append(.deleteEvent(id: removedID, snapshot: snapshot))"], in: batch)
+                         "let record = UndoOperation.deleteEvent(id: removedID, snapshot: snapshot)",
+                         "undoOperations.append(record)"], in: batch)
 
         let reminder = try body("func deleteReminder(identifier: String) async throws", in: Self.manager)
         try assertOrder(["let removedID = reminder.calendarItemIdentifier",

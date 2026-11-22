@@ -77,6 +77,8 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
     private let refreshIfNeeded: () -> Void
     private let note: (UndoPostState.OccurrenceIDs, UndoPostState.OccurrenceIDs) -> Void
     private let readRecreations: (UndoPostState.OccurrenceIDs) -> [UndoPostState.OccurrenceIDs]
+    // Set only on the short-lived store used for a delete capture.
+    var observeForForecast: ((SeriesExceptionsPlanner.ObservedOccurrence) -> Void)?
 
     init(eventStore: EKEventStore,
          restoreCalendar: @escaping (EventSnapshot, EventRestoreKind) async throws -> EKCalendar,
@@ -111,10 +113,12 @@ final class EventKitSeriesExceptionsStore: SeriesExceptionsStoreSource {
     func slot(of occurrence: EKEvent) -> Date { occurrence.occurrenceDate ?? occurrence.startDate }
 
     func observed(_ occurrence: EKEvent) -> SeriesExceptionsPlanner.ObservedOccurrence {
-        SeriesExceptionsPlanner.ObservedOccurrence(
+        let observed = SeriesExceptionsPlanner.ObservedOccurrence(
             ids: .init(eventIdentifier: occurrence.eventIdentifier, externalIdentifier: occurrence.calendarItemExternalIdentifier),
             isDetached: occurrence.isDetached, occurrenceDate: occurrence.occurrenceDate, startDate: occurrence.startDate,
             snapshot: EventSnapshot(from: occurrence, includeRecurrence: false))
+        observeForForecast?(observed)
+        return observed
     }
 
     func events(in range: DateInterval, inCalendarOf event: EKEvent) -> [EKEvent] {

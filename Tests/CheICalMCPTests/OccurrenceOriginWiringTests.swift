@@ -33,7 +33,9 @@ final class OccurrenceOriginWiringTests: XCTestCase {
     func testASplitMoveRecordsTheOccurrencesOrigin() throws {
         let source = try SourcePins.source("EventKit/EventKitManager.swift")
         XCTAssertEqual(count("let snapshot = isSplit ? copied.withOccurrenceOrigin(OccurrenceOrigin.of(subject)) : copied", in: SourcePins.code(source)), 1)
-        XCTAssertEqual(count("isDetached: occurrence.isDetached)", in: SourcePins.code(try SourcePins.source("EventKit/DeleteUndo.swift"))), 1,
+        let delete = try SourcePins.source("EventKit/DeleteUndo.swift")
+        let origin = try XCTUnwrap(SourcePins.body(of: "static func of(_ occurrence: EKEvent) -> OccurrenceOrigin?", in: delete))
+        XCTAssertEqual(count("isDetached: occurrence.isDetached)", in: origin), 1,
                        "the origin says whether the occurrence was edited")
     }
 

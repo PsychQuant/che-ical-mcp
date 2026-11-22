@@ -12,17 +12,21 @@ enum UndoSnapshotFixtures {
     /// `calendarTitle` names the event's calendar; `weeklyOccurrences` makes it a weekly series of
     /// that many, whose delete-undo recreates it from its rules (#278).
     /// `calendar` puts it in that calendar (`newCalendar()`), so two snapshots share one; by default
-    /// each gets its own.
+    /// each gets its own. `endDate` (#539): an hour after the start when nil.
     static func event(title: String = "Event", calendarTitle: String? = nil, weeklyOccurrences: Int? = nil,
-                      startDate: Date? = nil, allDay: Bool = false, calendar: EKCalendar? = nil) -> EventSnapshot {
+                      startDate: Date? = nil, endDate: Date? = nil, allDay: Bool = false, calendar: EKCalendar? = nil,
+                      recurrence: EKRecurrenceRule? = nil, timeZone: TimeZone? = nil) -> EventSnapshot {
         let event = EKEvent(eventStore: store)
         event.calendar = calendar ?? EKCalendar(for: .event, eventStore: store)
         if let calendarTitle { event.calendar.title = calendarTitle }
         event.title = title
         event.isAllDay = allDay
         event.startDate = startDate ?? Date(timeIntervalSince1970: 1_800_000_000)
-        event.endDate = event.startDate.addingTimeInterval(3600)
-        if let weeklyOccurrences {
+        event.endDate = endDate ?? event.startDate.addingTimeInterval(3600)
+        event.timeZone = timeZone
+        if let recurrence {
+            event.addRecurrenceRule(recurrence)
+        } else if let weeklyOccurrences {
             event.addRecurrenceRule(EKRecurrenceRule(recurrenceWith: .weekly, interval: 1,
                                                      end: EKRecurrenceEnd(occurrenceCount: weeklyOccurrences)))
         }
