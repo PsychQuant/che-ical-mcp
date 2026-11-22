@@ -10,8 +10,8 @@ In a time zone that moves its clock from 23:59:59 straight to 01:00 (`America/Ha
 ## Proposed Solution
 
 - When the date-only formatter returns nil in the zone, read the same text with the same formatter in UTC (no skipped time), and return the first instant of that day in the zone. `2026-02-30` and malformed text stay refused (#299).
-- `AllDayRange.storedDays(start:end:calendar:)`: an all-day pair read as the days it stands for: a start that is not the start of its day stands for the nearest day start, the number of days is the elapsed time rounded to whole days; a pair more than three hours from that reading is returned unchanged. The identity on every ordinary day.
-- `planUpdate` reads the stored all-day pair through it before counting; `formatEventDict` prints an all-day event's dates through it, in the host zone.
+- `AllDayRange.storedDays(start:end:calendar:)`: an all-day pair read as the days it stands for: a start that is not the start of its day stands for the nearest day start, the number of days is the elapsed time rounded to whole days; only a pair whose first day so read does not start at 00:00 is read anew, and a pair more than three hours from that reading is returned unchanged. The identity on every ordinary day, whatever the end.
+- `planUpdate` reads the stored all-day pair through it before counting; `formatEventDict` (`list_events`, `list_events_quick`, `search_events`, `check_conflicts`) prints an all-day event's dates through it, in the host zone.
 
 ## Non-Goals
 

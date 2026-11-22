@@ -8,7 +8,8 @@ import Foundation
 /// `create_event`, `create_events_batch` and `update_event` are therefore normalized first to (start
 /// of the start day, last day at 23:59:59), the one value that reads the same in both states and the
 /// one the tools return when they read the event back. `copy_event` and undo copy the stored dates
-/// unchanged; the device check found no widening there.
+/// unchanged; the device check found no widening there (#364), but on a day whose midnight the zone
+/// skips `copy_event` widens a one-day event to two (#568, see `storedDays`).
 ///
 /// The rule (the exclusive boundary, the iCal `DTEND` reading): an end exactly at a midnight of a
 /// day later than the start day excludes that day; any other end includes its day; start = end is
@@ -43,12 +44,18 @@ enum AllDayRange {
     /// start-only move counted two days and the output showed the wrong hours. A start that is not the
     /// start of its day stands for the nearest day start (the next day from noon on); the number of
     /// days is the elapsed time rounded to whole days, which a DST change of an hour or two cannot
-    /// move. On every other day this returns the pair it is given.
+    /// move. Only a pair whose first day so read does not start at 00:00 is replaced; on every other
+    /// day this returns the pair it is given.
     static func storedDays(start: Date, end: Date, calendar: Calendar) -> (start: Date, end: Date) {
         var firstDay = calendar.startOfDay(for: start)
         if firstDay != start, calendar.component(.hour, from: start) >= 12,
            let next = calendar.date(byAdding: .day, value: 1, to: firstDay) {
             firstDay = calendar.startOfDay(for: next)
+        }
+        // Only a day that starts at another time than 00:00 is read anew; on every other day the
+        // pair is used as EventKit returned it, whatever its end.
+        guard calendar.component(.hour, from: firstDay) != 0 || calendar.component(.minute, from: firstDay) != 0 else {
+            return (start, end)
         }
         let days = max(1, Int((end.addingTimeInterval(1).timeIntervalSince(start) / 86_400).rounded()))
         let lastDay = calendar.date(byAdding: .day, value: days - 1, to: firstDay) ?? firstDay

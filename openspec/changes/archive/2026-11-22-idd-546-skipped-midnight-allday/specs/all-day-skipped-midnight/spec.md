@@ -19,7 +19,7 @@ A date-only value (`YYYY-MM-DD`) SHALL name 00:00 of that day in the zone it is 
 
 ### Requirement: An all-day event is read as the days it stands for
 
-Where the server prints an all-day event's dates and where `update_event` counts the days of a stored all-day event, it SHALL read the pair EventKit returns as (start of the first day, last second of the last day) in this Mac's zone: a start that is not the start of its day stands for the nearest day start (the next day from noon on), and the number of days is the elapsed time rounded to whole days. A pair more than three hours from that reading SHALL be used as returned. On a day that starts at midnight the pair SHALL be unchanged. A timed event's dates SHALL be printed as returned.
+Where the server prints an all-day event's dates and where `update_event` counts the days of a stored all-day event, it SHALL read the pair EventKit returns as (start of the first day, last second of the last day) in this Mac's zone: a start that is not the start of its day stands for the nearest day start (the next day from noon on), and the number of days is the elapsed time rounded to whole days. Only a pair whose first day so read does not start at 00:00 SHALL be read anew, and a pair more than three hours from that reading SHALL be used as returned; every other pair SHALL be unchanged, whatever its end. A timed event's dates SHALL be printed as returned.
 
 #### Scenario: A one-day event on the skipped-midnight day
 
@@ -33,7 +33,7 @@ Where the server prints an all-day event's dates and where `update_event` counts
 | 01:00 of D (measured, iCloud) | 00:59:59 of D+1 | 01:00 to 23:59:59 of D |
 | 23:00 of D-1 (the issue's Google numbers) | 22:59:59 of D | 01:00 to 23:59:59 of D |
 | 01:00 of D | 00:59:59 of D+2 | D and D+1 |
-| 00:00 of an ordinary day | 23:59:59 of that or a later day | unchanged |
+| 00:00 of an ordinary day | any end (23:59:59, an exact next midnight, an hour short) | unchanged |
 
 ##### Example: moving that event by its start keeps one day
 

@@ -120,10 +120,11 @@ final class AllDayStoredDaysTests: XCTestCase {
     func testAPairFarFromItsDayBoundariesIsReturnedAsItIs() throws {
         let (zone, start, _) = try gapDay()
         let calendar = Calendar.gregorian(in: zone)
-        let morning = try XCTUnwrap(calendar.date(bySettingHour: 6, minute: 0, second: 0, of: start.addingTimeInterval(3 * 86_400)))
-        let read = stored(morning, morning.addingTimeInterval(12 * 3600), zone)
-        XCTAssertEqual(read.start, morning)
-        XCTAssertEqual(read.end, morning.addingTimeInterval(12 * 3600))
+        // 14:00 the day before: its nearest day start is the skipped-midnight day, 11 hours away.
+        let afternoon = try XCTUnwrap(calendar.date(bySettingHour: 14, minute: 0, second: 0, of: start.addingTimeInterval(-12 * 3600)))
+        let read = stored(afternoon, afternoon.addingTimeInterval(12 * 3600), zone)
+        XCTAssertEqual(read.start, afternoon)
+        XCTAssertEqual(read.end, afternoon.addingTimeInterval(12 * 3600))
     }
 
     /// A pair with no length (start = end at a day start) is returned as it is, not turned into a
@@ -133,6 +134,23 @@ final class AllDayStoredDaysTests: XCTestCase {
         let read = stored(start, start, zone)
         XCTAssertEqual(read.start, start)
         XCTAssertEqual(read.end, start)
+    }
+
+    /// On a day that starts at midnight, a pair that does not end at 23:59:59 (an exact next
+    /// midnight, or an hour short) is also returned as it is: only a day that starts at another time
+    /// is read anew.
+    func testAnOrdinaryDayPairWithAnotherEndIsReturnedAsItIs() throws {
+        for id in ["UTC", "Asia/Taipei", "America/Havana"] {
+            let zone = try XCTUnwrap(TimeZone(identifier: id))
+            let calendar = Calendar.gregorian(in: zone)
+            let day = calendar.startOfDay(for: Date(timeIntervalSince1970: 1_780_000_000))
+            let next = calendar.startOfDay(for: day.addingTimeInterval(36 * 3600))
+            for end in [next, next.addingTimeInterval(-3600), next.addingTimeInterval(-7200)] {
+                let read = stored(day, end, zone)
+                XCTAssertEqual(read.start, day, id)
+                XCTAssertEqual(read.end, end, "\(id) \(end)")
+            }
+        }
     }
 
     // spec-example: all-day-skipped-midnight / moving that event by its start keeps one day
