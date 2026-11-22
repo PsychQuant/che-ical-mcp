@@ -692,4 +692,14 @@ enum DetachedOccurrenceSpan {
     }
 
     static let occurrenceDateReason = "event_id names one occurrence, edited on its own, and occurrence_date is another day. To act on that other occurrence, use the id list_events shows for that occurrence, with its occurrence_date; to act on this one, leave occurrence_date out. Nothing was changed."
+
+    /// #543: use the same zone as the shown-start check when giving the caller a date to pass.
+    static func occurrenceDateReason(for answer: OccurrenceDateMatch.Answer, start: Date?, startIsAllDay: Bool,
+                                     zone: TimeZone?, host: TimeZone) -> String {
+        guard answer == .undetermined else { return occurrenceDateReason }
+        let shownDay = start.map { EditedOccurrenceAddress.day($0, in: startIsAllDay ? host : zone ?? host) }
+        let route = shownDay.map { "Pass \($0) as occurrence_date, or leave occurrence_date out." }
+            ?? "Leave occurrence_date out to act on this occurrence."
+        return "event_id names one occurrence, edited on its own, and occurrence_date is not its shown start day. The recurrence ID does not establish its original day here. \(route) Nothing was changed."
+    }
 }
