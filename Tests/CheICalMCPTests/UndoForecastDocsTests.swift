@@ -30,7 +30,7 @@ final class UndoForecastDocsTests: XCTestCase {
 
     /// The claims of the rulings fix round 5 removed (F's refusal, J's reading of the series' zone), and of the
     /// forecast's old wording (Q9), in every document that held them.
-    private let retired = ["since this server cannot tell which reading is the slot", "give it up with `discard_id`",
+    private let retired = ["since this server cannot tell which reading is the slot",
                            "only an occurrence not edited on its own is at the time the same digits name",
                            "read on the series (through the part of the occurrence's identifier before `/RID=`",
                            "never worse than `main`", "seldom matches", "its edits lost",
@@ -45,7 +45,8 @@ final class UndoForecastDocsTests: XCTestCase {
                         "每一個 undo 都把這段讀成時刻，跟 #539 之前一樣：",
                         "**這些是 `main` 本身的行為；#539 保持 open 給它們。**",
                         "PR #558 前後五輪改過這些 undo，"], in: "README_zh-TW.md")
-        try assertNone(retired + ["a matrix test shows that leaving", "its slot is removed with the occurrence"], in: "README.md")
+        try assertNone(retired + ["a matrix test shows that leaving", "its slot is removed with the occurrence",
+                                  "the undo is refused, nothing is written and the entry is kept, since"], in: "README.md")
         try assertNone(["分不出哪一種讀法才是那個場次", "它的場次連同場次本身被移除"], in: "README_zh-TW.md")
     }
 
