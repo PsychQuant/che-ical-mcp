@@ -24,6 +24,7 @@ final class ExclusionRetryTargetTests: XCTestCase {
         XCTAssertEqual(lookup.asked, [])
     }
 
+    // spec-example: recurrence-excluded-dates / target of the check
     /// The issue's shape: the edited first occurrence matched. The series named before `/RID=` is
     /// checked, in the series' zone, not the occurrence's.
     func testAnEditedOccurrenceIsCheckedAgainstItsSeries() {
