@@ -29,7 +29,7 @@ final class SeriesDeleteForecastWiringTests: XCTestCase {
 
     func testTheRealForecastDoesNotQueryTheStoreAgain() throws {
         let source = try code("EventKit/EventKitManager+SeriesExceptions.swift")
-        XCTAssertFalse(source.contains("wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn"),
+        XCTAssertFalse(source.contains("wholeSeriesBaseline("),
                        "the delete already captured the series before removal")
     }
 

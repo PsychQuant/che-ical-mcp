@@ -194,15 +194,15 @@ final class SeriesDeleteForecastTests: XCTestCase {
             let exceptions = try captured(slots, zone: losAngeles) { occurrences in
                 let edited = occurrences[2]
                 if hasRID {
-                    edit(edited, rid: floatingRID(DateComponents(year: 2027, month: 3, day: 14, hour: 2, minute: 30)),
+                    self.edit(edited, rid: floatingRID(DateComponents(year: 2027, month: 3, day: 14, hour: 2, minute: 30)),
                          title: "Edited on the change")
                 } else {
                     edited.detached = true
                 }
                 edited.end = shifted.addingTimeInterval(-1800)
             }
-            let edit = try XCTUnwrap(exceptions.detached.first)
-            XCTAssertLessThan(edit.snapshot.endDate, edit.snapshot.startDate)
+            let detached = try XCTUnwrap(exceptions.detached.first)
+            XCTAssertLessThan(detached.snapshot.endDate, detached.snapshot.startDate)
             XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 4)],
                                                               firstSlot: first, calendar: calendar))
         }
