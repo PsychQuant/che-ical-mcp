@@ -211,10 +211,12 @@ final class MoveByCopyUndoTests: XCTestCase {
         }
         // PR #562 verify r1 (K15): a copy given rules, deleted whole and brought back by its delete's
         // undo with an edited occurrence as a separate event is not followed (#538), so the move's
-        // undo meets not found there too; the causes name that way. PR #562 verify r2 (M10, M21): only
-        // that way: a copy series recreated with no occurrence as a separate event is followed
-        // (`DeleteUndoFollowHistoryTests.testAMoveByCopyRecordFollowsTheCopyARecreateWroteAnew`), so
-        // the cause names the separate events.
+        // undo meets not found there too; the causes name that way. PR #562 verify r2 (M10, M21): the
+        // cause names the separate events: a copy series recreated with no occurrence as a separate
+        // event and read back under a new identifier is followed
+        // (`DeleteUndoFollowHistoryTests.testAMoveByCopyRecordFollowsTheCopyARecreateWroteAnew`).
+        // PR #562 verify r3 (N1): one recreated with none but read back with no identifier is not
+        // followed either (`DeleteUndoFollow.decision` gives `.none`), and the answer does not name that.
         let notFound = MoveByCopyUndo.message(restore: .written(restored), title: "Standup", copyID: "COPY-1", copy: .notFound)
         XCTAssertTrue(notFound.contains("was not found under its recorded identifier (deleted, given a new identifier by its account, or, made a series, recreated by the undo of its delete as a new series whose occurrences edited on their own came back as separate events)"), notFound)
         XCTAssertFalse(notFound.contains("recreated as a new series by the undo of its delete)"), "the wider cause of round 1: \(notFound)")

@@ -680,6 +680,10 @@ final class UndoBatchRestoreTests: XCTestCase {
         XCTAssertEqual(partial.restoredNotFollowed, [1, 2])
         let sentence = try XCTUnwrap(DeleteUndoFollow.batchNotFollowedSentence([1, 2]))
         XCTAssertEqual(partial.message.components(separatedBy: sentence).count, 2, partial.message)
+        // PR #562 verify r3 (E7): the expected text written out, the spec's form for <k> members, so a
+        // formatter that miscounts the members or sums their separate events wrongly goes red here too.
+        let written = "Older undo entries of 2 recurring events this batch recreated were not moved to their recreated series, because 3 of their occurrences that had been edited on their own came back as separate events. An undo of such an entry that is not found will answer that, and the entry can only be given up with discard_id."
+        XCTAssertEqual(partial.message.components(separatedBy: written).count, 2, partial.message)
     }
 
     /// #559 (G13): a batch undo that stops part-way carries the batch sentence for the members it

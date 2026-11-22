@@ -528,8 +528,9 @@ enum UndoOperation {
     /// discarded before any lookup, so it never answers not found and needs no `discard_id`), a batch
     /// (no batch recorded today names a live event), the record of a move by copy (#559: it names its copy,
     /// and its undo restores the original first and only then looks the copy up, answering not found
-    /// when the copy is not under its recorded identifier, `MoveByCopyUndo.copyState`; it never answers
-    /// the not-followed text), delete records, reminders and calendar operations.
+    /// when the copy is not under its recorded identifier, `MoveByCopyUndo.copyState`; where the
+    /// original's slot is already held it writes nothing and does not look the copy up,
+    /// `MoveByCopyUndo.Copy.keptSlotHeld`; it never answers the not-followed text), delete records, reminders and calendar operations.
     /// Exhaustive.
     var notFollowedTitle: String? {
         switch self {

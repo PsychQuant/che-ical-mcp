@@ -283,7 +283,8 @@ final class DeleteUndoFollowHistoryTests: XCTestCase {
     /// The marker, a batch and the record of a move by copy carry no not-followed title, so none is
     /// flagged; every kind that is flagged has one (#538 fix 1, R3, F33). A move by copy names its copy,
     /// and its undo never answers the not-followed text: it restores the original first and then reports
-    /// a copy it does not find as not found (`MoveByCopyUndo.copyState`), so flagging it would count an
+    /// a copy it does not find as not found (where the original's slot is already held it writes nothing
+    /// and does not look the copy up) (`MoveByCopyUndo.copyState`), so flagging it would count an
     /// entry whose undo does not say why (#559, G3 to G5, G17).
     func testOnlyKindsWithANotFollowedTitleAreFlagged() async throws {
         let history = CalendarUndoManager()
@@ -357,11 +358,14 @@ final class DeleteUndoFollowHistoryTests: XCTestCase {
     }
 
     /// PR #562 verify r2 (M10, M21): the record of a move by copy names its copy, and the rewrite
-    /// after a recreate moves it whatever the change, on both stacks: a copy that was made a series,
-    /// deleted whole and recreated with no occurrence as a separate event (`DeleteUndoFollow.decision`
-    /// gives `.follow`) is looked up under its new identifier and found. So the copy-not-found answer
-    /// of its undo comes from a recreate only when the records were not followed: the series' edited
-    /// occurrences came back as separate events (`.flag`), which is the cause the answer names.
+    /// after a recreate moves it whatever the change, on both stacks. A history-rewrite test only
+    /// (PR #562 verify r3, E7): it runs no undo and no copy lookup. What it shows is that where
+    /// `DeleteUndoFollow.decision` gives `.follow` (a copy made a series, deleted whole and recreated
+    /// with no occurrence as a separate event, read back under a new identifier), the record then
+    /// names the new identifier, the one its undo would look up. The records stay on the removed
+    /// identifier where the series' edited occurrences came back as separate events (`.flag`), the
+    /// cause the copy-not-found answer names, and where the recreated series read back with no
+    /// identifier (`.none`), which that answer does not name (PR #562 verify r3, N1).
     func testAMoveByCopyRecordFollowsTheCopyARecreateWroteAnew() async throws {
         let history = CalendarUndoManager()
         await history.record(.moveByCopy(original: event("Standup"), isSplit: false, notCarriedOver: [], copyID: "S",

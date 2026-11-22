@@ -287,7 +287,7 @@ if [[ "$SHOULD_SIGN" == "true" ]]; then
     shasum -a 256 "$UNIVERSAL_BINARY" | awk '{print $1}' > "$SHA256_FILE"
     echo ""
     echo "Post-sign SHA-256: $(cat "$SHA256_FILE")"
-    echo "  → upload alongside binary: \`gh release create vX.Y.Z $UNIVERSAL_BINARY $SHA256_FILE ... --target <full SHA this was built from>\` (README: Per-release flow)"
+    echo "  → upload alongside binary: \`gh release create vX.Y.Z $UNIVERSAL_BINARY $SHA256_FILE ... --target <full SHA this was built from>\`; --target places only a tag that does not exist yet, so check with \`git ls-remote origin refs/tags/vX.Y.Z 'refs/tags/vX.Y.Z^{}'\` that the tag's commit is that SHA (README: Per-release flow)"
 fi
 
 # Signing rewrote the file that gets packaged, so run it once more (#238).

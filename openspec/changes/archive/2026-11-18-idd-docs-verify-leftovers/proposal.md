@@ -45,6 +45,16 @@
 - tasks 1.2 的「驗證：文件測試通過」：沒有測試讀這一句（M32），驗證是對照 git 與 branch protection 的讀取，見 tasks 1.2 的註記。
 - 其餘修正見 PR #562 的 Verify-fix (round 2) 留言。
 
+## Verify round 3（2026-11-22，PR #562）
+
+- 發布程序（兩份 README，以及 `scripts/build-mcpb.sh` 簽章後印的提示）：`--target` 只決定還不存在的 tag 建在哪裡（`gh release create --help`；GitHub 建立 release 的 API 說 tag 已存在時不用 `target_commitish`），`--verify-tag` 只檢查 tag 在 remote 上，所以加上檢查：build 之前 `git rev-parse HEAD` 是那個 SHA、`git status --porcelain` 是空的；發布前後用 `git ls-remote origin refs/tags/vX.Y.Z 'refs/tags/vX.Y.Z^{}'` 讀 tag 指著的 commit（annotated tag 看 `^{}` 那一行），必須是 build 的 SHA（E1）。這個指令在本 repo 的 v1.22.0（annotated）、v1.20.0（lightweight）與一個不存在的 tag 上跑過，只讀取，沒有建 tag 或 release。交給 `--target` 的 commit 要先在 remote 上（N16）。發布 PR 落地的 commit 寫成「落地的 commit」，不是合併 commit（`main` 要求線性歷史；v1.20.0 到 v1.22.0 當時是合併 commit）（N3）；第 1 步的檔案清單加上三份 README 的版本列（N4）。
+- 切點與祖先（E2）：落後 `main` HEAD 的 commit，樹就是這次發布時可以打 tag，從 branch 切出只在 `main` 上沒有這棵樹時；`[Unreleased]` 該放什麼看打了 tag 的樹出貨了什麼；`-s ours` 之後的空 diff 與祖先關係分開確認。tasks 1.1 加了 r3 註記（含 N5：`is-ancestor` 只在 PR 分支上成立）。
+- `edited-occurrence-addressing` 規格（E6）：搜尋只比對 `<series>/RID=` 前綴、不讀後面的字，數字是 echo 的規則；量到的是「讀到的每一個」而不是「每一個」；span `future` 的 update 拒絕在 ID 不能 echo 時指向 `list_events`；「不帶 `occurrence_date`」只對 `update_event` 與 `delete_event`，搬移列改帶 `occurrence_dates`。本 change 的 delta spec 一併修改，與 main spec 逐個 requirement 相同。
+- move by copy 的 undo（N2、E5 的 move by copy 那一部分）：`undo` 描述與 manifest 摘要、兩份 README、CHANGELOG 兩處、程式與測試註解都加上「原本的時段已經被佔住時什麼都不寫、也不查副本」（`keptSlotHeld`）；兩個 pin 先改、先紅。
+- 測試（E7）：巢狀 batch 的測試直接寫出預期的句子；move by copy 的 history 測試註解改成只說它驗的是改寫紀錄。`Copy.notFound` 的註解與 `MoveByCopyUndoTests` 的註解加上「重建後讀回沒有 ID 時紀錄也不跟上，回答沒有寫出這個原因」（N1）。
+- 本 change 的三個封存檔（tasks、proposal、`edited-occurrence-addressing` 的 delta spec）在一次暫時解除 archive 保護的期間複製進去，隨即恢復保護。
+- 其餘修正見 PR #562 的 Verify-fix (round 3) 留言。
+
 ## Non-Goals
 
 - 執行期的回應文字不改（#559 G6 的單筆句子、G39 的 part-way 相鄰兩句）：那些字串逐字寫在規格裡，裝置紀錄也是這些字。例外有兩個：#555 第 2 項點名的 `leftBehind`，照該項改；以及 move by copy 的 undo 找不到副本時的回答（`MoveByCopyUndo` 的 `.notFound`），verify 第 1 輪（K15）多寫一個原因，第 2 輪（M10）把它收窄到真的會找不到的那種情形（2026-11-22 verify r2 M8、M14、M18 補上）。

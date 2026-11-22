@@ -45,7 +45,10 @@ enum MoveByCopyUndo {
         /// Not found under its recorded identifier: deleted, given a new one by its account, or, made a
         /// series, recreated by the undo of its delete with its occurrences edited on their own back
         /// as separate events, which leaves the record on the removed identifier (#538 `.flag`; after
-        /// a recreate with none the record follows, `CalendarUndoManager.replaceEventIdentifier`).
+        /// a recreate with none, read back under a new identifier, the record follows,
+        /// `CalendarUndoManager.replaceEventIdentifier`). Not named in the answer: a recreated series
+        /// read back with no identifier, which `DeleteUndoFollow.decision` answers `.none`, so the
+        /// record stays on the removed identifier too (PR #562 verify r3, N1).
         case notFound
         /// Changed after the move in the fields named (the #236 compare of a created event).
         case changed([String])
