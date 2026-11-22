@@ -197,16 +197,16 @@ final class DeleteUndoTests: XCTestCase {
     func testEveryWholeSeriesRecordSiteListsTheExceptionsThroughAGate() throws {
         let source = try SourcePins.source("EventKit/EventKitManager.swift")
         let single = try XCTUnwrap(SourcePins.body(of: "func deleteEvent(identifier: String, span: EKSpan", in: source))
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"seriesExceptions: \{ self\.captureSeriesExceptions\(of: masterEvent\) \}"#, in: single).count, 1)
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"seriesExceptions: \{ self\.captureSeriesExceptionsForDelete\(of: masterEvent, anchor: anchor\) \}"#, in: single).count, 1)
         for declaration in ["func deleteEventSeries(identifier: String)", "func deleteEventSeriesBatch(identifiers: [String])"] {
             let body = try XCTUnwrap(SourcePins.body(of: declaration, in: source), declaration)
-            XCTAssertEqual(SourcePins.ranges(ofPattern: #"EventSnapshot\.recordingSeriesDelete\(of: event, capture: \{ self\.captureSeriesExceptions\(of: event\) \}\)"#, in: body).count, 1, declaration)
+            XCTAssertEqual(SourcePins.ranges(ofPattern: #"EventSnapshot\.recordingSeriesDelete\(of: event, capture: \{ self\.captureSeriesExceptionsForDelete\(of: event, anchor: anchor\) \}\)"#, in: body).count, 1, declaration)
             XCTAssertEqual(SourcePins.ranges(of: "withExceptions(", in: body).count, 0, declaration)
         }
         let batch = try XCTUnwrap(SourcePins.body(of: "func deleteEventsBatch(", in: source))
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"seriesExceptions: \{ self\.captureSeriesExceptions\(of: masterEvent\) \}"#, in: batch).count, 1)
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"seriesExceptions: \{ self\.captureSeriesExceptionsForDelete\(of: masterEvent, anchor: anchor\) \}"#, in: batch).count, 1)
         // No other site calls the capture.
-        XCTAssertEqual(SourcePins.ranges(of: "captureSeriesExceptions(of:", in: SourcePins.code(source)).count, 4)
+        XCTAssertEqual(SourcePins.ranges(of: "captureSeriesExceptionsForDelete(of:", in: SourcePins.code(source)).count, 4)
     }
 
     // MARK: - Record shapes

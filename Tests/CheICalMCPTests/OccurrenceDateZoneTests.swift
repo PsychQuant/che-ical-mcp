@@ -84,7 +84,7 @@ final class OccurrenceDateZoneTests: XCTestCase {
         XCTAssertEqual(helper.trimmingCharacters(in: .whitespaces), "event.timeZone")
         let delegation = try call(in: "func eventTimeZone(identifier: String) async throws -> TimeZone? {", file: "EventCopySource.swift")
         XCTAssertEqual(delegation.trimmingCharacters(in: .whitespaces), "try await occurrenceDateTimeZone(identifier: identifier)")
-        let delete = try call(in: "func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws {", file: manager)
+        let delete = try call(in: "func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws -> RulesAloneOnUndo? {", file: manager)
         XCTAssertEqual(SourcePins.ranges(of: "findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent))", in: delete).count, 1)
         XCTAssertEqual(delete.components(separatedBy: "findOccurrence(").count - 1, 1)
         let move = try call(in: "func moveEvent( identifier: String, occurrenceDate: Date?, span: EventMovePolicy.Span, toCalendarName: String, toCalendarSource: String? ) async throws -> (result: EventMoveResult, title: String?) {", file: manager)

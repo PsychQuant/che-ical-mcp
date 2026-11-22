@@ -21,6 +21,10 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
         var occurrenceDate: Date?
         var detached: Bool
         var hasRules: Bool
+        /// #539: the end its snapshot reads; an hour after `start` when nil.
+        var end: Date?
+        var recurrenceRules: [RecurrenceRuleSnapshot]?
+        var timeZone: TimeZone?
 
         init(id: String? = nil, external: String? = nil, calendar: String? = nil, title: String = "",
              start: Date = .distantPast, occurrenceDate: Date? = nil, detached: Bool = false, hasRules: Bool = false) {
@@ -49,6 +53,7 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     var seriesEnd: SeriesExceptionsPlanner.SeriesEnd = .open
     /// #319: how many occurrences `observed(_:)` built a snapshot for.
     private(set) var observedCount = 0
+    var observeForForecast: ((SeriesExceptionsPlanner.ObservedOccurrence) -> Void)?
     /// Saves of events with these titles throw (after taking an identifier, as a save that may have
     /// written would leave it).
     var failingSaveTitles: Set<String> = []
@@ -64,6 +69,8 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     /// what production throws (`EventSnapshot.resolveCalendar` over no matching calendar, #269).
     var missingCalendars: Set<String> = []
     private var nextID = 1
+    /// #539: the host zone `slotHolders` reads an all-day `/RID=`'s local day in.
+    var zone: TimeZone = .current
 
     /// A series already in the store: one occurrence per slot, sharing `id`.
     @discardableResult
@@ -76,6 +83,9 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     }
 
     func add(_ event: Event) { events.append(event) }
+
+    /// #539: takes `event` out of the store, as a delete does (no log entry).
+    func drop(_ event: Event) { events.removeAll { $0 === event } }
 
     /// #538 fix 1 (F20): a saved series reads back under its first occurrence's own identifier
     /// (`<id>/RID=<seconds since 2001>`), as a store can hand back an occurrence for a series.
@@ -99,9 +109,12 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func observed(_ occurrence: Event) -> SeriesExceptionsPlanner.ObservedOccurrence {
         observedCount += 1
-        return SeriesExceptionsPlanner.ObservedOccurrence(
+        let observed = SeriesExceptionsPlanner.ObservedOccurrence(
             ids: identifiers(of: occurrence), isDetached: occurrence.detached, occurrenceDate: occurrence.occurrenceDate,
-            startDate: occurrence.start, snapshot: UndoSnapshotFixtures.event(title: occurrence.title, startDate: occurrence.start))
+            startDate: occurrence.start, snapshot: UndoSnapshotFixtures.event(title: occurrence.title, startDate: occurrence.start,
+                                                                              endDate: occurrence.end, timeZone: occurrence.timeZone))
+        observeForForecast?(observed)
+        return observed
     }
 
     func events(in range: DateInterval, inCalendarOf event: Event) -> [Event] {
@@ -125,6 +138,9 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     func apply(_ snapshot: EventSnapshot, to event: Event, calendar: String) {
         event.title = snapshot.title
         event.start = snapshot.startDate
+        event.end = snapshot.endDate
+        event.recurrenceRules = snapshot.recurrenceRules
+        event.timeZone = snapshot.timeZone
         event.calendar = calendar
         event.hasRules = snapshot.restoresFromRules
     }
@@ -144,8 +160,12 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
         // The saved object is the series' first occurrence; the rules generate the rest.
         event.occurrenceDate = event.start
         for slot in seriesSlots where slot != event.start {
-            events.append(Event(id: id, external: event.external, calendar: event.calendar, title: event.title,
-                                start: slot, occurrenceDate: slot, hasRules: true))
+            let occurrence = Event(id: id, external: event.external, calendar: event.calendar, title: event.title,
+                                   start: slot, occurrenceDate: slot, hasRules: true)
+            occurrence.end = event.end.map { slot.addingTimeInterval($0.timeIntervalSince(event.start)) }
+            occurrence.recurrenceRules = event.recurrenceRules
+            occurrence.timeZone = event.timeZone
+            events.append(occurrence)
         }
     }
 
@@ -185,7 +205,7 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
             .filter { $0.calendar == calendar && $0.start >= range.start && $0.start < range.end }
             .compactMap { OccurrenceSlotGuard.holder(eventIdentifier: $0.id, externalIdentifier: $0.external,
                                                      occurrenceDate: $0.occurrenceDate, isAllDay: false, startDate: $0.start,
-                                                     hasRecurrenceRules: $0.hasRules, isDetached: $0.detached) }
+                                                     hasRecurrenceRules: $0.hasRules, isDetached: $0.detached, zone: zone) }
     }
 
     /// #321: what `noteRecreation` was told, in order.
@@ -199,6 +219,26 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
 
     func recreations(of recorded: UndoPostState.OccurrenceIDs) -> [UndoPostState.OccurrenceIDs] {
         recreationLog.recreations(of: recorded)
+    }
+
+    struct CalendarRow: Equatable {
+        let start: Date
+        let end: Date
+        let title: String
+        let eventIdentifier: String?
+        let externalIdentifier: String?
+        let isDetached: Bool
+        let hasRules: Bool
+        let recurrenceRules: [RecurrenceRuleSnapshot]?
+        let timeZone: TimeZone?
+    }
+
+    var calendarProjection: [CalendarRow] {
+        events.map {
+            CalendarRow(start: $0.start, end: $0.end ?? $0.start.addingTimeInterval(3600), title: $0.title,
+                        eventIdentifier: $0.id, externalIdentifier: $0.external, isDetached: $0.detached,
+                        hasRules: $0.hasRules, recurrenceRules: $0.recurrenceRules, timeZone: $0.timeZone)
+        }.sorted { ($0.start, $0.title) < ($1.start, $1.title) }
     }
 
     /// The starts of what the store holds under `id`, sorted.

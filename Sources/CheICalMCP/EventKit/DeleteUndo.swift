@@ -120,6 +120,141 @@ struct DeletedEventSnapshots {
     }
 }
 
+/// #539 step 6: how many edited slots the rule model predicts the recreated series will lack.
+/// The inputs come from before removal. The forecast is nil without a positive count.
+struct RulesAloneOnUndo: Equatable, Sendable {
+    let edits: Int
+}
+
+/// Evidence of a plain first slot, collected from the series' existing capture. The same
+/// first-slot check as a whole-series write is applied to the occurrences actually observed.
+final class SeriesDeleteAnchor {
+    private let start: Date
+    private let occurrenceDate: Date?
+    private let isAllDay: Bool
+    private let zone: TimeZone
+    private struct Observation {
+        let ids: UndoPostState.OccurrenceIDs
+        let occurrenceDate: Date?
+        let startDate: Date
+        let isDetached: Bool
+    }
+
+    private var observations: [Observation] = []
+
+    init(start: Date, occurrenceDate: Date?, isAllDay: Bool, zone: TimeZone) {
+        self.start = start
+        self.occurrenceDate = occurrenceDate
+        self.isAllDay = isAllDay
+        self.zone = zone
+    }
+
+    convenience init?(of series: EKEvent, viaStandIn: Bool) {
+        guard !viaStandIn, series.hasRecurrenceRules, !series.isDetached else { return nil }
+        let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
+        self.init(start: series.startDate, occurrenceDate: series.occurrenceDate, isAllDay: series.isAllDay, zone: zone)
+    }
+
+    func observe(_ occurrence: SeriesExceptionsPlanner.ObservedOccurrence) {
+        observations.append(Observation(ids: occurrence.ids, occurrenceDate: occurrence.occurrenceDate,
+                                        startDate: occurrence.startDate, isDetached: occurrence.isDetached))
+    }
+
+    func preview<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store, snapshot: EventSnapshot,
+                                                   remainingListings: Int, now: Date = Date())
+        -> (listings: Int, note: RulesAloneOnUndo?) {
+        var listings = 0
+        var previewSlots: [Date]?
+        let exceptions = SeriesExceptionsUndo.capture(of: series, in: store, now: now) { windows, ranges in
+            let duration = snapshot.endDate.timeIntervalSince(snapshot.startDate)
+            // The stored-start check needs a row near the start. An old first occurrence that
+            // cannot overlap any listing range cannot supply that evidence.
+            guard ranges.count <= remainingListings, ranges.contains(where: {
+                self.start.addingTimeInterval(-1) < $0.end && self.start.addingTimeInterval(duration + 1) > $0.start
+            }), let slots = self.projectedSlots(snapshot, first: self.start, windows: windows) else { return false }
+            previewSlots = slots
+            listings = ranges.count
+            return true
+        }
+        return (listings, forecast(for: snapshot.withExceptions(exceptions), previewSlots: previewSlots))
+    }
+
+    private func projectedSlots(_ snapshot: EventSnapshot, first: Date, windows: [DateInterval]) -> [Date]? {
+        SeriesExceptionsPlanner.projectedSlots(
+            rules: (snapshot.recurrenceRules ?? []).map(DeletedOccurrenceCheck.forecastRule(from:)),
+            firstSlot: first, windows: windows, calendar: .gregorian(in: zone),
+            duration: snapshot.endDate.timeIntervalSince(snapshot.startDate))
+    }
+
+    func forecast(for snapshot: EventSnapshot, previewSlots: [Date]? = nil) -> RulesAloneOnUndo? {
+        guard let exceptions = snapshot.exceptions, !exceptions.detached.isEmpty,
+              UndoPostState.sameInstant(start, snapshot.startDate) else { return nil }
+        var startMatches = 0
+        var firstIsEdited = true
+        var startRIDSlot: Date?
+        var earliestSlot: Date?
+        for occurrence in observations {
+            let rid = UndoPostState.ruleSlot(eventIdentifier: occurrence.ids.eventIdentifier,
+                                            externalIdentifier: occurrence.ids.externalIdentifier,
+                                            occurrenceDate: nil, isAllDay: isAllDay, zone: zone)
+            let slot = rid ?? occurrence.occurrenceDate ?? occurrence.startDate
+            earliestSlot = earliestSlot.map { min($0, slot) } ?? slot
+            if UndoPostState.sameInstant(occurrence.startDate, start) {
+                startMatches += 1
+                firstIsEdited = occurrence.isDetached
+                startRIDSlot = rid
+            }
+        }
+        let first = DeletedOccurrenceCheck.firstSlot(
+            occurrenceDate: occurrenceDate, startDate: start, startMatches: startMatches,
+            startRIDSlot: startRIDSlot, earliestListedSlot: earliestSlot, viaStandIn: false, isDetached: false)
+        guard let first, DeletedOccurrenceCheck.baseline(firstSlot: first, firstIsEdited: firstIsEdited, startDate: start) == .stored,
+              let slots = (first == start ? previewSlots : nil) ?? projectedSlots(snapshot, first: first, windows: exceptions.windows),
+              let edits = SeriesExceptionsPlanner.unplacedEdits(exceptions, firstSlot: first, slotsListed: slots),
+              edits > 0 else { return nil }
+        return RulesAloneOnUndo(edits: edits)
+    }
+}
+
+/// #539 step 6: which deletes of one call forecast that their undo brings a series back from its
+/// rules alone. The inputs are read before removal, and the estimate is evaluated after recording
+/// a whole-series delete (`.deleteEvent`), since an occurrence's delete or a delete of an
+/// occurrence and the following ones does not recreate a series. In a batch, a member whose record
+/// refuses the whole call's undo (`batchMemberUndoRefusal`) means that undo restores no row, so then no
+/// row forecasts anything, recorded before it or after.
+struct RulesAloneForecast {
+    struct Row: Equatable, Sendable {
+        let identifier: String
+        let forecast: RulesAloneOnUndo
+    }
+
+    private var pending: [(identifier: String, estimate: () -> RulesAloneOnUndo?)] = []
+    private(set) var isSuppressed = false
+
+    mutating func recorded(_ record: UndoOperation, identifier: String, anchor: SeriesDeleteAnchor?) {
+        if record.batchMemberUndoRefusal != nil {
+            isSuppressed = true
+            pending.removeAll()
+        }
+        guard !isSuppressed, case .deleteEvent(_, let snapshot) = record,
+              let anchor, let exceptions = snapshot.exceptions, !exceptions.detached.isEmpty else { return }
+        pending.append((identifier, { anchor.forecast(for: snapshot) }))
+    }
+
+    /// Only evaluate the pending estimates after every record's structural check has run.
+    var expected: [Row] {
+        pending.compactMap { entry in
+            entry.estimate().map { Row(identifier: entry.identifier, forecast: $0) }
+        }
+    }
+
+    /// `delete_event`: the forecast of the one record it made.
+    static func expected(of record: UndoOperation, unplacedEdits: () -> RulesAloneOnUndo?) -> RulesAloneOnUndo? {
+        guard case .deleteEvent = record else { return nil }
+        return unplacedEdits()
+    }
+}
+
 extension EventSnapshot {
     /// #322: the record of a whole-series delete by `deleteEventSeries` / `deleteEventSeriesBatch`
     /// (#185): the event's snapshot, rules included, carrying the series' exceptions (#285) when it

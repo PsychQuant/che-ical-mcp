@@ -14,12 +14,66 @@ struct BatchDeletionListedEvent: Sendable, Equatable {
     var isDetached = false
 }
 
+/// The requested, resolved and external identifiers are forecast inputs only. Match the series
+/// portion of an identifier, including a provider's own suffix if it is not a RID.
+struct BatchForecastIdentity: Sendable, Equatable {
+    let keys: Set<String>
+    let unknownSeries: Bool
+
+    init(requested: String, resolved: String?, external: String?, detached: Bool = false,
+         throughFirstOccurrence: Bool = false) {
+        let identifiers = [requested, resolved, external].compactMap { $0 }.filter { !$0.isEmpty }
+        keys = Set(identifiers.map { DetachedOccurrenceSpan.seriesIdentifier(of: $0) ?? $0 })
+
+        let hasRID = identifiers.contains { DetachedOccurrenceSpan.seriesIdentifier(of: $0) != nil }
+        let externalSeries = external.flatMap { id -> String? in
+            guard !id.isEmpty else { return nil }
+            return DetachedOccurrenceSpan.seriesIdentifier(of: id) ?? ((!detached && !hasRID) ? id : nil)
+        }
+        // A RID on the request alone does not link the resolved row to that series.
+        unknownSeries = throughFirstOccurrence || (requested != resolved && externalSeries == nil)
+            || (detached && !hasRID)
+    }
+}
+
+struct BatchDeletionForecastRow: Sendable, Equatable {
+    let identity: BatchForecastIdentity
+    let listings: Int
+    let note: RulesAloneOnUndo?
+}
+
+struct BatchDeletionForecastContext: Sendable {
+    static let listingLimit = 16
+
+    private var touched: Set<String> = []
+    private var unknownSeries = false
+    private var listingsUsed = 0
+
+    mutating func record(_ identity: BatchForecastIdentity, listings: Int) {
+        touched.formUnion(identity.keys)
+        unknownSeries = unknownSeries || identity.unknownSeries
+        listingsUsed += listings
+    }
+
+    /// After any successful row of the series, the live resolution may take a different route.
+    /// Charge only the exact store listings admitted for the forecast.
+    func read(_ identity: BatchForecastIdentity,
+              capture: (Int) -> (listings: Int, note: RulesAloneOnUndo?)) -> BatchDeletionForecastRow {
+        let remaining = Self.listingLimit - listingsUsed
+        guard remaining > 0, !unknownSeries, touched.isDisjoint(with: identity.keys) else {
+            return BatchDeletionForecastRow(identity: identity, listings: 0, note: nil)
+        }
+        let result = capture(remaining)
+        return BatchDeletionForecastRow(identity: identity, listings: result.listings, note: result.note)
+    }
+}
+
 /// #416: what the `event_ids` dry run says about one row.
 enum BatchDeletionPreviewRow: Sendable, Equatable {
-    case deletes(start: Date, end: Date)
+    case deletes(start: Date, end: Date, forecast: BatchDeletionForecastRow? = nil)
     /// #436 (PR #465 verify r2): a series row that the real call deletes from its first occurrence
     /// edited on its own, which cannot be undone; the preview says so before anything is deleted.
-    case deletesThroughFirstOccurrence(start: Date, end: Date, occurrenceID: String)
+    case deletesThroughFirstOccurrence(start: Date, end: Date, occurrenceID: String, identity: BatchForecastIdentity? = nil)
     case refused(String)
 }
 
@@ -40,11 +94,11 @@ protocol EventBatchDeletionSource: Sendable {
     /// (#427): the row would delete that occurrence alone, answering for the series.
     func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult
     /// One `event_ids` dry-run row. `span` as the real row takes it, `spanAll` for span `all`.
-    /// `namedInTheCall`: every id of the call. `goneInTheCall`: the rows passed so far with span
-    /// `all`, which the real call has deleted by the time it gets to this row. Throws what the real
-    /// row would fail with when the id does not resolve.
+    /// `namedInTheCall`: every id of the call. `goneInTheCall`: requested ids of earlier `all`
+    /// rows that previewed a deletion. The optional forecast keeps its own identity state.
+    /// Throws what the real row would fail with when the id does not resolve.
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
-                              goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow
+                              goneInTheCall: Set<String>, forecast: BatchDeletionForecastContext?) async throws -> BatchDeletionPreviewRow
 }
 
 extension EventKitManager: EventBatchDeletionSource {
@@ -61,26 +115,44 @@ extension EventKitManager: EventBatchDeletionSource {
     /// Refreshed, like the writes the dry run describes (#326): a series whose first occurrence was
     /// deleted shows its first remaining occurrence, not the deleted one.
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
-                              goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
+                              goneInTheCall: Set<String>, forecast: BatchDeletionForecastContext?) async throws -> BatchDeletionPreviewRow {
         try await ensureCalendarAccess()
-        guard let event = try freshEventWithOrigin(
+        guard let resolved = try freshEventWithOrigin(
             id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll),
-            goneInTheCall: goneInTheCall)?.event else {
+            goneInTheCall: goneInTheCall) else {
             // #436: what the real row does when the series reaches only its first occurrence.
             if spanAll, let first = try firstEditedOccurrenceID(of: identifier, excluding: goneInTheCall),
                let occurrence = try freshEvent(id: first.id) {
                 if let refusal = Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) {
                     return .refused(refusal)
                 }
-                return .deletesThroughFirstOccurrence(start: occurrence.startDate, end: occurrence.endDate, occurrenceID: first.id)
+                let start: Date = occurrence.startDate, end: Date = occurrence.endDate
+                let identity = forecast.map { _ in
+                    BatchForecastIdentity(requested: identifier, resolved: occurrence.eventIdentifier,
+                                          external: occurrence.calendarItemExternalIdentifier, throughFirstOccurrence: true)
+                }
+                return .deletesThroughFirstOccurrence(start: start, end: end, occurrenceID: first.id, identity: identity)
             }
             throw notFoundError(id: identifier)
         }
+        let event = resolved.event
         // #416: what the real call refuses is not listed as a deletion.
         if spanAll, let refusal = try seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) {
             return .refused(refusal)
         }
         if !spanAll, event.hasRecurrenceRules { return .refused(Self.batchOccurrenceDateRequired) }
-        return .deletes(start: event.startDate, end: event.endDate)
+        let start: Date = event.startDate, end: Date = event.endDate
+        let estimate = forecast.map { context in
+            let identity = BatchForecastIdentity(requested: identifier, resolved: event.eventIdentifier,
+                                                 external: event.calendarItemExternalIdentifier, detached: event.isDetached)
+            return context.read(identity) { remainingListings in
+                guard let anchor = SeriesDeleteAnchor(of: event, viaStandIn: resolved.viaStandIn) else { return (0, nil) }
+                let store = self.seriesExceptionsStore
+                store.observeForForecast = anchor.observe
+                return anchor.preview(of: event, in: store, snapshot: EventSnapshot(from: event),
+                                      remainingListings: remainingListings)
+            }
+        }
+        return .deletes(start: start, end: end, forecast: estimate)
     }
 }

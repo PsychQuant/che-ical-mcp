@@ -106,7 +106,10 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bundoOperations\b"#, in: String(series)).count, 4)
         XCTAssertNotNil(Self.offset(of: Self.call("var undoOperations: [UndoOperation] = []"), in: series))
         // #538: the one append builds a whole-event delete record with the identifier read before the removal.
-        XCTAssertNotNil(Self.offset(of: Self.call("undoOperations.append(.deleteEvent(id: removedID, snapshot: snapshot))"), in: series))
+        let seriesRecord = try XCTUnwrap(Self.offset(
+            of: Self.call("let record = UndoOperation.deleteEvent(id: removedID, snapshot: snapshot)"), in: series))
+        let seriesAppend = try XCTUnwrap(Self.offset(of: Self.call("undoOperations.append(record)"), in: series))
+        XCTAssertLessThan(seriesRecord, seriesAppend)
         // PR #465 verify r1: a row through the first occurrence cannot be undone, so it is kept out
         // of the record and only reported: its array is not part of any record.
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bthroughFirstOccurrence\b"#, in: String(series)).count, 4,
@@ -115,7 +118,9 @@ final class UndoBatchWiringTests: XCTestCase {
         let events = Substring(try Self.body("func deleteEventsBatch(", in: Self.manager))
         XCTAssertNotNil(Self.offset(of: Self.call("CalendarUndoManager.shared.record(.batch(undoOperations))"), in: events))
         XCTAssertEqual(Self.count("undoOperations.append(", in: events), 1)
-        XCTAssertNotNil(Self.offset(of: Self.call("undoOperations.append(snapshots.record(for: kind))"), in: events))
+        let record = try XCTUnwrap(Self.offset(of: Self.call("let record = snapshots.record(for: kind)"), in: events))
+        let appended = try XCTUnwrap(Self.offset(of: Self.call("undoOperations.append(record)"), in: events))
+        XCTAssertLessThan(record, appended, "the appended record comes from the same snapshots and classification")
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bundoOperations\b"#, in: String(events)).count, 4)
         XCTAssertNotNil(Self.offset(of: Self.call("var undoOperations: [UndoOperation] = []"), in: events))
         XCTAssertNotNil(Self.offset(of: Self.call("if !undoOperations.isEmpty {"), in: events))

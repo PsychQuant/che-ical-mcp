@@ -673,6 +673,100 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(summary.contains("not by title"), summary)
     }
 
+    /// #539: the surfaces that describe the undo of a whole-series delete say how an occurrence edited while
+    /// its timed series had no time zone is read (as an instant, `main`'s behaviour), once per description, and
+    /// in the manifest's package description. PR #558 fix round 5: the undo of one occurrence's delete is `main`'s too,
+    /// so no surface describes a refusal at the wall-clock reading (ruling F, removed).
+    func testUndoSurfacesSayHowAnOccurrenceEditedWithoutATimeZoneIsRead() throws {
+        let read = "#539: measured on iCloud, an occurrence edited while its timed series had no time zone carries its original time as wall-clock time, which this undo reads as an instant, so on a Mac not at offset 0 at that time such a record is usually no slot of the recreated series and none of the series' exceptions is applied; #539 stays open for that"
+        let declared = CheICalMCPServer.defineTools()
+        for name in ["delete_event", "undo"] {
+            let description = declared.first { $0.name == name }?.description ?? ""
+            XCTAssertEqual(description.components(separatedBy: read).count - 1, 1, "defineTools() \(name): \(read)")
+            XCTAssertEqual(description.components(separatedBy: "(matched by the series' identifiers and the occurrence's original slot, not by title) writes nothing and says so.").count - 1, 1,
+                           "defineTools() \(name): main's slot check")
+        }
+        let batch = declared.first { $0.name == "delete_events_batch" }?.description ?? ""
+        let batchRead = "(#539: the record of an occurrence edited while its timed series had no time zone, read as an instant, is usually no slot of the recreated series on a Mac not at offset 0, as delete_event says)"
+        XCTAssertEqual(batch.components(separatedBy: batchRead).count - 1, 1, "defineTools() delete_events_batch")
+        let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
+        let summary = manifest?["long_description"] as? String ?? ""
+        let phrase = "#539: timed RIDs are read as instants and all-day RIDs by local day. On a Mac not at offset 0, a timed RID recorded while the series had no time zone is usually no slot of the recreated series and undo applies none of the exceptions. #539 stays open."
+        XCTAssertEqual(summary.components(separatedBy: phrase).count - 1, 1, "mcpb/manifest.json long_description: \(phrase)")
+    }
+
+    /// Both descriptions give the scope and abstentions next to the forecast fields.
+    func testTheDeleteSurfacesSayWhenTheUndoIsForecastFromTheRulesAlone() throws {
+        let declared = CheICalMCPServer.defineTools()
+        let absent = "A delete without the note can still come back from its rules alone."
+        let model = "The forecast is computed from the recurrence rule. The store may list different slots at undo."
+        let phrases = [
+            "delete_event": ["each recorded window of a simple daily or weekly rule from a proven first slot",
+                             "timed RIDs as instants, all-day RIDs by local day, and occurrence date or start without a readable RID",
+                             "the forecast assumes the time zone used for the rule is the same at undo",
+                             "Reasons to skip the forecast include a stand-in or an unproven first slot, failed capture or no recorded edit",
+                             "more than 20,000 expanded slots, and a kept slot absent from the model.", model, absent],
+            "delete_events_batch": ["rules_alone_on_undo with event_id and undo_note",
+                                    "A recorded delete of an occurrence and the following ones suppresses all forecasts",
+                                    "when its listed /RID= ID inherits the series row's answer.",
+                                    "after an earlier successful row of the same series",
+                                    "16 additional store listings per call.", model,
+                                    "A span future dry run gives no forecast.", absent]
+        ]
+        for (name, list) in phrases {
+            let description = declared.first { $0.name == name }?.description ?? ""
+            for phrase in list {
+                XCTAssertEqual(description.components(separatedBy: phrase).count - 1, 1, "defineTools() \(name): \(phrase)")
+            }
+        }
+        let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
+        let packageSummary = manifest?["long_description"] as? String ?? ""
+        let deletePhrase = "For delete_event, a whole-series delete can add undo_note (a forecast, not given in every case) when the undo's check is expected to apply none of the recorded exceptions: an occurrence edited on its own whose original time, read as undo reads it, is absent from the predicted restore listings, #539. The forecast is computed from the recurrence rule. The store may list different slots at undo. A delete without the note can still come back from its rules alone."
+        XCTAssertEqual(packageSummary.components(separatedBy: deletePhrase).count - 1, 1, "mcpb/manifest.json long_description")
+        let tools = manifest?["tools"] as? [[String: Any]] ?? []
+        let batchSummary = tools.first { $0["name"] as? String == "delete_events_batch" }?["description"] as? String ?? ""
+        let batchPhrase = "series rows whose undo's check is forecast to apply none of the recorded exceptions can be listed in rules_alone_on_undo with an undo_note (not in every case), and an eligible span all dry-run row can give the note with up to 16 additional store listings per call, #539. The forecast is computed from the recurrence rule. The store may list different slots at undo. A delete without the note can still come back from its rules alone"
+        XCTAssertEqual(batchSummary.components(separatedBy: batchPhrase).count - 1, 1, "mcpb/manifest.json delete_events_batch")
+    }
+
+    /// PR #558 fix round 4: no surface describes the restore rounds 0 to 3 changed and fix round 4 gave back
+    /// to `main`: two readings of a whole-series delete's record, a floating edit that stops it, a record
+    /// ending before it starts that stops it (ruling E). Fix round 5: nor ruling F's refusal at the wall-clock
+    /// reading, nor the old wording of the forecast (verify finding Q9).
+    func testNoSurfaceDescribesTheWithdrawnRestore() throws {
+        var texts = CheICalMCPServer.defineTools().map { "\($0.description ?? "") \(String(describing: $0.inputSchema))" }
+        let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
+        texts += (manifest?["tools"] as? [[String: Any]] ?? []).compactMap { $0["description"] as? String }
+        if let summary = manifest?["long_description"] as? String { texts.append(summary) }
+        for text in texts {
+            for retired in ["cannot be read reliably", "two readings", "stops them as well", "ends before it starts as this Mac reads it",
+                            "on a Mac at offset 0 that time has one reading and is applied as before #539",
+                            "read as wall-clock time", "seldom matches", "every occurrence edited on its own comes back without its edit",
+                            "more slots than the check expands"] {
+                XCTAssertFalse(text.contains(retired), retired)
+            }
+        }
+    }
+
+    /// #541: the `clear_timezone` parameter of `update_event` says the event is left floating, not in
+    /// the system time zone, with what was measured on iCloud and on Google, once each (fix round 4, C8:
+    /// the #503 refusal as measured and the conditions under which the check sees it).
+    func testClearTimezoneSaysTheEventIsLeftFloating() throws {
+        let update = CheICalMCPServer.defineTools().first { $0.name == "update_event" }
+        let text = "\(String(describing: update?.inputSchema))"
+        XCTAssertFalse(text.contains("revert to system timezone"), "the retired claim")
+        for phrase in ["On iCloud it read back floating (item_timezone null) immediately, after 90 seconds and after 10 minutes on 2026-11-13.",
+                       "On a Google calendar the series read a time zone again within 90 seconds",
+                       "A reader can adjust a time skipped at a daylight-saving change",
+                       "display_timezone controls the server's formatted local strings",
+                       "This server reads a timed RID as an instant and an all-day RID by its local day.",
+                       "On iCloud on a Mac at +08:00",
+                       "the nonzero offset makes this wall-clock reading differ from the intended instant",
+                       "Other changes, such as a move after the edit, can leave a stale slot even at UTC."] {
+            XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, phrase)
+        }
+    }
+
     /// #285: undo of a whole-series delete recreates the series from its rules and restores its
     /// exceptions inside the scan window: an occurrence deleted on its own earlier stays deleted,
     /// one edited on its own comes back as a separate one-off event, and exceptions outside the

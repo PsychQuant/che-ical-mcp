@@ -621,8 +621,18 @@ final class EventRangeQueryTests: XCTestCase {
                        "one query per range it is given")
         // Round 6: its callers give the listing ranges of the delete window, or the merged ranges of
         // both windows of a count (`SeriesDeleteWindowTests`/`SeriesExceptionsWindowsTests` bound both).
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"observedOccurrences\(of: series, ids: seriesIDs,\s*over: SeriesExceptionsPlanner\.listingRanges\((for: window|covering: \[window, fromFirst\])\), in: store\)"#, in: undo).count, 2,
-                       "two callers: the delete window, and the two windows of a count")
+        for (rangeArgument, windowArgument, observed) in [
+            ("for: window", "[window]", "observed"),
+            ("covering: windows", "windows", "both")
+        ] {
+            let ranges = "let ranges = SeriesExceptionsPlanner.listingRanges(\(rangeArgument))"
+            let gate = "guard admitPreview?(\(windowArgument), ranges) ?? true else { return nil }"
+            let query = "let \(observed) = observedOccurrences(of: series, ids: seriesIDs, over: ranges, in: store)"
+            let collapsed = SourceScan.collapsingWhitespace(capture)
+            XCTAssertEqual(SourcePins.ranges(of: "\(ranges) \(gate) \(query)", in: collapsed).count, 1,
+                           "the same planned listing ranges are checked and used")
+        }
+        XCTAssertEqual(SourcePins.ranges(of: "observedOccurrences(of:", in: capture).count, 2)
         // #319: the delete window, one query long (`SeriesDeleteWindowTests.testNoWindowIsLongerThanOneQuery`).
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"let placed = SeriesExceptionsPlanner\.deleteWindow\(firstStart: store\.startDate\(of: series\), end: seriesEnd,\s*deletedAt: now\)\s*let window = placed\.window"#, in: capture).count, 1)
         // Round 4: the second window is the create-undo window, uncut (1460 days).

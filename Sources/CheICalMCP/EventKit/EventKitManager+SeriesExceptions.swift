@@ -26,6 +26,15 @@ extension EventKitManager {
         SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore)
     }
 
+    /// Sample the anchor from the rows this capture already reads. Passing nil uses the normal
+    /// capture path, including when the series is known to have resolved through a stand-in.
+    func captureSeriesExceptionsForDelete(of series: EKEvent, anchor: SeriesDeleteAnchor?) -> SeriesExceptions? {
+        guard let anchor else { return captureSeriesExceptions(of: series) }
+        let store = seriesExceptionsStore
+        store.observeForForecast = anchor.observe
+        return SeriesExceptionsUndo.capture(of: series, in: store)
+    }
+
     /// The `.deleteEvent` undo arm (`SeriesExceptionsUndo.recreateDeletedEvent`).
     /// `kind` words a missing calendar: `.undoMoveByCopy` for the source of a move by copy (#466).
     /// #538: `removedID` is the identifier the record holds, nil for the source of a move by copy

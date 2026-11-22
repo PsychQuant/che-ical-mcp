@@ -1315,6 +1315,25 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 一次**：iCloud 曾把刪掉的拋棄式日曆空著帶回來（#416 一節記過 2026-11-05 的一次，新的 id、空的；2026-11-16 又出現一個空的 `#532 L`），
 有的話依 id 再刪一次並記下來。計數只代表計數的那一刻。
 
+## Release gate：整個系列刪除的預告（#539）
+
+**#539 維持開啟。** 整個系列刪除的擷取與 undo，以及單一場次刪除和 split move 來源的 #321 時段檢查沿用 `main`。非全天場次的 `/RID=` 讀成時刻，全天場次則依本地日期讀取。系列沒有時區時做的修改，如果記錄的時段和重建後實際列出的場次不符，整個系列的 undo 就不套用記錄的例外。PR #558 加入刪除時的預告（`undo_note`、`rules_alone_on_undo`）並更新 #541 的 `clear_timezone` 說明。預告以可確認的第一場和重複規則推算各個視窗的場次，undo 時列出的場次可能不同。沒有預告時，undo 仍可能只依規則重建。Dry run 遇到同系列或無法辨識系列的成功前列時略過預告，每次呼叫最多增加 16 次儲存服務列舉。
+
+版本打 tag 前，從待發行的 commit 編譯 release binary 並用 Developer ID 簽章。只用本次建立、名稱含 `#539` 的拋棄式 iCloud 行事曆。每格只啟動該 binary 的一個獨立 stdio 程序，刪除與 undo 都在同一程序執行。設定與篩選讀回可用該 binary 的 `--cli`。系列每週一次，第一場是 2027-01-04 10:00，建立時用 `timezone: Asia/Taipei` 與 `end_date` 2027-02-16 23:00（如果測試日期變動，用同樣的相對間隔往後移）。「說明」指回應的 `undo_note` 以 `Undo is expected to bring this series back from its rules alone: ` 加上件數開頭，dry run 的列以 `Undo of this row would be expected to bring the series back from its rules alone: ` 開頭。
+
+1. **E1**：第 3 場改標題，再用系列 ID、span `all` 把整個系列往後移一小時。以 `delete_event` span `all` 刪除，預期說明列出 1 筆，undo 回應只依規則重建。
+2. **E2**：同 E1，但以 `delete_event` span `future`、`occurrence_date` 為移動後的第一場（11:00）刪除。預期說明列出 1 筆，undo 回應只依規則重建。
+3. **E3**：以 span `all` 清除時區，再改第 3 場標題。以 `delete_event` span `all` 刪除，在時差為 `+08:00` 的測試主機預期說明列出 1 筆，undo 回應只依規則重建。
+4. **E4**（對照）：第 3 場改標題，時間維持原時段。以 `delete_event` span `all` 刪除，預期沒有說明，undo 套用例外並寫回 1 筆獨立事件。
+5. **B1**：同 E1。以 `delete_events_batch` dry run 查 `[系列 ID]`，預期有說明。確認第 3 場自己的 id 與篩選列出的 id 相同，再查 `[第 3 場自己的 ID, 系列 ID]`，預期兩列都沒有說明。實際刪除同兩列時，預期兩列都刪除且沒有 `rules_alone_on_undo`。
+6. **B2**：同 E1，但以 `delete_events_batch` 刪除 `[系列 ID]`。預期 `rules_alone_on_undo` 列出該列與 1 筆說明，undo 回應只依規則重建。
+7. **E5**（對照）：第 3 場用 span `this` 刪除，再以 `delete_event` span `all` 刪除整個系列。預期沒有說明，undo 套用例外，第 3 場維持刪除。
+
+在 E1 至 E5 與 B2 比對刪除預告和實際 undo 回應。任一格不一致時，停止後續測試並記錄該格差異。依 ID 刪除本次建立的日曆，仍要完成清理。接著用 `--cli` 篩選查詢兩次，間隔至少一分鐘。複查只查詢本次建立的拋棄式行事曆名稱，記錄仍可找到的名稱、數量及時間。版本打 tag 前的結果記在 #539，列出建置 SHA、簽章、各格的預告與 undo 回應，以及兩次清理複查。
+
+本輪建置 SHA、簽章、逐格結果及清理時間記在 [PR #558](https://github.com/PsychQuant/che-ical-mcp/pull/558) 的 **Verify-fix (round 7)**。E3 的 UTC 結果由固定時差的單元測試檢查。Opaque ID 與其他提供者未納入這批裝置量測。儲存層矩陣採用共用解析結果及重建場次，15,696 格中有 2,324 格兩邊都未執行 undo。鏈式測試共用 occurrence origin 的讀法與擬定的刪除後狀態。
+
+
 ## Release gate：delete 的 undo 之後較舊的紀錄（#538）
 
 #538 讓 delete 的 undo 重建項目之後，較舊的 undo 紀錄跟到新的 ID（`DeleteUndoFollow.decision`、`undoDeletedEvent(removedID:)`、

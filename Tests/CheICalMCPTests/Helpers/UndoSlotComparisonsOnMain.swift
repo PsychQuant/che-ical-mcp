@@ -219,3 +219,26 @@ extension SeriesUpdateUndo {
         return result
     }
 }
+
+/// The base capture uses the same recorded slot convention as production. The copied body
+/// matches 92d9b796 and 7f75f97d after restoring its original name.
+extension SeriesExceptionsPlanner {
+    static func captureOnMain(_ observed: [ObservedOccurrence], of series: UndoPostState.OccurrenceIDs,
+                              windows: [DateInterval]) -> SeriesExceptions? {
+        guard let first = windows.first else { return nil }
+        var kept: [Date] = []
+        var detached: [DetachedOccurrence] = []
+        for occurrence in observed where UndoPostState.isOccurrence(occurrence.ids, of: series) {
+            if occurrence.isDetached {
+                let slot = Self.ruleSlot(of: occurrence)
+                if Self.inWindows(slot, windows) { detached.append(DetachedOccurrence(slot: slot, snapshot: occurrence.snapshot)) }
+            } else {
+                let slot = occurrence.occurrenceDate ?? occurrence.startDate
+                if Self.inWindows(slot, windows) { kept.append(slot) }
+            }
+        }
+        guard !kept.isEmpty || !detached.isEmpty else { return nil }
+        return SeriesExceptions(window: first, keptSlots: kept.sorted(), detached: detached.sorted { $0.slot < $1.slot },
+                                extraWindows: Array(windows.dropFirst()))
+    }
+}
