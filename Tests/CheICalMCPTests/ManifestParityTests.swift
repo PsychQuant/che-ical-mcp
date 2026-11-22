@@ -702,7 +702,7 @@ final class ManifestParityTests: XCTestCase {
     func testTheDeleteSurfacesSayWhenTheUndoIsForecastFromTheRulesAlone() throws {
         let declared = CheICalMCPServer.defineTools()
         let phrases = [
-            "delete_event": ["checks each one's original time, read as the undo reads it (as an instant), against the slots the series' rule gives from its first slot to the end of the last window it records (#539).",
+            "delete_event": ["checks each one's original time, read as the undo reads it (timed slots as instants and all-day slots by local day), against the slots the series' rule gives from its first slot to the end of the last window it records (#539).",
                              "When one is no slot (for example the series was moved after the edit, or it had no time zone when the edit was made and this Mac is not at offset 0), the undo's check is expected to apply none of the recorded exceptions, and the answer adds undo_note saying so, with how many records are off the rule: the undo is expected to recreate the series from its rule without writing back an edited occurrence or removing a slot.",
                              "That is a forecast made at the delete, and the undo decides on the recreated series; the undo itself is unchanged.",
                              "when that rule gives more than 20,000 slots from the first slot to the end of that window (the #503 expander's limit)",

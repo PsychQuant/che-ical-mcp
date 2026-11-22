@@ -257,8 +257,8 @@ Before a whole-series delete removes anything, the server SHALL read the recorde
 
 #### Scenario: A floating edit comes back as on main
 
-- **WHEN** a weekly series is given no time zone, one occurrence is retitled and another moved, the series is deleted whole and the delete is undone
-- **THEN** the undo leaves the calendar and answer `main`'s run of the same sequence leaves: on a host not at offset 0 the series comes back from its rules alone and the undo text says the recorded exceptions did not match; on a host at UTC both edits come back as one-off events
+- **WHEN** a weekly timed series has no time zone, a later occurrence is retitled and another later occurrence is moved while both original slots are within the recorded window, then the whole-series delete is undone
+- **THEN** the undo leaves the calendar and answer `main`'s run of the same sequence leaves: if the instant reading leaves either record off the recreated rule, the series comes back from its rules and the undo text says the recorded exceptions did not match; when both records match generated slots and the capture passes the consistency check, both edits come back as one-off events
 
 ##### Example: a floating edit comes back as on main
 
@@ -285,8 +285,8 @@ Before a whole-series delete removes anything, the server SHALL read the recorde
 
 #### Scenario: An edit made while the series had its zone
 
-- **WHEN** an occurrence is retitled while its series has a time zone, the series' zone is then cleared without changing its times, another occurrence is deleted on its own, and the series is deleted whole and the delete undone
-- **THEN** the edit comes back as a one-off event and the deleted occurrence stays deleted, in every host zone, as on `main`
+- **WHEN** a later occurrence is retitled while its series has a time zone, the zone is then cleared without changing the generated slots, another later occurrence is deleted on its own, and the whole-series delete is undone with both slots within the recorded window and the capture passing the consistency check
+- **THEN** the edit comes back as a one-off event and the deleted occurrence stays deleted, as on `main`
 
 #### Scenario: The undo of an occurrence's delete after its series was restored
 

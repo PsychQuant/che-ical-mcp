@@ -124,7 +124,8 @@ private actor SeriesModel: EventBatchDeletionSource {
         } else if let refusal = try judge(identifier, named: namedInTheCall, gone: goneInTheCall) {
             return .refused(refusal)
         }
-        return .deletes(start: Date(timeIntervalSinceReferenceDate: 0), end: Date(timeIntervalSinceReferenceDate: 3600))
+        return .deletes(start: Date(timeIntervalSinceReferenceDate: 0), end: Date(timeIntervalSinceReferenceDate: 3600),
+                        resolvedIdentifier: identifier)
     }
 
     /// A row with span `this` or `future`: the edited-before refusal only with span `future`, and a

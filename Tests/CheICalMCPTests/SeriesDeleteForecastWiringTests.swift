@@ -119,10 +119,13 @@ final class SeriesDeleteForecastWiringTests: XCTestCase {
                        "let exceptions = captureSeriesExceptionsForDryRun(of: series, goneInTheCall: goneInTheCall)",
                        "return unplacedEditsAtDelete(exceptions, of: series, id: identifier, viaStandIn: resolved.viaStandIn, goneInTheCall: goneInTheCall)"],
                       in: manager, "the manager's dry-run forecast")
+        let source = try code("EventBatchDeletionSource.swift")
+        XCTAssertTrue(source.contains("return .deletes(start: event.startDate, end: event.endDate, resolvedIdentifier: event.eventIdentifier)"))
         let rows = try body("private func previewDeletionRows(_ eventIds: [String], spanStr: String) async -> [[String: Any]] {", in: "Server.swift")
-        assertInOrder(["case .deletes(let start, let end):",
+        assertInOrder(["case .deletes(let start, let end, let resolvedIdentifier):",
                        "if spanAll { let unplacedEdits = await eventBatchDeletionSource.previewUndoForecast(identifier: id, goneInTheCall: gone)",
-                       "if let unplacedEdits { deletion[\"undo_note\"] = Self.batchPreviewRulesAloneNote(unplacedEdits) } gone.insert(id) }"],
+                       "if let unplacedEdits { deletion[\"undo_note\"] = Self.batchPreviewRulesAloneNote(unplacedEdits) }",
+                       "if let resolvedIdentifier { gone.insert(resolvedIdentifier) }"],
                       in: rows, "the dry run's span all row")
     }
 }

@@ -38,11 +38,11 @@ final class UndoForecastDocsTests: XCTestCase {
 
     func testTheReadmesSayHowTheUndoReadsAnOccurrenceEditedWithoutATimeZone() throws {
         try assertOnce(["**A series with no time zone (#539, not fixed):**",
-                        "Every undo reads that part as an instant, as before #539: the undo of a whole-series delete, and the check of #321 in the undo of an occurrence's delete (or of a split move's source) whether the restored series already holds its slot.",
+                        "The whole-series delete undo and the #321 slot check in the undo of an occurrence delete or a split move's source read timed RIDs as instants and all-day RIDs by local day, as before #539.",
                         "**These are `main`'s own; #539 stays open for them.**",
                         "PR #558 changed these undos in five rounds, and each verify round found a shape in which its version did worse than before, so they are as they were;"], in: "README.md")
         try assertOnce(["**沒有時區的系列（#539，沒有修好）：**",
-                        "每一個 undo 都把這段讀成時刻，跟 #539 之前一樣：",
+                        "非全天場次的 RID 讀成時刻，全天場次依本地日期讀取。",
                         "**這些是 `main` 本身的行為；#539 保持 open 給它們。**",
                         "PR #558 前後五輪改過這些 undo，"], in: "README_zh-TW.md")
         try assertNone(retired + ["a matrix test shows that leaving", "its slot is removed with the occurrence",
@@ -60,11 +60,14 @@ final class UndoForecastDocsTests: XCTestCase {
 
     func testTheReleaseGateListsTheCellsAndWhatWasNotMeasured() throws {
         try assertOnce(["## Release gate：整個系列刪除的預告（#539）",
-                        "**沒有時區的系列的修改不由 undo 還原，#539 保持 open。**",
+                        "**#539 維持開啟。**",
+                        "非全天場次的 `/RID=` 讀成時刻，全天場次則依本地日期讀取。",
+                        "如果記錄下來的時段和重建後的規則時段不符，整個系列的 undo 就不套用任何記錄的例外。",
                         "PR #558 只加上兩件事：",
                         "1. **E1**：", "2. **E2**：", "3. **E3**：", "4. **E4**（對照）：", "5. **B1**：", "6. **B2**：",
-                        "不透明 id（`/RID=` 只在 external identifier 裡）的 dry run 形狀在 iCloud 上做不出來"], in: ".claude/rules/mcp-binary-version-testing.md")
-        try assertNone(["## Release gate：沒有時區的系列，修改過的場次在 undo 裡的讀法（#539）", "永遠不比 `main` 差", "裁定 F 在另一個主機時區"],
+                        "不透明 id（`/RID=` 只在 external identifier 裡）的 dry run 形狀有記憶體內 store 的測試"], in: ".claude/rules/mcp-binary-version-testing.md")
+        try assertNone(["## Release gate：沒有時區的系列，修改過的場次在 undo 裡的讀法（#539）", "永遠不比 `main` 差",
+                        "裁定 F 在另一個主機時區", "沒有時區的系列的修改不由 undo 還原"],
                        in: ".claude/rules/mcp-binary-version-testing.md")
     }
 
@@ -94,5 +97,13 @@ final class UndoForecastDocsTests: XCTestCase {
         try assertNone(retired + ["**The undo of one occurrence's delete is refused where a restored series with no time zone may already hold it**",
                                   "more than one rule or more than 20,000 slots,"], in: "CHANGELOG.md")
         try assertNone(retired, in: "README.md")
+        let spec = [
+            "An edited occurrence's recorded slot is read as an instant, and a whole-series delete forecasts its undo",
+            "as an instant; an all-day one as its local day",
+            "by their own event identifiers, before the record reduces an occurrence to its slot",
+            "if the instant reading leaves either record off the recreated rule"
+        ]
+        try assertOnce(spec, in: "openspec/specs/undo-history-discard/spec.md")
+        try assertOnce(Array(spec.dropFirst()), in: "openspec/changes/archive/2026-11-22-idd-539-fix5/specs/undo-history-discard/spec.md")
     }
 }

@@ -252,8 +252,8 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
             fail("applied nothing where the edit must come back")
         }
 
-        // The delete's forecast (`unplacedEdits`), where it can be read: the series object, its first
-        // occurrence plain at its start (`wholeSeriesBaseline` gives `.stored`).
+        // Compare the planner against the restore using the fixture's first slot and rule. These
+        // inputs model the case where the manager can establish a plain first occurrence.
         if firstIsPlain {
             let rule = DeletedOccurrenceCheck.Rule(frequency: cell.step == day ? .daily : .weekly, interval: 1, daysOfWeek: [], daysOfMonth: [],
                                                    endDate: nil, occurrenceCount: cell.count, hasOtherParts: false)

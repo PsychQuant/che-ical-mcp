@@ -30,6 +30,7 @@ private actor ForecastBatch: EventBatchDeletionSource {
     private let rows: [String: BatchDeletionPreviewRow]
     private let forecasts: [String: RulesAloneOnUndo]
     private(set) var forecastAsks: [String] = []
+    private(set) var forecastExclusions: [String: Set<String>] = [:]
 
     init(listed: [BatchDeletionListedEvent] = [], result: BatchDeleteResult = BatchDeleteResult(successCount: 0, failedCount: 0, failures: []),
          rows: [String: BatchDeletionPreviewRow] = [:], forecasts: [String: RulesAloneOnUndo] = [:]) {
@@ -50,6 +51,7 @@ private actor ForecastBatch: EventBatchDeletionSource {
     }
     func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> RulesAloneOnUndo? {
         forecastAsks.append(identifier)
+        forecastExclusions[identifier] = goneInTheCall
         return forecasts[identifier]
     }
 }
@@ -167,6 +169,24 @@ final class SeriesDeleteForecastHandlerTests: XCTestCase {
         XCTAssertNil(preview.first { $0["event_id"] as? String == "U" }?["undo_note"])
         let asked = await fake.forecastAsks
         XCTAssertEqual(asked, ["S", "U"])
+    }
+
+    func testTheDryRunForecastExcludesTheResolvedOccurrenceIdentifier() async throws {
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        let requested = "S/RID=42"
+        let resolved = "opaque-occurrence"
+        let fake = ForecastBatch(rows: [
+            requested: .deletes(start: start, end: start.addingTimeInterval(3600), resolvedIdentifier: resolved)
+        ])
+        let answer = try await batch(fake, [
+            "event_ids": .array([.string("S"), .string(requested)]),
+            "span": .string("all"),
+            "dry_run": .bool(true)
+        ])
+        let preview = try rows(answer)
+        XCTAssertEqual(preview.compactMap { $0["event_id"] as? String }, [requested, "S"])
+        let exclusions = await fake.forecastExclusions
+        XCTAssertEqual(exclusions["S"], Set([resolved]))
     }
 
     /// The three row-level notes exclude each other: a row through the first occurrence (#436) and an

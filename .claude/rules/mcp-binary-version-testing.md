@@ -1308,10 +1308,10 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 
 ## Release gate：整個系列刪除的預告（#539）
 
-**沒有時區的系列的修改不由 undo 還原，#539 保持 open。** PR #558 fix round 5 之後，每一個 undo 都是 `main`（`92d9b796`）的：整個系列刪除的擷取與還原，
-以及單一場次刪除（與 split move 的來源）的 undo 裡 #321 的時段檢查，都把修改過的場次的 `/RID=` 讀成時刻（round 0 到 3 在整個系列的還原、round 1 到 4 在
-時段檢查裡讀兩種讀法，每一輪 verify 都找到比 `main` 差的形狀）。PR #558 只加上兩件事：
-- 刪除時的預告（`undo_note`、`rules_alone_on_undo`）：記錄的時段（讀成時刻）有不是規則時段的，`main` 的一致性檢查就不套用任何例外，回應預告這件事；
+**#539 維持開啟。** PR #558 第五輪修正後，整個系列刪除的擷取與 undo，以及單一場次刪除和 split move 來源的 #321 時段檢查，
+都沿用 `main`（`92d9b796`）。非全天場次的 `/RID=` 讀成時刻，全天場次則依本地日期讀取。系列沒有時區時做的修改，
+如果記錄下來的時段和重建後的規則時段不符，整個系列的 undo 就不套用任何記錄的例外。PR #558 只加上兩件事：
+- 刪除時的預告（`undo_note`、`rules_alone_on_undo`）：記錄的時段有不是規則時段的，`main` 的一致性檢查就不套用任何例外，回應預告這件事；
   `delete_events_batch` 的 dry run 以識別碼排除同一次呼叫裡較早的列刪掉的場次（C3、Q2）。
 - #541 的 `clear_timezone` 描述。
 
@@ -1328,16 +1328,16 @@ from its rules alone: `）：
    沒有 `rules_alone_on_undo`，兩列都刪除。
 6. **B2**：同 E1 的系列 → `delete_events_batch` 實際呼叫 `[系列 id]`：`rules_alone_on_undo` 列出那一列與說明。
 
-不透明 id（`/RID=` 只在 external identifier 裡）的 dry run 形狀在 iCloud 上做不出來（它的 id 都是 `/RID=` 形式），只有記憶體內 store 的測試。undo 是 `main` 的，
+不透明 id（`/RID=` 只在 external identifier 裡）的 dry run 形狀有記憶體內 store 的測試，這次 iCloud 裝置格只用到含 `/RID=` 的場次 id。undo 是 `main` 的，
 答案以測試對 `main` 的副本（`SeriesUndoOnMain`）斷言（`FloatingSeriesExceptionsUndoTests`、`WholeSeriesUndoChainOnMainTests`、`ZonedSeriesUndoOnMainTests`、矩陣），
 不在這個 gate 裡。
 
-PR #558 fix round 5（2026-11-22）用 `19ab96dd` 的 Developer ID 簽章 release build（有時間戳記）以 `--cli` 做第 1 到 6 步，結果都如上（E3 在這台 `+08:00` 的 Mac 上）；6 個拋棄式日曆依 id 刪除；11:02:47 與 11:03:52（+08:00）兩次計數，名稱含 `#539` 的都是 0（只有 #484 的兩個 Google 日曆）。發布的 binary 還沒有做。
+PR #558 fix round 5（2026-11-22）用 `19ab96dd` 的 Developer ID 簽章 release build（有時間戳記）以 `--cli` 做第 1 到 6 步，結果都如上（E3 在這台 `+08:00` 的 Mac 上）。6 個拋棄式行事曆依 id 刪除，11:02:47 與 11:03:52（+08:00）兩次計數，名稱含 `#539` 的都是 0。發布的 binary 還沒有做。
 
 **沒做、記成未量**：iCloud 以外的來源；session MCP（預告不需要它）；`main` 的 undo 在這種系列上的結果記在 #539，不是這個 PR 的。較早幾輪的裝置紀錄（round 0 到 4，
 2026-11-16 到 22）記在 #539 的 Implementation Complete 與 Verify-fix 留言；那些 build 的 undo 與現在不同，結果不適用於這個 head。
 
-結果記在 #539。結束後刪掉拋棄式日曆，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#539` 的都是 0。
+結果記在 #539。結束後依 id 刪除這次建立的拋棄式行事曆，相隔至少一分鐘複查兩次，記錄還能查到的測試 id 數。
 
 ## Release gate：delete 的 undo 之後較舊的紀錄（#538）
 

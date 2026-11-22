@@ -16,7 +16,8 @@ struct BatchDeletionListedEvent: Sendable, Equatable {
 
 /// #416: what the `event_ids` dry run says about one row.
 enum BatchDeletionPreviewRow: Sendable, Equatable {
-    case deletes(start: Date, end: Date)
+    /// Use the resolved event's identifier when treating this row as gone during later previews.
+    case deletes(start: Date, end: Date, resolvedIdentifier: String? = nil)
     /// #436 (PR #465 verify r2): a series row that the real call deletes from its first occurrence
     /// edited on its own, which cannot be undone; the preview says so before anything is deleted.
     case deletesThroughFirstOccurrence(start: Date, end: Date, occurrenceID: String)
@@ -90,7 +91,7 @@ extension EventKitManager: EventBatchDeletionSource {
             return .refused(refusal)
         }
         if !spanAll, event.hasRecurrenceRules { return .refused(Self.batchOccurrenceDateRequired) }
-        return .deletes(start: event.startDate, end: event.endDate)
+        return .deletes(start: event.startDate, end: event.endDate, resolvedIdentifier: event.eventIdentifier)
     }
 
     /// #539 step 6: resolved as `previewEventDeletion` resolves a row with span `all`, and captured as
