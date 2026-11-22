@@ -82,7 +82,7 @@ final class EventMoveFieldsTests: XCTestCase {
     /// #230: `copy_event` and the fallback copy of `move_events_batch` used to rebuild every
     /// alarm from its offset, so an absolute or location alarm landed at the event start and
     /// an email alarm became a display alarm.
-    func testCopyKeepsAbsoluteLocationAndEmailAlarms() {
+    func testCopyKeepsAbsoluteLocationAndEmailAlarms() throws {
         let source = EKEvent(eventStore: store)
         source.title = "Review"
         source.startDate = Date(timeIntervalSince1970: 1_800_086_400)
@@ -99,7 +99,7 @@ final class EventMoveFieldsTests: XCTestCase {
         email.emailAddress = "owner@example.com"
         source.addAlarm(email)
 
-        let copy = EventKitManager.makeCopy(of: source, in: EKCalendar(for: .event, eventStore: store), store: store)
+        let copy = try EventKitManager.makeCopy(of: source, in: EKCalendar(for: .event, eventStore: store), store: store)
 
         XCTAssertEqual(alarms(copy), alarms(source))
         XCTAssertEqual(copy.alarms?.count, 4)
@@ -118,11 +118,11 @@ final class EventMoveFieldsTests: XCTestCase {
         return event
     }
 
-    func testSplitCopyPutsAnAbsoluteAlarmAtTheOccurrenceStartAndSaysSo() {
+    func testSplitCopyPutsAnAbsoluteAlarmAtTheOccurrenceStartAndSaysSo() throws {
         let subject = occurrence()
 
         let planned = EventKitManager.copyOutAlarms(of: subject, isSplit: true)
-        let copy = EventKitManager.makeCopy(of: subject, alarms: planned.alarms,
+        let copy = try EventKitManager.makeCopy(of: subject, alarms: planned.alarms,
                                             in: EKCalendar(for: .event, eventStore: store), store: store)
 
         XCTAssertEqual((copy.alarms ?? []).compactMap(\.absoluteDate), [])

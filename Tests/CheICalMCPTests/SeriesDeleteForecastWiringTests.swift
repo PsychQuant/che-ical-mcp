@@ -95,9 +95,9 @@ final class SeriesDeleteForecastWiringTests: XCTestCase {
     func testTheDryRunReadsTheResolvedIdentityInBothDeletionArms() throws {
         let source = try code("EventBatchDeletionSource.swift")
         assertInOrder(["BatchForecastIdentity(requested: identifier, resolved: occurrence.eventIdentifier, external: occurrence.calendarItemExternalIdentifier, throughFirstOccurrence: true)",
-                       "return .deletesThroughFirstOccurrence(start: start, end: end, occurrenceID: first.id, identity: identity)",
+                       "return .deletesThroughFirstOccurrence(start: start, end: end, occurrenceID: first.id, isAllDay: occurrence.isAllDay, timeZone: occurrence.timeZone, identity: identity)",
                        "BatchForecastIdentity(requested: identifier, resolved: event.eventIdentifier, external: event.calendarItemExternalIdentifier, detached: event.isDetached)",
-                       "return .deletes(start: start, end: end, forecast: estimate)"], in: source, "record the fetched identity on either route")
+                       "return .deletes(start: start, end: end, isAllDay: event.isAllDay, timeZone: event.timeZone, forecast: estimate)"], in: source, "record the fetched identity on either route")
     }
 
     func testBatchDefersForecastWorkUntilStructuralRefusalsAreKnown() throws {
@@ -135,11 +135,11 @@ final class SeriesDeleteForecastWiringTests: XCTestCase {
                        "if spanAll, let refusal = try seriesDeleteRefusal(",
                        "let start: Date = event.startDate, end: Date = event.endDate", "context.read(identity)",
                        "store.observeForForecast = anchor.observe", "return anchor.preview(of: event, in: store",
-                       "return .deletes(start: start, end: end, forecast: estimate)"], in: source, "the read-only preview")
+                       "return .deletes(start: start, end: end, isAllDay: event.isAllDay, timeZone: event.timeZone, forecast: estimate)"], in: source, "the read-only preview")
         let handler = try body("private func previewDeletionRows(_ eventIds: [String], spanStr: String) async -> [[String: Any]] {", in: "Server.swift")
         assertInOrder(["goneInTheCall: gone, forecast: spanAll ? forecast : nil)",
                        "gone.insert(id) if let estimate", "forecast.record(estimate.identity, listings: estimate.listings)",
-                       "case .deletesThroughFirstOccurrence(let start, let end, let occurrenceID, let identity): if spanAll { gone.insert(id)"],
+                       "case .deletesThroughFirstOccurrence(let start, let end, let occurrenceID, let isAllDay, let timeZone, let identity): if spanAll { gone.insert(id)"],
                       in: handler, "preserve main's requested identifiers")
     }
 }

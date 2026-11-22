@@ -12,6 +12,8 @@ struct BatchDeletionListedEvent: Sendable, Equatable {
     /// #427: an occurrence edited on its own, by its own identifier. Read by tests and filled by the
     /// listing only: the handler judges a row through `previewEventDeletion` (cluster verify r2).
     var isDetached = false
+    var isAllDay = false
+    var timeZone: TimeZone? = nil
 }
 
 /// The requested, resolved and external identifiers are forecast inputs only. Match the series
@@ -70,10 +72,12 @@ struct BatchDeletionForecastContext: Sendable {
 
 /// #416: what the `event_ids` dry run says about one row.
 enum BatchDeletionPreviewRow: Sendable, Equatable {
-    case deletes(start: Date, end: Date, forecast: BatchDeletionForecastRow? = nil)
+    case deletes(start: Date, end: Date, isAllDay: Bool = false, timeZone: TimeZone? = nil,
+                 forecast: BatchDeletionForecastRow? = nil)
     /// #436 (PR #465 verify r2): a series row that the real call deletes from its first occurrence
     /// edited on its own, which cannot be undone; the preview says so before anything is deleted.
-    case deletesThroughFirstOccurrence(start: Date, end: Date, occurrenceID: String, identity: BatchForecastIdentity? = nil)
+    case deletesThroughFirstOccurrence(start: Date, end: Date, occurrenceID: String, isAllDay: Bool = false,
+                                       timeZone: TimeZone? = nil, identity: BatchForecastIdentity? = nil)
     case refused(String)
 }
 
@@ -109,7 +113,8 @@ extension EventKitManager: EventBatchDeletionSource {
         try await listEvents(startDate: startDate, endDate: endDate, calendarName: calendarName,
                              calendarSource: calendarSource)
             .map { BatchDeletionListedEvent(identifier: $0.eventIdentifier, start: $0.startDate,
-                                            end: $0.endDate, slot: $0.occurrenceDate, isDetached: $0.isDetached) }
+                                            end: $0.endDate, slot: $0.occurrenceDate,
+                                            isDetached: $0.isDetached, isAllDay: $0.isAllDay, timeZone: $0.timeZone) }
     }
 
     /// Refreshed, like the writes the dry run describes (#326): a series whose first occurrence was
@@ -131,7 +136,9 @@ extension EventKitManager: EventBatchDeletionSource {
                     BatchForecastIdentity(requested: identifier, resolved: occurrence.eventIdentifier,
                                           external: occurrence.calendarItemExternalIdentifier, throughFirstOccurrence: true)
                 }
-                return .deletesThroughFirstOccurrence(start: start, end: end, occurrenceID: first.id, identity: identity)
+                return .deletesThroughFirstOccurrence(start: start, end: end, occurrenceID: first.id,
+                                                      isAllDay: occurrence.isAllDay, timeZone: occurrence.timeZone,
+                                                      identity: identity)
             }
             throw notFoundError(id: identifier)
         }
@@ -153,6 +160,7 @@ extension EventKitManager: EventBatchDeletionSource {
                                       remainingListings: remainingListings)
             }
         }
-        return .deletes(start: start, end: end, forecast: estimate)
+        return .deletes(start: start, end: end, isAllDay: event.isAllDay, timeZone: event.timeZone,
+                        forecast: estimate)
     }
 }

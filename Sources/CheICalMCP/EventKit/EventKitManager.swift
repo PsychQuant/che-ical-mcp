@@ -1198,7 +1198,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         occurrenceDate: Date? = nil,
         applyToAll: Bool = false,
         timezone: TimeZone? = nil,
-        clearTimezone: Bool = false
+        clearTimezone: Bool = false,
+        skippedMidnightEndpoint: String? = nil
     ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?, deletionsChecked: DeletionCheckHorizon?) {
         try await ensureCalendarAccess()
 
@@ -1217,7 +1218,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                         location: location, url: url, calendarName: calendarName, calendarSource: calendarSource, isAllDay: isAllDay,
                         alarmOffsets: alarmOffsets, recurrenceRule: recurrenceRule, clearRecurrence: clearRecurrence,
                         structuredLocation: structuredLocation, span: span, occurrenceDate: occurrenceDate, applyToAll: applyToAll,
-                        timezone: timezone, clearTimezone: clearTimezone)
+                        timezone: timezone, clearTimezone: clearTimezone,
+                        skippedMidnightEndpoint: skippedMidnightEndpoint)
                 } catch EventKitError.occurrenceAddressRefused(let reason) {
                     // verify r2: the occurrence's texts speak to a caller who named it.
                     throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.throughSeriesID(reason, allEdited: first.allEdited, firstDeleted: first.firstDeleted))
@@ -1394,7 +1396,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let datePlan = try AllDayRange.planUpdate(
             storedStart: event.startDate, storedEnd: event.endDate, storedAllDay: event.isAllDay,
             newStart: startDate, newEnd: endDate, requestedAllDay: isAllDay,
-            calendar: Calendar.gregorian(in: .current))
+            calendar: Calendar.gregorian(in: .current), storedZone: event.timeZone,
+            skippedMidnightEndpoint: skippedMidnightEndpoint)
 
         // #190 — resolved-state check: whether all-day came from this request or
         // the stored event, pairing it with a non-nil timezone strips the flag.
@@ -2530,7 +2533,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // From the stand-in, an occurrence of the series: its absolute alarm dates are the series'
         // (verify round 5), so they move to its start like a split occurrence's (#253 D2).
         let alarms = Self.copyOutAlarms(of: sourceEvent, isSplit: resolved.viaStandIn).alarms
-        let newEvent = Self.makeCopy(of: sourceEvent, alarms: alarms, in: targetCalendar, store: eventStore)
+        let newEvent = try Self.makeCopy(of: sourceEvent, alarms: alarms, in: targetCalendar, store: eventStore)
         defer { markNeedsRefresh() }
         // #261: no discard for a failed copy (see EventCopyOperation.saveCopy).
         try EventCopyOperation.saveCopy(carrying: alarms,
@@ -2659,7 +2662,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // #321: a split occurrence is tied to its series, which its undo's slot check compares.
             let copied = EventSnapshot(from: subject, includeRecurrence: false, alarms: planned.alarms)
             let snapshot = isSplit ? copied.withOccurrenceOrigin(OccurrenceOrigin.of(subject)) : copied
-            let copy = Self.makeCopy(of: subject, alarms: planned.alarms, in: targetCalendar, store: self.eventStore)
+            let copy = try Self.makeCopy(of: subject, alarms: planned.alarms, in: targetCalendar, store: self.eventStore)
             let outcome = try EventCopyOperation.execute(source: snapshot, saveCopy: {
                 // A refused copy names its location, email or sound alarms; the source is removed
                 // only after the copy is saved (#253 verify round 2, D1). #261: no discard for a
@@ -2729,7 +2732,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// own: the copy-out passes `copyOutAlarms`, which puts a split occurrence's absolute
     /// alarms at its start.
     static func makeCopy(of source: EKEvent, alarms: [AlarmSnapshot]? = nil,
-                         in calendar: EKCalendar, store: EKEventStore) -> EKEvent {
+                         in calendar: EKCalendar, store: EKEventStore) throws -> EKEvent {
+        try AllDayRange.validateCopy(start: source.startDate, end: source.endDate,
+                                     isAllDay: source.isAllDay, eventZone: source.timeZone,
+                                     calendar: .gregorian(in: .current))
         let copy = EKEvent(eventStore: store)
         copy.title = source.title
         copy.startDate = source.startDate
@@ -4045,6 +4051,9 @@ enum EventKitError: LocalizedError {
     /// underlying error and `alarmKinds` are `AlarmSnapshot.kindsSomeCalendarsMayRefuse`
     /// names, so the message holds no EventKit text and no user input.
     case copyRefused(code: String, alarmKinds: [String])
+
+    /// #568: copying the shifted EventKit dates can add an extra day.
+    case skippedMidnightCopyRefused
     /// #242: reminder undo found no list under the recorded identifier (the list was deleted, or
     /// its account is turned off or not synced yet), or the record has none. Nothing was written
     /// for this reminder and the record is kept (`UndoFailureDisposition.of` gives `.restore`, the
@@ -4224,6 +4233,8 @@ enum EventKitError: LocalizedError {
             return "\(needs); \(found) found. Nothing was returned. Name two or more in calendar_names (list_calendars shows them)."
         case .calendarNotEmpty(let reason):
             return reason
+        case .skippedMidnightCopyRefused:
+            return "Copy refused because these stored all-day dates can widen the event (#568). The original event remains in its calendar. See https://github.com/PsychQuant/che-ical-mcp/issues/568"
         case .copyRefused(let code, let alarmKinds):
             return "Saving the copy failed (\(code)); the original event was not removed. The copy carries \(alarmKinds.joined(separator: ", ")), which some calendars refuse, so they are one possible cause."
         case .undoListMissing(let reminder, let hasIdentifier, let kind):

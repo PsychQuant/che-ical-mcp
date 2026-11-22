@@ -23,12 +23,15 @@ final class SeriesIdRouteWiringTests: XCTestCase {
         let between = String(body[route.upperBound..<inner.lowerBound])
         XCTAssertFalse(between.contains("eventStore."), between)
         XCTAssertFalse(between.contains("event."), between)
-        let call = String(body[inner.lowerBound...].prefix(700))
+        let routeEnd = try XCTUnwrap(body.range(of: "return (saved.event,", range: inner.upperBound..<body.endIndex))
+        let firstCatch = try XCTUnwrap(body.range(of: "} catch", range: inner.upperBound..<routeEnd.lowerBound))
+        let call = String(body[inner.upperBound..<firstCatch.lowerBound])
         XCTAssertTrue(call.contains("identifier: first.id,"), call)
         // verify r7: the #451 checks on a started series hold only with the call's span and applyToAll.
         XCTAssertTrue(call.contains("span: span,"), call)
         XCTAssertTrue(call.contains("applyToAll: applyToAll,"), call)
-        let after = String(body[inner.upperBound...].prefix(900))
+        XCTAssertTrue(call.contains("skippedMidnightEndpoint: skippedMidnightEndpoint"), call)
+        let after = String(body[firstCatch.lowerBound..<routeEnd.lowerBound])
         XCTAssertTrue(after.contains("} catch EventKitError.seriesWriteRefused(let reason) {"), after)
         XCTAssertTrue(after.contains("DetachedOccurrenceSpan.throughSeriesIDStartedRule(reason, allEdited: first.allEdited)"), after)
     }
