@@ -58,7 +58,7 @@ final class EditedOccurrenceAddressTests: XCTestCase {
     private let measuredDelete = "Measured on iCloud, through an occurrence moved later and one moved earlier."
     private let offTimeUpdate = "Where the store recorded that occurrence at another time of day than the series, a span 'future' update through its identifier moved the later occurrences of the series to another day (#550); span 'this' on that occurrence is the tested way."
     private let offTimeDelete = "Where the store recorded that occurrence at another time of day than the series, a span 'future' delete through its identifier removed that occurrence and the later ones, and an occurrence the rule shows on its day stayed (#550)."
-    private let leftBehind = "Known defect #549, measured on iCloud: in a series with no time zone that call answers deleted while that occurrence itself stays."
+    private let leftBehind = "Known defect #549, measured on iCloud for an occurrence edited in place and one moved later: in a series with no time zone that call answers deleted while that occurrence itself stays."
     private func futureUpdate(_ day: String, through: String = "that identifier") -> String {
         "With span 'future' through \(through) a call takes only some fields, and that call answers which. Such a call starts at that occurrence's original date. \(directions(day, "written")) \(measuredUpdate) \(offTimeUpdate) \(otherWay)"
     }

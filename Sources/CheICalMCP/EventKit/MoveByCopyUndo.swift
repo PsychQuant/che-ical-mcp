@@ -42,7 +42,13 @@ enum MoveByCopyUndo {
         case keptSlotHeld
         /// The move recorded no identifier for the copy; it was not looked up.
         case noIdentifier
-        /// Not found under its recorded identifier (deleted, or given a new one by its account).
+        /// Not found under its recorded identifier: deleted, given a new one by its account, or, made a
+        /// series, recreated by the undo of its delete with its occurrences edited on their own back
+        /// as separate events, which leaves the record on the removed identifier (#538 `.flag`; after
+        /// a recreate with none, read back under a new identifier, the record follows,
+        /// `CalendarUndoManager.replaceEventIdentifier`). Not named in the answer: a recreated series
+        /// read back with no identifier, which `DeleteUndoFollow.decision` answers `.none`, so the
+        /// record stays on the removed identifier too (PR #562 verify r3, N1).
         case notFound
         /// Changed after the move in the fields named (the #236 compare of a created event).
         case changed([String])
@@ -134,7 +140,7 @@ enum MoveByCopyUndo {
         case .noIdentifier:
             return restored + ". The move did not record the copy's identifier, so the copy was not looked up and nothing was removed; if it is still in the calendar it was moved to, the event is in both calendars: remove the copy there if it should go." + used
         case .notFound:
-            return restored + ". The copy the move made\(id) was not found under its recorded identifier (deleted, or given a new identifier by its account), so nothing was removed; if it is still in the calendar it was moved to, the event is in both calendars: remove the copy there if it should go." + used
+            return restored + ". The copy the move made\(id) was not found under its recorded identifier (deleted, given a new identifier by its account, or, made a series, recreated by the undo of its delete as a new series whose occurrences edited on their own came back as separate events), so nothing was removed; if it is still in the calendar it was moved to, the event is in both calendars: remove the copy there if it should go." + used
         case .changed(let fields) where fields.contains("calendar"):
             return restored + ". The copy the move made\(id) was changed after the move (\(fields.joined(separator: ", "))), so it was not removed; it may be in another calendar now: check where it is, since the event may be in both calendars, and remove the copy if it should go." + used
         case .changed(let fields):

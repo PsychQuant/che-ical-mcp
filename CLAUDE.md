@@ -39,7 +39,7 @@ read-after-write confound）。三表面特性表、wrapper failure-cache 坑與
 
 ## Test Naming Convention
 
-`Tests/CheICalMCPTests/` follows four filename suffixes that signal what each test exercises. The suffix is **load-bearing** — pick the right one when adding a new file so reviewers (and Claude) can locate the right test layer fast.
+`Tests/CheICalMCPTests/` follows four filename suffixes that signal what each test exercises; the plain `*Tests` suffix covers two layers, pure unit and manager level, told apart by what the file builds (the last row). The suffix is **load-bearing** — pick the right one when adding a new file so reviewers (and Claude) can locate the right test layer fast.
 
 | Filename pattern | Layer | What it tests |
 |------------------|-------|---------------|
@@ -47,12 +47,13 @@ read-after-write confound）。三表面特性表、wrapper failure-cache 坑與
 | `<Subject>HandlerTests.swift` | Handler integration | `handle*` methods from `CheICalMCPServer` driven through `FakeEventKitManager`-equivalent doubles. Tests the handler's full sanitize → dispatch → response shape, not the EventKit manager itself. **Canonical example: [`CleanupHandlerTests.swift`](Tests/CheICalMCPTests/CleanupHandlerTests.swift)** — copy its structure when adding a new handler test. |
 | `<Subject>DispatchTests.swift` | Outer-catch / dispatch | `handleToolCallForTesting` outer-catch and the dispatch JSON envelope. Probes what surfaces when a handler throws an unexpected error type. Examples: `OuterCatchDispatchTests`, `DispatchRoundTripTests`. |
 | `<Subject>WiringTests.swift` | Source-scan wiring pin | Code an in-memory event store cannot run (the order of calls in a store path, which helper a handler goes through), pinned by reading `Sources/` with `Helpers/SourcePins.swift` / `Helpers/SourceScan.swift`. Examples: `UndoBatchWiringTests`, `ReminderUndoWiringTests`. A single source pin inside another `*Tests` file is fine; a file made of them takes this suffix. The helpers' own tests (`SourcePinsTests`, `SourceScanTests`) are pure `*Tests`. |
+| `<Subject>Tests.swift` built on `EventKitManager.forTesting` | Manager level | `EventKitManager` instances made by `EventKitManager.forTesting(...)`: with a probe only (the factory's wiring in `EventKitManagerForTestingTests`, the authorization gate's isolation in `CallerIsolationSeamTests`), or with an in-memory store as well where no handler path can run the case (`DeleteUndoFollowBatchMemberTests`: a batch undo through the handler reads the real calendars first, #248 B). This is the way a new plain `*Tests` file holds an `EventKitManager` instance; some older plain `*Tests` files hold one otherwise (through `CheICalMCPServer()` or `EventKitManager.shared`). A new file of this kind says in its header why no handler path is used. |
 
 Helper files (e.g., `FakeEventKitManager.swift`) carry no `*Tests` suffix.
 
 **Helpers/ subdirectory** (`Tests/CheICalMCPTests/Helpers/`, #83): shared test infrastructure that is NOT a test class is exempt from the `*Tests.swift` naming convention. Files here provide cross-test utilities (e.g. `StderrCaptureHarness.swift` centralizing the `dup2`/`Pipe` stderr-capture pattern that the sanitizer cluster's carve-out tests share). The subdirectory's existence signals "library code for tests, not tests itself" — auditors looking for tests should search the parent directory; auditors looking for shared utilities should look here.
 
-When adding a test, ask: am I exercising a pure function (→ `*Tests`), the handler boundary (→ `*HandlerTests`), the outer dispatch shell (→ `*DispatchTests`), or wiring only a source read can show (→ `*WiringTests`)? Mismatched suffix is a `idd-verify` finding worth flagging. Helpers go in `Helpers/` regardless of suffix.
+When adding a test, ask: am I exercising a pure function (→ `*Tests`), a manager instance made by `EventKitManager.forTesting` (→ `*Tests`, its header saying why no handler path is used), the handler boundary (→ `*HandlerTests`), the outer dispatch shell (→ `*DispatchTests`), or wiring only a source read can show (→ `*WiringTests`)? Mismatched suffix is a `idd-verify` finding worth flagging. Helpers go in `Helpers/` regardless of suffix.
 
 ## Test Seam Convention (DI for handlers)
 
