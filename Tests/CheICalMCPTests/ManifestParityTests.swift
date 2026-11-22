@@ -328,15 +328,17 @@ final class ManifestParityTests: XCTestCase {
 
     func testAllDayToolsDescribeSkippedMidnight() throws {
         let phrases = [
-            "list_events": "For recognized all-day pairs, the server process time zone determines the corrected dates. display_timezone controls rendering. Range membership uses the stored dates.",
-            "list_events_quick": "Quick ranges use stored dates for membership. The server process time zone determines corrected dates for recognized all-day pairs, and display_timezone controls rendering.",
-            "search_events": "Event search matches stored dates. For recognized all-day pairs, the server process time zone determines the corrected dates, and display_timezone controls rendering.",
-            "check_conflicts": "Conflict checks use stored dates for overlap. The response displays corrected dates for recognized all-day pairs using the server process time zone for correction.",
+            "copy_event": "Copy refuses recognized skipped-midnight all-day pairs that can widen the event (#568).",
+            "move_events_batch": "A split or fallback copy refuses recognized skipped-midnight all-day pairs that can widen the event (#568).",
+            "list_events": "The server corrects recognized all-day pairs for floating events and events whose time zone matches the process time zone. display_timezone controls rendering. Range membership uses the stored dates.",
+            "list_events_quick": "Quick ranges use stored dates for membership. The server corrects recognized pairs for floating all-day events and all-day events in the process time zone. display_timezone controls rendering.",
+            "search_events": "Event search matches stored dates. The response corrects recognized all-day pairs for events without a time zone or with the process time zone. display_timezone controls rendering.",
+            "check_conflicts": "Conflict checks use stored dates for overlap. The reply corrects recognized all-day pairs only for floating events and events with the process time zone.",
             "find_duplicate_events": "Duplicate matching and response dates use the stored event dates.",
-            "delete_events_batch": "Dry-run rows display corrected dates for recognized all-day pairs in the server process time zone. Selection and deletion use the stored dates.",
+            "delete_events_batch": "Dry-run rows correct recognized all-day pairs for events with no time zone or with the process time zone. Selection and deletion use the stored dates. The corrected dates in a row can fall outside the searched range.",
             "create_event": "An all-day start_time or end_time given as YYYY-MM-DD uses the first instant of that day if the server process time zone skips its midnight.",
             "create_events_batch": "Each all-day item's date-only endpoints can use the first instant of a day whose midnight the server process time zone skips. Similar-event hints show stored dates.",
-            "update_event": "A date-only endpoint can use the first instant of a day whose midnight the server process time zone skips when the resulting event is all-day. occurrence_start shows the stored start of the matched occurrence."
+            "update_event": "A date-only endpoint can use the first instant of a day whose midnight the server process time zone skips when the resulting event is all-day. An event that stays all-day uses the corrected pair for planning when it is floating or its zone matches the process zone. occurrence_start shows the stored start of the matched occurrence."
         ]
         for (name, phrase) in phrases {
             let tool = try descriptions(of: name)

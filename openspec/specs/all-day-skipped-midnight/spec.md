@@ -8,7 +8,7 @@ Date-only inputs, display and update planning for recognized all-day pairs, and 
 
 ### Requirement: A date names its day when the zone skips that midnight
 
-The start and end dates of an all-day create, batch create, or update, and date-only occurrence selectors (including recurrence exclusions), SHALL accept exact `YYYY-MM-DD` on a day whose midnight is skipped and use its first instant in the zone used to parse it. All-day event endpoints use the server process zone. Occurrence selectors use the applicable series or event zone, falling back to the process zone. Timed endpoints, reminder inputs, query bounds and recurrence end dates retain their existing parsing. An impossible Gregorian date and a civil date skipped in full SHALL both be refused.
+The start and end dates of an all-day create, batch create, or update, and date-only occurrence selectors (including recurrence exclusions), SHALL accept exact ten-byte ASCII `YYYY-MM-DD` on a day whose midnight is skipped and use its first instant in the zone used to parse it. All-day event endpoints use the server process zone. Occurrence selectors use the applicable series or event zone, falling back to the process zone. For `span: "all"`, a supplied bare date is parsed in the process zone for validation. It does not select an occurrence, and a recurring move with both span all and a date is refused. Timed endpoints, reminder inputs, query bounds and recurrence end dates retain their existing parsing. An impossible Gregorian date and a civil date skipped in full SHALL both be refused.
 
 #### Scenario: The skipped-midnight day is read from 01:00
 
@@ -26,7 +26,7 @@ The start and end dates of an all-day create, batch create, or update, and date-
 ---
 ### Requirement: An all-day event is read as the days it stands for
 
-The date fields of `list_events`, `list_events_quick`, `search_events`, `check_conflicts`, and `delete_events_batch` dry-run rows, and `update_event` planning when both the stored and resulting event are all-day, SHALL apply the correction in the server process zone (including `TZ=`). In the iCloud shape the start equals a civil day's first instant and the inclusive range spans an exact multiple of 24 hours in elapsed time. The local start is at least one minute and at most three hours after midnight. In the Google shape the day begins at 01:00, the raw start is at 23:00 the evening before, and both endpoints are an hour before the corresponding corrected endpoints. The correction SHALL return the first and last instants of the inferred range at second precision and keep other pairs as returned. The local output fields still use `display_timezone`, the event's zone, or the process zone according to the tool's formatting rules. Matching and membership use the stored values. The duplicate and similar-event outputs, `occurrence_start` and undo item text also keep those values. Timed dates and inherited endpoints when converting to timed SHALL use the original pair.
+The date fields of `list_events`, `list_events_quick`, `search_events`, `check_conflicts`, and `delete_events_batch` dry-run rows, and `update_event` planning when both the stored and resulting event are all-day, SHALL apply the correction in the server process zone (including `TZ=`). Correction applies only when the event has no time zone of its own or its zone equals the process zone. The two shapes are recognized at second precision. In the iCloud shape the start equals a civil day's first instant and the inclusive range spans an exact multiple of 24 hours in elapsed time. The local start is at least one minute and at most three hours after midnight. In the Google shape the day begins at 01:00, the raw start is at 23:00 the evening before, and both endpoints are an hour before the corresponding corrected endpoints. The correction SHALL return the first and last instants of the inferred range at second precision and keep other pairs as returned. The local output fields still use `display_timezone`, the event's zone, or the process zone according to the tool's formatting rules. Matching and membership use the stored values. The duplicate and similar-event outputs, `occurrence_start` and undo item text also keep those values. Timed dates and inherited endpoints when converting to timed SHALL use the original pair.
 
 #### Scenario: A one-day event on the skipped-midnight day
 
@@ -56,9 +56,32 @@ The date fields of `list_events`, `list_events_quick`, `search_events`, `check_c
 ---
 ### Requirement: An occurrence day ends at the start of the following day
 
-The timed occurrence lookup and the candidate window SHALL use the next civil day's first instant as the exclusive upper bound of each day's window.
+For a day whose midnight is skipped, the timed occurrence lookup and the candidate window SHALL end at the next civil day's first instant if it is earlier than adding one calendar day to the start. Days with an existing midnight retain the existing calendar-day addition.
 
 #### Scenario: The day starts at 01:00
 
 - **WHEN** a request selects 2028-03-12 in Havana
 - **THEN** a timed occurrence starting at 00:30 on 2028-03-13 is outside that day
+
+---
+### Requirement: Copying a recognized all-day pair is refused
+
+`copy_event` and move paths that create a copy SHALL refuse before creating a copy or removing its source if the all-day pair would be changed by the skipped-midnight correction. The refusal SHALL explain the risk to the dates and link issue #568.
+
+#### Scenario: The date-only selector reaches a split move
+
+- **WHEN** `move_events_batch` selects a recurring all-day occurrence with a recognized pair and would split it into another calendar
+- **THEN** the row is refused with a reference to #568 and both calendars retain their prior events
+
+#### Scenario: An explicit offset or occurrence ID reaches a split move
+
+- **WHEN** a caller addresses the same occurrence by its ID with the required date, or supplies an explicit offset in the selector
+- **THEN** the same check applies to the resolved event
+
+##### Example: the selector spelling does not make the pair safe
+
+| Selector for the 2028-03-12 occurrence in Havana | Result for a recognized all-day pair |
+|---|---|
+| `2028-03-12` with the series ID | Split refused |
+| `2028-03-12T01:00:00-04:00` with the series ID | Split refused |
+| The occurrence's ID and its required date | Split refused |

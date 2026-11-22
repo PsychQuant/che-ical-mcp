@@ -27,6 +27,29 @@ final class AllDayStoredDaysTests: XCTestCase {
         AllDayRange.storedDays(start: start, end: end, calendar: Calendar.gregorian(in: zone))
     }
 
+    func testCopyRefusesAPairThatWouldWidenTheEvent() throws {
+        let (zone, start, next) = try gapDay()
+        let calendar = Calendar.gregorian(in: zone)
+        let rawEnd = start.addingTimeInterval(86_399)
+        for (rawStart, rawEnd) in [
+            (start, rawEnd),
+            (start.addingTimeInterval(-3600), next.addingTimeInterval(-3601))
+        ] {
+            XCTAssertThrowsError(try AllDayRange.validateCopy(start: rawStart, end: rawEnd, isAllDay: true,
+                                                              eventZone: nil, calendar: calendar)) { error in
+                XCTAssertTrue(error.localizedDescription.contains("#568"))
+                XCTAssertTrue(error.localizedDescription.contains("widen"))
+            }
+        }
+        XCTAssertThrowsError(try AllDayRange.validateCopy(start: start, end: rawEnd, isAllDay: true,
+                                                          eventZone: zone, calendar: calendar))
+        let bogota = try XCTUnwrap(TimeZone(identifier: "America/Bogota"))
+        XCTAssertNoThrow(try AllDayRange.validateCopy(start: start, end: rawEnd, isAllDay: true,
+                                                      eventZone: bogota, calendar: calendar))
+        XCTAssertNoThrow(try AllDayRange.validateCopy(start: start, end: rawEnd, isAllDay: false,
+                                                      eventZone: nil, calendar: calendar))
+    }
+
     // spec-example: all-day-skipped-midnight / a one-day event on the day reads as that day
     func testTheMeasuredOneDayShapeReadsAsThatDay() throws {
         let (zone, start, next) = try gapDay()
@@ -304,7 +327,7 @@ final class AllDayStoredDaysTests: XCTestCase {
         let server = try await CheICalMCPServer()
         let event = FakeFormattableEvent(formatStartDate: start.addingTimeInterval(-3600),
                                          formatEndDate: next.addingTimeInterval(-3601),
-                                         formatSourceTimeZone: utc, formatIsAllDay: true)
+                                         formatSourceTimeZone: nil, formatIsAllDay: true)
         let dict = server.formatEventDict(event, displayTimezone: utc, allDayZone: zone)
         let iso = ISO8601DateFormatter()
         let expectedStart = iso.string(from: start)
@@ -321,7 +344,7 @@ final class AllDayStoredDaysTests: XCTestCase {
         let server = try await CheICalMCPServer()
         let rawEnd = start.addingTimeInterval(86_399)
         let event = FakeFormattableEvent(formatStartDate: start, formatEndDate: rawEnd,
-                                         formatSourceTimeZone: utc, formatIsAllDay: true)
+                                         formatSourceTimeZone: nil, formatIsAllDay: true)
         let dict = server.formatEventDict(event, displayTimezone: utc)
         // The Havana run exercises the correction with no injected all-day zone.
         if ProcessInfo.processInfo.environment["TZ"] == "America/Havana" {
@@ -329,6 +352,58 @@ final class AllDayStoredDaysTests: XCTestCase {
         }
         let expectedEnd = TimeZone.current.identifier == zone.identifier ? next.addingTimeInterval(-1) : rawEnd
         XCTAssertEqual(dict["end_date"] as? String, ISO8601DateFormatter().string(from: expectedEnd))
+    }
+
+    // Use the reported Havana transition to pin these exact overlapping shapes.
+    func testCanonicalHalifaxAndBogotaPairsKeepTheirOwnDays() async throws {
+        let havana = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
+        let server = try await CheICalMCPServer()
+        let iso = ISO8601DateFormatter()
+        for (identifier, startText, endText) in [
+            ("America/Halifax", "2028-03-12T04:00:00Z", "2028-03-13T02:59:59Z"),
+            ("America/Bogota", "2028-03-12T05:00:00Z", "2028-03-13T04:59:59Z")
+        ] {
+            let zone = try XCTUnwrap(TimeZone(identifier: identifier))
+            let start = try XCTUnwrap(iso.date(from: startText))
+            let end = try XCTUnwrap(iso.date(from: endText))
+            let event = FakeFormattableEvent(formatStartDate: start, formatEndDate: end,
+                                             formatSourceTimeZone: zone, formatIsAllDay: true)
+            let dict = server.formatEventDict(event, displayTimezone: zone, allDayZone: havana)
+            XCTAssertEqual(dict["start_date"] as? String, startText, identifier)
+            XCTAssertEqual(dict["end_date"] as? String, endText, identifier)
+            XCTAssertEqual(dict["start_date_local"] as? String, "2028-03-12T00:00:00", identifier)
+            XCTAssertEqual(dict["end_date_local"] as? String, "2028-03-12T23:59:59", identifier)
+
+            let plan = try AllDayRange.planUpdate(storedStart: start, storedEnd: end, storedAllDay: true,
+                                                  newStart: nil, newEnd: nil, requestedAllDay: nil,
+                                                  calendar: .gregorian(in: havana), storedZone: zone)
+            XCTAssertEqual(plan.start, start, identifier)
+            XCTAssertEqual(plan.end, end, identifier)
+        }
+    }
+
+    func testFractionalICloudAndGooglePairsAreRecognizedAtWholeSeconds() throws {
+        let (zone, start, next) = try gapDay()
+        let lastSecond = next.addingTimeInterval(-1)
+        for (rawStart, rawEnd) in [
+            (start, start.addingTimeInterval(86_399.25)),
+            (start, start.addingTimeInterval(86_399)),
+            (start.addingTimeInterval(-3599.75), lastSecond.addingTimeInterval(-3600)),
+            (start.addingTimeInterval(-3600), lastSecond.addingTimeInterval(-3599.75))
+        ] {
+            let dates = stored(rawStart, rawEnd, zone)
+            XCTAssertEqual(dates.start, start)
+            XCTAssertEqual(dates.end, lastSecond)
+        }
+
+        // Spring and autumn offset changes cancel over this range. Its pair is already canonical.
+        let havana = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
+        let iso = ISO8601DateFormatter()
+        let springStart = try XCTUnwrap(iso.date(from: "2028-03-12T05:00:00Z"))
+        let autumnEnd = try XCTUnwrap(iso.date(from: "2028-11-06T04:59:59Z")).addingTimeInterval(0.25)
+        let canonical = stored(springStart, autumnEnd, havana)
+        XCTAssertEqual(canonical.start, springStart)
+        XCTAssertEqual(canonical.end, autumnEnd)
     }
 
     // spec-example: all-day-skipped-midnight / moving that event by its start keeps one day
@@ -360,15 +435,17 @@ final class AllDayStoredDaysTests: XCTestCase {
     func testTheEventDictGivesThatDay() async throws {
         let (zone, start, next) = try gapDay()
         let server = try await CheICalMCPServer()
-        let event = FakeFormattableEvent(formatStartDate: start, formatEndDate: start.addingTimeInterval(86_399),
-                                         formatSourceTimeZone: nil, formatIsAllDay: true)
-        let dict = server.formatEventDict(event, displayTimezone: zone, allDayZone: zone)
         let day = FlexibleDate.formatter("yyyy-MM-dd", zone: TimeZone(identifier: "UTC")!)
             .string(from: start.addingTimeInterval(TimeInterval(zone.secondsFromGMT(for: start))))
-        XCTAssertEqual(dict["start_date_local"] as? String, "\(day)T01:00:00")
-        XCTAssertEqual(dict["end_date_local"] as? String, "\(day)T23:59:59")
         let iso = ISO8601DateFormatter()
-        XCTAssertEqual(dict["end_date"] as? String, iso.string(from: next.addingTimeInterval(-1)))
+        for eventZone in [nil, zone] {
+            let event = FakeFormattableEvent(formatStartDate: start, formatEndDate: start.addingTimeInterval(86_399),
+                                             formatSourceTimeZone: eventZone, formatIsAllDay: true)
+            let dict = server.formatEventDict(event, displayTimezone: zone, allDayZone: zone)
+            XCTAssertEqual(dict["start_date_local"] as? String, "\(day)T01:00:00")
+            XCTAssertEqual(dict["end_date_local"] as? String, "\(day)T23:59:59")
+            XCTAssertEqual(dict["end_date"] as? String, iso.string(from: next.addingTimeInterval(-1)))
+        }
     }
 
     /// A timed event's dates are printed as EventKit returns them.

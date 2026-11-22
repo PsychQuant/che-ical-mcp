@@ -71,6 +71,11 @@ enum FlexibleDate {
     /// `2026-02-30` stays refused). Noon anchors the day in `zone`; a civil date skipped in full
     /// fails the day check below.
     static func firstInstant(ofDay string: String, in zone: TimeZone) -> Date? {
+        let bytes = string.utf8
+        guard bytes.count == 10,
+              bytes.enumerated().allSatisfy({ index, byte in
+                  index == 4 || index == 7 ? byte == 0x2D : (0x30...0x39).contains(byte)
+              }) else { return nil }
         let utc = TimeZone(identifier: "UTC")!
         let dateOnly = formatter("yyyy-MM-dd", zone: utc)
         guard let utcMidnight = dateOnly.date(from: string),

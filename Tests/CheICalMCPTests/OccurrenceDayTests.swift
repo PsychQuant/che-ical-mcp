@@ -7,6 +7,7 @@ import XCTest
 final class OccurrenceDayTests: XCTestCase {
     private let day = "2026-12-06"
 
+    // Fixed to the 2028 Havana transition used by the #546 report and device cells.
     func testAnOccurrenceSelectorCanUseTheFirstInstantOfItsGapDay() async throws {
         let iso = ISO8601DateFormatter()
         let zone = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
@@ -28,6 +29,27 @@ final class OccurrenceDayTests: XCTestCase {
         for requestedZone in [zone, TimeZone(secondsFromGMT: 0)!] {
             let candidate = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: requested, in: requestedZone, host: zone))
             XCTAssertEqual(candidate.end, nextMidnight, requestedZone.identifier)
+        }
+    }
+
+    func testADayWithMidnightKeepsThePreviousWindowOnHistoricalTransitions() throws {
+        let iso = ISO8601DateFormatter()
+        for (identifier, timestamp) in [
+            ("Pacific/Apia", "1892-07-04T00:00:00Z"),
+            ("America/Toronto", "1919-03-30T18:00:00Z")
+        ] {
+            let zone = try XCTUnwrap(TimeZone(identifier: identifier))
+            let date = try XCTUnwrap(iso.date(from: timestamp))
+            let calendar = Calendar.gregorian(in: zone)
+            let start = calendar.startOfDay(for: date)
+            let end = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: start))
+            XCTAssertGreaterThan(end, start)
+            let window = try XCTUnwrap(OccurrenceDay.window(containing: date, in: zone))
+            XCTAssertEqual(window.start, start, identifier)
+            XCTAssertEqual(window.end, end, identifier)
+            let candidate = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: date, in: zone, host: zone))
+            XCTAssertEqual(candidate.start, start, identifier)
+            XCTAssertEqual(candidate.end, end, identifier)
         }
     }
 

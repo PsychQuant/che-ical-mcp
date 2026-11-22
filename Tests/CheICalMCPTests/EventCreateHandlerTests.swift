@@ -17,6 +17,7 @@ final class EventCreateHandlerTests: XCTestCase {
 
     private var shiftedEnd: String { FakeEventWriteSource.behindHost("2027-04-11", "23:30:00") }
 
+    // Fixed to the 2028 Havana transition used by the #546 report and device cells.
     func testAllDayCreateUsesTheGapsFirstInstantInTheProcessZone() async throws {
         let fake = FakeEventWriteSource()
         let server = try await CheICalMCPServer(eventWriteSource: fake)
@@ -41,6 +42,30 @@ final class EventCreateHandlerTests: XCTestCase {
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("2028-03-12"), String(describing: error))
         }
+        let creates = await fake.creates
+        XCTAssertTrue(creates.isEmpty)
+    }
+
+    func testImplicitlyTimedEndpointsStillRefuseTheGapWithoutATimeZone() async throws {
+        try TestZones.requireHavanaProcess()
+        let fake = FakeEventWriteSource()
+        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        // Match the reported 2028 Havana transition used by the device cells.
+        let timed: [String: Value] = [
+            "title": .string("Timed gap"), "start_time": .string("2028-03-12"),
+            "end_time": .string("2028-03-12T02:00:00")
+        ]
+        do {
+            _ = try await server.executeToolCall(name: "create_event", arguments: timed)
+            XCTFail("Expected the date-only endpoint to be refused")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("is not a valid date"))
+        }
+        let batch = try object(await server.executeToolCall(name: "create_events_batch",
+                                                           arguments: ["events": .array([.object(timed)])]))
+        let rows = try XCTUnwrap(batch["results"] as? [[String: Any]])
+        XCTAssertEqual(rows.first?["success"] as? Bool, false)
+        XCTAssertTrue((rows.first?["error"] as? String)?.contains("is not a valid date") == true)
         let creates = await fake.creates
         XCTAssertTrue(creates.isEmpty)
     }

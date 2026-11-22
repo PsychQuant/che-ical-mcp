@@ -11,6 +11,7 @@ final class EventUpdateHandlerTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }
 
+    // Fixed to the 2028 Havana transition used by the #546 report and device cells.
     func testAnUpdateCanPassTheGapFallbackForAStoredAllDayEvent() async throws {
         let fake = FakeEventWriteSource()
         let server = try await CheICalMCPServer(eventWriteSource: fake)

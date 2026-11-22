@@ -43,6 +43,14 @@ final class SkippedMidnightDateTests: XCTestCase {
         return found
     }
 
+    func testTheFallbackRefusesAnExtendedYearThatRoundTrips() throws {
+        let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let value = "10001-03-12"
+        let formatter = FlexibleDate.formatter("yyyy-MM-dd", zone: utc)
+        XCTAssertEqual(formatter.string(from: try XCTUnwrap(formatter.date(from: value))), value)
+        XCTAssertNil(FlexibleDate.firstInstant(ofDay: value, in: utc))
+    }
+
     // spec-example: all-day-skipped-midnight / a date on the skipped-midnight day
     func testADayWhoseMidnightIsSkippedIsReadFromItsFirstInstant() throws {
         for (zone, day, start) in try zonesWithASkippedMidnight() {
