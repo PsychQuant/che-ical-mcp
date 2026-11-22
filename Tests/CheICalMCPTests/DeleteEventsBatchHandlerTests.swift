@@ -230,6 +230,51 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
         return try object(await server.executeToolCall(name: "delete_events_batch", arguments: args))
     }
 
+    // Fixed to the 2028 Havana transition used by the #546 report and device cells.
+    func testDryRunShowsTheCorrectedDatesOfAnAllDayEventOnly() async throws {
+        let start = try XCTUnwrap(iso.date(from: "2028-03-12T05:00:00Z"))
+        let end = start.addingTimeInterval(86_399)
+        let bogota = try XCTUnwrap(TimeZone(identifier: "America/Bogota"))
+        let listed = [
+            BatchDeletionListedEvent(identifier: "all-day", start: start, end: end, slot: nil, isAllDay: true),
+            BatchDeletionListedEvent(identifier: "timed", start: start, end: end, slot: nil),
+            BatchDeletionListedEvent(identifier: "zoned", start: start, end: end, slot: nil, isAllDay: true, timeZone: bogota)
+        ]
+        let fake = BatchDeletionFake(listed: listed, previewRow: .deletes(start: start, end: end, isAllDay: true))
+        let dates = try await call(fake, args(after: start.addingTimeInterval(-3600), before: end, dryRun: true))
+        let ids = try await call(fake, ["event_ids": .array([.string("all-day")]), "dry_run": .bool(true)])
+        let occurrence = BatchDeletionFake(listed: [], previewRow: .deletesThroughFirstOccurrence(
+            start: start, end: end, occurrenceID: "occurrence", isAllDay: true))
+        let series = try await call(occurrence, ["event_ids": .array([.string("series")]),
+                                                "dry_run": .bool(true), "span": .string("all")])
+        let zoned = BatchDeletionFake(listed: [], previewRow: .deletes(start: start, end: end, isAllDay: true, timeZone: bogota))
+        let zonedIDs = try await call(zoned, ["event_ids": .array([.string("zoned")]), "dry_run": .bool(true)])
+        let zonedOccurrence = BatchDeletionFake(listed: [], previewRow: .deletesThroughFirstOccurrence(
+            start: start, end: end, occurrenceID: "occurrence", isAllDay: true, timeZone: bogota))
+        let zonedSeries = try await call(zonedOccurrence, ["event_ids": .array([.string("zoned-series")]),
+                                                          "dry_run": .bool(true), "span": .string("all")])
+        let local = FlexibleDate.formatter("yyyy-MM-dd'T'HH:mm:ss", zone: .current)
+        let expectedEnd = TimeZone.current.identifier == "America/Havana" ? end.addingTimeInterval(-3600) : end
+        for response in [dates, ids, series] {
+            let rows = try XCTUnwrap(response["events_to_delete"] as? [[String: Any]])
+            let first = try XCTUnwrap(rows.first)
+            XCTAssertEqual(first["start_date_local"] as? String, local.string(from: start))
+            XCTAssertEqual(first["end_date_local"] as? String, local.string(from: expectedEnd))
+            if response["mode"] as? String == "by_date_range" {
+                XCTAssertEqual(rows.count, 3)
+                for rawRow in rows.dropFirst() {
+                    XCTAssertEqual(rawRow["end_date_local"] as? String, local.string(from: end))
+                }
+            }
+        }
+        for response in [zonedIDs, zonedSeries] {
+            let rows = try XCTUnwrap(response["events_to_delete"] as? [[String: Any]])
+            XCTAssertEqual(rows.first?["end_date_local"] as? String, local.string(from: end))
+        }
+        let wrote = await fake.anyDelete
+        XCTAssertFalse(wrote)
+    }
+
     private func args(after: Date? = nil, before: Date? = nil, span: String = "this", dryRun: Bool) -> [String: Value] {
         var a: [String: Value] = ["calendar_name": .string("Work"), "span": .string(span), "dry_run": .bool(dryRun)]
         if let after { a["after_date"] = .string(iso.string(from: after)) }

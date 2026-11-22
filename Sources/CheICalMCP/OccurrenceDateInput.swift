@@ -21,6 +21,6 @@ enum OccurrenceDateInput {
         guard let string else { return nil }
         if let explicit = iso.date(from: string) { return explicit }
         let eventZone = span == "all" ? nil : try await zoneLookup()
-        return try FlexibleDate.parse(string, defaultTimezone: eventZone, iso: iso)
+        return try FlexibleDate.parse(string, defaultTimezone: eventZone, iso: iso, allowSkippedMidnight: true)
     }
 }

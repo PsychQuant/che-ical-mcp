@@ -26,6 +26,8 @@ struct EventUpdateRequest: Sendable {
     var applyToAll = false
     var timezone: TimeZone? = nil
     var clearTimezone = false
+    /// The first endpoint that needed a skipped-midnight fallback. It requires an all-day result.
+    var skippedMidnightEndpoint: String? = nil
 }
 
 /// The fields of a `create_event` call (or one `create_events_batch` item), as
@@ -143,7 +145,8 @@ extension EventKitManager: EventWriteSource {
             recurrenceRule: request.recurrenceRule, clearRecurrence: request.clearRecurrence,
             structuredLocation: request.structuredLocation, span: request.span,
             occurrenceDate: request.occurrenceDate, applyToAll: request.applyToAll,
-            timezone: request.timezone, clearTimezone: request.clearTimezone)
+            timezone: request.timezone, clearTimezone: request.clearTimezone,
+            skippedMidnightEndpoint: request.skippedMidnightEndpoint)
         var value = EventWriteValue(saved.event, seriesIdentifier: saved.seriesIdentifier)
         value.matchedOccurrence = saved.matchedOccurrence
         value.deletionsChecked = saved.deletionsChecked
