@@ -692,4 +692,14 @@ enum DetachedOccurrenceSpan {
     }
 
     static let occurrenceDateReason = "event_id names one occurrence, edited on its own, and occurrence_date is another day. To act on that other occurrence, use the id list_events shows for that occurrence, with its occurrence_date; to act on this one, leave occurrence_date out. Nothing was changed."
+
+    /// #543 fix round 1: an `occurrence_date` that may be the occurrence's original day, where the
+    /// `/RID=` digits read as a date and as an instant give different days and nothing tells which
+    /// holds. The route is the occurrence's shown day: the series' identifier with a day does not
+    /// reach an occurrence edited on its own (#532 answers with its identifier).
+    static let occurrenceDateUndeterminedReason = "event_id names one occurrence, edited on its own, and occurrence_date is not the day it starts on. It may be its original day, but which day that is cannot be told here: the /RID=… part of the identifier is a date or an instant depending on whether the series was all-day when the occurrence was first edited, and the series cannot be read or it and the occurrence differ in being all-day. To act on this occurrence, pass the day it starts on (as list_events shows it) as occurrence_date, or leave occurrence_date out. Nothing was changed."
+
+    static func occurrenceDateReason(for answer: OccurrenceDateMatch.Answer) -> String {
+        answer == .undetermined ? occurrenceDateUndeterminedReason : occurrenceDateReason
+    }
 }

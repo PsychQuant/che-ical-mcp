@@ -406,17 +406,31 @@ extension EventKitManager {
 
     /// #416: whether `date` is the day of `occurrence`, by the time it shows or by its original slot:
     /// a caller can hold either for an occurrence that was moved (`OccurrenceDateMatch`).
-    /// #543: the original slot is read with the series' all-day flag, from the series object the
-    /// identifier names (`seriesObject(ofOccurrence:)`, which may fail to refresh, #326: its flag is
-    /// still read); the occurrence's own flag when that object cannot be read.
     func occurrenceDateMatches(_ date: Date?, occurrence: EKEvent, id: String) -> Bool {
-        guard let date else { return true }
-        let seriesIsAllDay = (try? seriesObject(ofOccurrence: id))?.isAllDay ?? occurrence.isAllDay
-        return OccurrenceDateMatch.matches(
+        occurrenceDateAnswer(date, occurrence: occurrence, id: id) == .matches
+    }
+
+    /// #543: the series' all-day flag is read from the series object the identifier names, through
+    /// `storedEvent` without a refresh (`seriesObject(ofOccurrence:)`), so a series object that fails
+    /// to refresh (#326) still gives it; nil when there is no such object, the lookup throws, or the
+    /// identifier has no `/RID=` part (an occurrence whose `/RID=` is on its external identifier only:
+    /// no lookup by external identifier is made, fix round 1 V4). `OccurrenceDateMatch` then takes
+    /// the original day only where both readings of the `/RID=` give it.
+    func occurrenceDateAnswer(_ date: Date?, occurrence: EKEvent, id: String) -> OccurrenceDateMatch.Answer {
+        guard let date else { return .matches }
+        let seriesIsAllDay = (try? seriesObject(ofOccurrence: id))?.isAllDay
+        return OccurrenceDateMatch.answer(
             requested: date, start: occurrence.startDate, startIsAllDay: occurrence.isAllDay,
             zone: Self.occurrenceZone(of: occurrence),
             eventIdentifier: id, externalIdentifier: occurrence.calendarItemExternalIdentifier,
             occurrenceDate: occurrence.occurrenceDate, seriesIsAllDay: seriesIsAllDay, host: .current)
+    }
+
+    /// The refusal of an `occurrence_date` that `occurrenceDateMatches` did not take, read again for
+    /// its reason (fix round 1): only on the refusal path, so a call that is not refused looks the
+    /// series up once.
+    func occurrenceDateRefusal(_ date: Date?, occurrence: EKEvent, id: String) -> String {
+        DetachedOccurrenceSpan.occurrenceDateReason(for: occurrenceDateAnswer(date, occurrence: occurrence, id: id))
     }
 
     /// The earliest remaining occurrence of the series `stale` (a series object whose `refresh()`

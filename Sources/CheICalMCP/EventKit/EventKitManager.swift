@@ -1279,7 +1279,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: applyToAll,
                 hasOccurrenceDate: occurrenceDate != nil,
                 matches: occurrenceDateMatches(occurrenceDate, occurrence: masterEvent, id: identifier)) {
-                throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.occurrenceDateReason)
+                throw EventKitError.occurrenceAddressRefused(reason: occurrenceDateRefusal(occurrenceDate, occurrence: masterEvent, id: identifier))
             }
             if occurrenceDate != nil, !applyToAll, DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: masterEvent.isDetached) {
                 matchedOccurrence = MatchedOccurrence(start: masterEvent.startDate, zone: Self.occurrenceZone(of: masterEvent))
@@ -1992,7 +1992,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: false,
             hasOccurrenceDate: occurrenceDate != nil,
             matches: occurrenceDateMatches(occurrenceDate, occurrence: masterEvent, id: identifier)) {
-            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.occurrenceDateReason)
+            throw EventKitError.occurrenceAddressRefused(reason: occurrenceDateRefusal(occurrenceDate, occurrence: masterEvent, id: identifier))
         }
         // verify r6: from the first occurrence by slot, moved to start after another, not measured.
         if span == .futureEvents, let refusal = try movedFirstDeleteRefusal(masterEvent, id: identifier) {

@@ -2,10 +2,12 @@ import XCTest
 @testable import CheICalMCP
 
 /// #543: `occurrence_date` passed with an occurrence's own identifier names the day the occurrence
-/// starts on or its original day, read from its `/RID=` with the series' all-day flag, on any host.
-/// Every zone is a parameter, so these answer the same in every process zone (`TZ`).
+/// starts on or its original day, read from its `/RID=`. Every zone is a parameter, so these answer
+/// the same in every process zone (`TZ`).
 final class OccurrenceDateMatchTests: XCTestCase {
     private static let utc = TimeZone(identifier: "UTC")!
+    private static let taipei = TimeZone(identifier: "Asia/Taipei")!
+    private static let losAngeles = TimeZone(identifier: "America/Los_Angeles")!
 
     private static func day(_ year: Int, _ month: Int, _ day: Int, hour: Int = 0, in zone: TimeZone) -> Date {
         Calendar.gregorian(in: zone).date(from: DateComponents(year: year, month: month, day: day, hour: hour))!
@@ -16,120 +18,204 @@ final class OccurrenceDateMatchTests: XCTestCase {
         "SERIES-543/RID=\(Int(rid.timeIntervalSinceReferenceDate))"
     }
 
+    private static func answer(_ requested: Date, start: Date, startIsAllDay: Bool, zone: TimeZone?, rid: Date?,
+                               externalRID: Date? = nil, occurrenceDate: Date? = nil,
+                               seriesIsAllDay: Bool?, host: TimeZone) -> OccurrenceDateMatch.Answer {
+        OccurrenceDateMatch.answer(requested: requested, start: start, startIsAllDay: startIsAllDay, zone: zone,
+                                   eventIdentifier: rid.map(identifier(rid:)) ?? "PLAIN-ID",
+                                   externalIdentifier: externalRID.map(identifier(rid:)),
+                                   occurrenceDate: occurrenceDate ?? start, seriesIsAllDay: seriesIsAllDay, host: host)
+    }
+
     // spec-example: occurrence-date-own-identifier / one shape on five host zones
     func testAnAllDayOccurrencesOriginalDayIsItsDayOnEveryHost() {
         // An all-day weekly series: the occurrence of 2026-12-28 (its /RID= the floating date, 00:00 UTC)
         // was moved on its own to 2026-12-30.
         let rid = Self.day(2026, 12, 28, in: Self.utc)
-        let expected: [Int: Bool] = [27: false, 28: true, 29: false, 30: true]
+        let expected: [Int: OccurrenceDateMatch.Answer] = [27: .differs, 28: .matches, 29: .differs, 30: .matches]
         for name in ["Pacific/Pago_Pago", "America/Los_Angeles", "UTC", "Asia/Taipei", "Pacific/Kiritimati"] {
             let host = TimeZone(identifier: name)!
-            let shown = Self.day(2026, 12, 30, in: host)
-            for (requestedDay, accepted) in expected.sorted(by: { $0.key < $1.key }) {
-                let requested = Self.day(2026, 12, requestedDay, in: host)
-                XCTAssertEqual(
-                    OccurrenceDateMatch.matches(requested: requested, start: shown, startIsAllDay: true, zone: nil,
-                                                eventIdentifier: Self.identifier(rid: rid), externalIdentifier: nil,
-                                                occurrenceDate: shown, seriesIsAllDay: true, host: host),
-                    accepted, "host \(name), occurrence_date 2026-12-\(requestedDay)")
+            for (requestedDay, answer) in expected.sorted(by: { $0.key < $1.key }) {
+                XCTAssertEqual(Self.answer(Self.day(2026, 12, requestedDay, in: host), start: Self.day(2026, 12, 30, in: host),
+                                           startIsAllDay: true, zone: nil, rid: rid, seriesIsAllDay: true, host: host),
+                               answer, "host \(name), occurrence_date 2026-12-\(requestedDay)")
             }
         }
     }
 
-    /// The /RID= on the external identifier alone is read the same way.
-    func testTheExternalIdentifiersRIDIsReadToo() {
-        let host = TimeZone(identifier: "America/Los_Angeles")!
+    // spec-example: occurrence-date-own-identifier / The series object cannot be read
+    /// V4: with the /RID= on the external identifier alone the series is not looked up (nil), so a
+    /// 00:00 UTC /RID= is taken only where both readings give the day: east of UTC and at UTC they do.
+    func testTheExternalIdentifiersRIDWithNoSeriesTakesTheDayBothReadingsGive() {
         let rid = Self.day(2026, 12, 28, in: Self.utc)
-        let shown = Self.day(2026, 12, 30, in: host)
-        func matches(_ requestedDay: Int) -> Bool {
-            OccurrenceDateMatch.matches(requested: Self.day(2026, 12, requestedDay, in: host), start: shown, startIsAllDay: true,
-                                        zone: nil, eventIdentifier: "OTHER-ID", externalIdentifier: Self.identifier(rid: rid),
-                                        occurrenceDate: nil, seriesIsAllDay: true, host: host)
+        func answer(_ requestedDay: Int, host: TimeZone) -> OccurrenceDateMatch.Answer {
+            Self.answer(Self.day(2026, 12, requestedDay, in: host), start: Self.day(2026, 12, 30, in: host), startIsAllDay: true,
+                        zone: nil, rid: nil, externalRID: rid, seriesIsAllDay: nil, host: host)
         }
-        XCTAssertTrue(matches(28))
-        XCTAssertFalse(matches(27))
+        XCTAssertEqual(answer(28, host: Self.taipei), .matches)
+        XCTAssertEqual(answer(27, host: Self.taipei), .differs)
+        XCTAssertEqual(answer(28, host: Self.utc), .matches)
+        // West of UTC the instant reading gives the 27th and the date reading the 28th.
+        XCTAssertEqual(answer(28, host: Self.losAngeles), .undetermined)
+        XCTAssertEqual(answer(27, host: Self.losAngeles), .undetermined)
+        XCTAssertEqual(answer(26, host: Self.losAngeles), .differs)
+        XCTAssertEqual(answer(30, host: Self.losAngeles), .matches, "the day it shows")
     }
 
     // spec-example: occurrence-date-own-identifier / A timed series' occurrence made all-day on its own
-    func testATimedSeriesOccurrenceMadeAllDayKeepsTheInstantReading() {
+    /// V1, V3: a /RID= that is not 00:00 UTC is not a floating date, so it is read as `main` reads it
+    /// whatever the series' flag says: a timed series, the series converted to all-day after the edit
+    /// (V3), or a series that cannot be read (V1).
+    func testATimedSlotIsReadAsAnInstantWhateverTheSeriesFlag() {
         // Slot 2026-12-28 07:00 at Asia/Taipei is 2026-12-27 23:00 UTC: read as a floating date it would be the 27th.
-        let host = TimeZone(identifier: "Asia/Taipei")!
+        let host = Self.taipei
         let rid = Self.day(2026, 12, 28, hour: 7, in: host)
-        let shown = Self.day(2026, 12, 30, in: host)
-        func matches(_ requestedDay: Int) -> Bool {
-            OccurrenceDateMatch.matches(requested: Self.day(2026, 12, requestedDay, in: host), start: shown, startIsAllDay: true,
-                                        zone: nil, eventIdentifier: Self.identifier(rid: rid), externalIdentifier: nil,
-                                        occurrenceDate: shown, seriesIsAllDay: false, host: host)
+        for seriesIsAllDay: Bool? in [false, true, nil] {
+            for startIsAllDay in [true, false] {
+                func answer(_ requestedDay: Int) -> OccurrenceDateMatch.Answer {
+                    Self.answer(Self.day(2026, 12, requestedDay, in: host),
+                                start: Self.day(2026, 12, 30, hour: startIsAllDay ? 0 : 7, in: host), startIsAllDay: startIsAllDay,
+                                zone: startIsAllDay ? nil : host, rid: rid, seriesIsAllDay: seriesIsAllDay, host: host)
+                }
+                let label = "series all-day \(String(describing: seriesIsAllDay)), occurrence all-day \(startIsAllDay)"
+                XCTAssertEqual(answer(28), .matches, label)
+                XCTAssertEqual(answer(27), .differs, label)
+                XCTAssertEqual(answer(30), .matches, "the day it shows, \(label)")
+            }
         }
-        XCTAssertTrue(matches(28))
-        XCTAssertFalse(matches(27))
-        XCTAssertTrue(matches(30), "the day it shows")
     }
 
-    /// An all-day series' occurrence made timed on its own: its /RID= is still the floating date.
-    func testAnAllDaySeriesOccurrenceMadeTimedKeepsTheFloatingReading() {
-        let host = TimeZone(identifier: "America/Los_Angeles")!
+    /// X2: for an instant reading the comparison is `main`'s, with the occurrence's own flag and zone.
+    /// An all-day occurrence with a zone that is not the host's (V14): `main` took the slot's day in
+    /// the host and the requested day in that zone.
+    func testAnInstantSlotOfAnAllDayOccurrenceIsComparedAsMainComparedIt() {
+        let host = Self.taipei
+        let zone = Self.losAngeles
+        let rid = Self.day(2026, 12, 28, hour: 7, in: host)   // 2026-12-27 23:00 UTC
+        func answer(_ requestedDay: Int) -> OccurrenceDateMatch.Answer {
+            Self.answer(Self.day(2026, 12, requestedDay, in: zone), start: Self.day(2026, 12, 30, in: host), startIsAllDay: true,
+                        zone: zone, rid: rid, seriesIsAllDay: false, host: host)
+        }
+        XCTAssertEqual(answer(28), .matches)
+        XCTAssertEqual(answer(27), .differs, "compared as timed in the occurrence's zone it would be the 27th")
+    }
+
+    /// An all-day series' occurrence made timed on its own: its /RID= is 00:00 UTC, and the flags of now
+    /// cannot tell a floating date written by an all-day series from an instant written by a timed one
+    /// converted to all-day afterwards. West of UTC the two readings give different days: undetermined.
+    func testAnAllDaySeriesOccurrenceMadeTimedTakesOnlyWhatBothReadingsGive() {
         let rid = Self.day(2026, 12, 28, in: Self.utc)
-        let shown = Self.day(2026, 12, 30, hour: 10, in: host)
-        func matches(_ requestedDay: Int) -> Bool {
-            OccurrenceDateMatch.matches(requested: Self.day(2026, 12, requestedDay, in: host), start: shown, startIsAllDay: false,
-                                        zone: host, eventIdentifier: Self.identifier(rid: rid), externalIdentifier: nil,
-                                        occurrenceDate: shown, seriesIsAllDay: true, host: host)
+        func answer(_ requestedDay: Int, host: TimeZone) -> OccurrenceDateMatch.Answer {
+            Self.answer(Self.day(2026, 12, requestedDay, in: host), start: Self.day(2026, 12, 30, hour: 10, in: host),
+                        startIsAllDay: false, zone: host, rid: rid, seriesIsAllDay: true, host: host)
         }
-        XCTAssertTrue(matches(28))
-        XCTAssertFalse(matches(27))
-        XCTAssertTrue(matches(30), "the day it shows")
-        XCTAssertFalse(matches(29))
+        XCTAssertEqual(answer(28, host: Self.losAngeles), .undetermined)
+        XCTAssertEqual(answer(27, host: Self.losAngeles), .undetermined)
+        XCTAssertEqual(answer(29, host: Self.losAngeles), .differs)
+        XCTAssertEqual(answer(30, host: Self.losAngeles), .matches, "the day it shows")
+        XCTAssertEqual(answer(28, host: Self.taipei), .matches)
+        XCTAssertEqual(answer(27, host: Self.taipei), .differs)
     }
 
-    /// The original slot is compared with the series' flag, not the occurrence's: an all-day series'
-    /// occurrence made timed in a zone far from the host. Host UTC+14: the slot 2026-12-28 00:00 is
-    /// 2026-12-26 23:00 at UTC−11, so compared as a timed instant in the occurrence's zone it would be the 26th.
-    func testTheOriginalSlotIsComparedWithTheSeriesFlag() {
+    /// The same shape in an occurrence zone far from the host (host UTC+14, occurrence UTC−11): the
+    /// instant 2026-12-28 00:00 UTC is the 27th in the occurrence's zone.
+    func testTheInstantReadingIsComparedInTheOccurrencesZone() {
         let host = TimeZone(identifier: "Pacific/Kiritimati")!
         let zone = TimeZone(identifier: "Pacific/Pago_Pago")!
         let rid = Self.day(2026, 12, 28, in: Self.utc)
-        let shown = Self.day(2026, 12, 30, hour: 10, in: zone)
-        func matches(_ requestedDay: Int) -> Bool {
-            OccurrenceDateMatch.matches(requested: Self.day(2026, 12, requestedDay, in: zone), start: shown, startIsAllDay: false,
-                                        zone: zone, eventIdentifier: Self.identifier(rid: rid), externalIdentifier: nil,
-                                        occurrenceDate: shown, seriesIsAllDay: true, host: host)
+        func answer(_ requestedDay: Int) -> OccurrenceDateMatch.Answer {
+            Self.answer(Self.day(2026, 12, requestedDay, in: zone), start: Self.day(2026, 12, 30, hour: 10, in: zone),
+                        startIsAllDay: false, zone: zone, rid: rid, seriesIsAllDay: true, host: host)
         }
-        XCTAssertTrue(matches(28))
-        XCTAssertFalse(matches(26))
-        XCTAssertFalse(matches(27))
-        XCTAssertTrue(matches(30), "the day it shows")
+        XCTAssertEqual(answer(28), .undetermined)
+        XCTAssertEqual(answer(27), .undetermined)
+        XCTAssertEqual(answer(26), .differs)
+        XCTAssertEqual(answer(30), .matches, "the day it shows")
+    }
+
+    /// X3: a host that skipped the day (Pacific/Apia went from 2011-12-29 to 2011-12-31). The floating
+    /// date is compared with the requested civil date directly, so the 30th, asked in another zone,
+    /// is found, and the 31st is not taken for it.
+    func testAFloatingDateIsFoundOnADayTheHostSkipped() {
+        let host = TimeZone(identifier: "Pacific/Apia")!
+        let rid = Self.day(2011, 12, 30, in: Self.utc)
+        // An all-day occurrence with a zone of its own (V14), moved to 2012-01-02.
+        func allDay(_ requestedDay: Int) -> OccurrenceDateMatch.Answer {
+            Self.answer(Self.day(2011, 12, requestedDay, in: Self.utc), start: Self.day(2012, 1, 2, in: host), startIsAllDay: true,
+                        zone: Self.utc, rid: rid, seriesIsAllDay: true, host: host)
+        }
+        XCTAssertEqual(allDay(30), .matches)
+        XCTAssertEqual(allDay(31), .differs)
+        // Made timed in UTC on its own: both readings give the 30th there.
+        func timed(_ requestedDay: Int) -> OccurrenceDateMatch.Answer {
+            Self.answer(Self.day(2011, 12, requestedDay, in: Self.utc), start: Self.day(2012, 1, 2, hour: 10, in: Self.utc),
+                        startIsAllDay: false, zone: Self.utc, rid: rid, seriesIsAllDay: true, host: host)
+        }
+        XCTAssertEqual(timed(30), .matches)
+        XCTAssertEqual(timed(31), .differs)
     }
 
     /// A timed occurrence of a timed series, as on `main`: the /RID= is the slot's instant.
     func testATimedOccurrenceIsReadAsBefore() {
-        let zone = TimeZone(identifier: "America/Los_Angeles")!
-        let host = TimeZone(identifier: "Asia/Taipei")!
+        let zone = Self.losAngeles
+        let host = Self.taipei
         let rid = Self.day(2026, 12, 28, hour: 9, in: zone)
-        let shown = Self.day(2026, 12, 30, hour: 9, in: zone)
-        func matches(_ requestedDay: Int) -> Bool {
-            OccurrenceDateMatch.matches(requested: Self.day(2026, 12, requestedDay, in: zone), start: shown, startIsAllDay: false,
-                                        zone: zone, eventIdentifier: Self.identifier(rid: rid), externalIdentifier: nil,
-                                        occurrenceDate: shown, seriesIsAllDay: false, host: host)
+        func answer(_ requestedDay: Int) -> OccurrenceDateMatch.Answer {
+            Self.answer(Self.day(2026, 12, requestedDay, in: zone), start: Self.day(2026, 12, 30, hour: 9, in: zone),
+                        startIsAllDay: false, zone: zone, rid: rid, seriesIsAllDay: false, host: host)
         }
-        XCTAssertTrue(matches(28))
-        XCTAssertTrue(matches(30))
-        XCTAssertFalse(matches(27))
-        XCTAssertFalse(matches(29))
+        XCTAssertEqual(answer(28), .matches)
+        XCTAssertEqual(answer(30), .matches)
+        XCTAssertEqual(answer(27), .differs)
+        XCTAssertEqual(answer(29), .differs)
     }
 
     /// Without a /RID=, the original slot is `occurrenceDate`, already a day of the host for an all-day occurrence.
     func testWithoutRIDTheOccurrenceDateIsTheOriginalDay() {
-        let host = TimeZone(identifier: "America/Los_Angeles")!
+        let host = Self.losAngeles
         let slot = Self.day(2026, 12, 28, in: host)
-        let shown = Self.day(2026, 12, 30, in: host)
-        func matches(_ requestedDay: Int) -> Bool {
-            OccurrenceDateMatch.matches(requested: Self.day(2026, 12, requestedDay, in: host), start: shown, startIsAllDay: true,
-                                        zone: nil, eventIdentifier: "PLAIN-ID", externalIdentifier: nil,
-                                        occurrenceDate: slot, seriesIsAllDay: true, host: host)
+        for seriesIsAllDay: Bool? in [true, false, nil] {
+            func answer(_ requestedDay: Int) -> OccurrenceDateMatch.Answer {
+                Self.answer(Self.day(2026, 12, requestedDay, in: host), start: Self.day(2026, 12, 30, in: host), startIsAllDay: true,
+                            zone: nil, rid: nil, occurrenceDate: slot, seriesIsAllDay: seriesIsAllDay, host: host)
+            }
+            XCTAssertEqual(answer(28), .matches)
+            XCTAssertEqual(answer(30), .matches)
+            XCTAssertEqual(answer(27), .differs)
         }
-        XCTAssertTrue(matches(28))
-        XCTAssertTrue(matches(30))
-        XCTAssertFalse(matches(27))
+    }
+
+    /// The reading: a /RID= that is not 00:00 UTC is an instant; at 00:00 UTC the flags decide when the
+    /// series can be read and both agree, and it is unknown otherwise.
+    func testTheReadingOfTheDigits() {
+        let midnight = Self.day(2026, 12, 28, in: Self.utc)
+        let morning = Self.day(2026, 12, 28, hour: 7, in: Self.taipei)
+        XCTAssertTrue(OccurrenceDateMatch.isWholeUTCDay(midnight))
+        XCTAssertFalse(OccurrenceDateMatch.isWholeUTCDay(morning))
+        XCTAssertTrue(OccurrenceDateMatch.isWholeUTCDay(Self.day(1999, 12, 31, in: Self.utc)), "before the reference date")
+        XCTAssertFalse(OccurrenceDateMatch.isWholeUTCDay(midnight.addingTimeInterval(1)))
+        typealias R = OccurrenceDateMatch.Reading
+        let cases: [(Bool?, Bool, R)] = [(true, true, .floating), (false, false, .instant), (true, false, .unknown),
+                                         (false, true, .unknown), (nil, true, .unknown), (nil, false, .unknown)]
+        for (series, start, reading) in cases {
+            XCTAssertEqual(OccurrenceDateMatch.reading(rid: midnight, seriesIsAllDay: series, startIsAllDay: start), reading,
+                           "series \(String(describing: series)), occurrence \(start)")
+            XCTAssertEqual(OccurrenceDateMatch.reading(rid: morning, seriesIsAllDay: series, startIsAllDay: start), .instant)
+        }
+    }
+
+    /// The refusal of an undetermined date says why and how to name the occurrence; a date that is
+    /// not the occurrence keeps the reason of #416.
+    func testTheRefusalOfAnUndeterminedDateNamesTheShownDay() {
+        let reason = DetachedOccurrenceSpan.occurrenceDateReason(for: .undetermined)
+        XCTAssertEqual(reason, DetachedOccurrenceSpan.occurrenceDateUndeterminedReason)
+        XCTAssertTrue(reason.contains("occurrence_date is not the day it starts on. It may be its original day"), reason)
+        XCTAssertTrue(reason.contains("is a date or an instant depending on whether the series was all-day when the occurrence was first edited"), reason)
+        XCTAssertTrue(reason.contains("the series cannot be read or it and the occurrence differ in being all-day"), reason)
+        XCTAssertTrue(reason.contains("pass the day it starts on (as list_events shows it) as occurrence_date, or leave occurrence_date out"), reason)
+        XCTAssertTrue(reason.hasSuffix("Nothing was changed."), reason)
+        XCTAssertFalse(reason.contains("series' identifier"), "that route does not reach an edited occurrence (#532)")
+        XCTAssertEqual(DetachedOccurrenceSpan.occurrenceDateReason(for: .differs), DetachedOccurrenceSpan.occurrenceDateReason)
+        XCTAssertEqual(DetachedOccurrenceSpan.occurrenceDateReason(for: .matches), DetachedOccurrenceSpan.occurrenceDateReason)
     }
 }

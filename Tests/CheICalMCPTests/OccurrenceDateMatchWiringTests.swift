@@ -1,45 +1,49 @@
 import XCTest
 @testable import CheICalMCP
 
-/// #543: `occurrenceDateMatches` reads an `EKEvent` and the series object from the store, which no
-/// unit test can run. These pins read the source; the comparison itself is `OccurrenceDateMatchTests`.
+/// #543: `occurrenceDateAnswer` reads an `EKEvent` and the series object from the store, which no
+/// unit test can run. These pins read the source; the comparison itself is `OccurrenceDateMatchTests`
+/// and `OccurrenceDateMatchCellTests`.
 final class OccurrenceDateMatchWiringTests: XCTestCase {
-    private func body() throws -> String {
+    private func body(_ signature: String) throws -> String {
         let source = SourcePins.code(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift"))
-        return try XCTUnwrap(SourcePins.body(of: "func occurrenceDateMatches(", in: source))
+        return try XCTUnwrap(SourcePins.body(of: signature, in: source))
     }
 
     /// The check goes through the pure comparison once, with this Mac's zone as the host.
-    func testOccurrenceDateMatchesCallsThePureComparisonWithTheHostZone() throws {
-        let check = try body()
-        XCTAssertEqual(SourcePins.ranges(of: "OccurrenceDateMatch.matches(", in: check).count, 1)
+    func testOccurrenceDateAnswerCallsThePureComparisonWithTheHostZone() throws {
+        let check = try body("func occurrenceDateAnswer(")
+        XCTAssertEqual(SourcePins.ranges(of: "OccurrenceDateMatch.answer(", in: check).count, 1)
         XCTAssertTrue(check.contains("host: .current"))
         XCTAssertTrue(check.contains("requested: date, start: occurrence.startDate, startIsAllDay: occurrence.isAllDay"))
         XCTAssertTrue(check.contains("zone: Self.occurrenceZone(of: occurrence)"))
         XCTAssertTrue(check.contains("eventIdentifier: id, externalIdentifier: occurrence.calendarItemExternalIdentifier"))
         XCTAssertTrue(check.contains("occurrenceDate: occurrence.occurrenceDate"))
-        // The raw reading is no longer made here.
+        XCTAssertTrue(check.contains("guard let date else { return .matches }"))
+        // The raw reading is not made here.
         XCTAssertTrue(SourcePins.ranges(of: "originalSlot(", in: check).isEmpty)
         XCTAssertTrue(SourcePins.ranges(of: "startsOnRequestedDay(", in: check).isEmpty)
     }
 
     // spec-example: occurrence-date-own-identifier / The series object cannot be read
-    /// The series' flag comes from the series object the identifier names, the occurrence's own flag
-    /// when that object cannot be read (none, or the lookup throws).
-    func testTheSeriesFlagComesFromTheSeriesObjectWithTheOccurrencesAsFallback() throws {
-        let check = try body()
-        XCTAssertTrue(check.contains("let seriesIsAllDay = (try? seriesObject(ofOccurrence: id))?.isAllDay ?? occurrence.isAllDay"))
+    /// The series' flag comes from the series object the identifier names, nil when that object
+    /// cannot be read (none, or the lookup throws): no fallback to the occurrence's own flag (V1).
+    func testTheSeriesFlagComesFromTheSeriesObjectWithNoFallback() throws {
+        let check = try body("func occurrenceDateAnswer(")
+        XCTAssertTrue(check.contains("let seriesIsAllDay = (try? seriesObject(ofOccurrence: id))?.isAllDay\n"), check)
+        XCTAssertTrue(SourcePins.ranges(of: "?? occurrence.isAllDay", in: check).isEmpty)
         XCTAssertTrue(check.contains("seriesIsAllDay: seriesIsAllDay"))
     }
 
-    /// The pure comparison reads the original slot with the series' flag in the host zone, and
-    /// compares it with that flag; the shown start keeps the occurrence's own flag.
-    func testThePureComparisonReadsTheSlotWithTheSeriesFlagInTheHostZone() throws {
-        let source = SourcePins.code(try SourcePins.source("EventKit/OccurrenceDateMatch.swift"))
-        let matches = try XCTUnwrap(SourcePins.body(of: "static func matches(", in: source))
-        XCTAssertTrue(matches.contains("UndoPostState.ruleSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,"))
-        XCTAssertTrue(matches.contains("occurrenceDate: occurrenceDate, isAllDay: seriesIsAllDay, zone: host)"))
-        XCTAssertTrue(SourcePins.ranges(of: "originalSlot(", in: matches).isEmpty)
-        XCTAssertEqual(SourcePins.ranges(of: "host: host", in: matches).count, 2)
+    /// `occurrenceDateMatches` is the answer `.matches`, and the refusal's reason is read from the
+    /// same answer at both call sites.
+    func testTheMatchAndTheRefusalReasonComeFromTheAnswer() throws {
+        let matches = try body("func occurrenceDateMatches(")
+        XCTAssertTrue(matches.contains("occurrenceDateAnswer(date, occurrence: occurrence, id: id) == .matches"), matches)
+        let refusal = try body("func occurrenceDateRefusal(")
+        XCTAssertTrue(refusal.contains("DetachedOccurrenceSpan.occurrenceDateReason(for: occurrenceDateAnswer(date, occurrence: occurrence, id: id))"), refusal)
+        let manager = SourcePins.code(try SourcePins.source("EventKit/EventKitManager.swift"))
+        XCTAssertEqual(SourcePins.ranges(of: "throw EventKitError.occurrenceAddressRefused(reason: occurrenceDateRefusal(occurrenceDate, occurrence: masterEvent, id: identifier))", in: manager).count, 2)
+        XCTAssertTrue(SourcePins.ranges(of: "reason: DetachedOccurrenceSpan.occurrenceDateReason)", in: manager).isEmpty)
     }
 }
