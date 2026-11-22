@@ -35,3 +35,8 @@ change `restore-series-exceptions-on-delete-undo`（#285、#319、#321）在 v1.
 
 - `openspec/specs/undo-history-discard/spec.md`（只有這一個 requirement）、`openspec/changes/archive/`、`Tests/CheICalMCPTests/SeriesExceptionsSpecDocsTests.swift`。
 - 讀這份 spec 的另外三個文件測試（`UndoPostStateWindowDocsTests`、`SeriesUpdateUndoDocsTests`、`UndoForecastDocsTests`）的釘選照舊。
+
+## 更正（PR #581 第 1 輪 verify）
+
+- 上面「八個 #285／#319 情境、三個 #321 情境」重複算了一次：「Occurrence delete whose slot the series already holds (#285, #321)」兩邊都算進去了。實際加進來的是 11 個情境：「…that holds no exceptions (#244, #285)」、其餘七個 #285／#319 情境、三個 #321 情境（其中一個同時是 #285）。38 = 28 − 1 + 11。
+- 第 1 輪 verify 之後，合併的 requirement 再改四處：「Delete of one occurrence」的引用拿掉不存在的「(#285)」，並改寫成時段已被佔用時什麼都不寫（不是「除非……否則不建第二個系列」）；規則時段的讀法補上最後的退回（沒有 occurrence date 時用場次的開始時間）；「Batch undo fails part-way」說「成員不讀其他成員的結果」的那一句，依 `mayRunLastAfterAFailure` 的註解寫出 #321 的例外。

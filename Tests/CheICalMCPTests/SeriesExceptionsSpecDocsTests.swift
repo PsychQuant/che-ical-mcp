@@ -7,6 +7,11 @@ import XCTest
 /// #269, #263, #273 and #287 (measured on a scratch copy). These pins keep the merged requirement:
 /// every scenario of both sides once, in this order, the pre-#285 scenario gone, and the clauses
 /// taken from each side.
+///
+/// A later change that adds, renames or reorders a scenario of "Stale and busy protection" turns
+/// the title test red on purpose: copy the new `#### Scenario:` title into `scenarios`, at its place
+/// in the spec. The exact list is what catches a delta forked from an older base, which drops
+/// scenarios other changes added (the shape #542 found).
 final class SeriesExceptionsSpecDocsTests: XCTestCase {
     private func repoFile(_ relative: String) throws -> String {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -73,7 +78,12 @@ final class SeriesExceptionsSpecDocsTests: XCTestCase {
         let block = try staleAndBusyRequirement()
         let headings = block.split(separator: "\n").filter { $0.hasPrefix("#### Scenario: ") }
             .map { String($0.dropFirst("#### Scenario: ".count)) }
-        XCTAssertEqual(headings, Self.scenarios)
+        XCTAssertEqual(headings, Self.scenarios, """
+            The scenario titles of "Stale and busy protection" differ from \
+            SeriesExceptionsSpecDocsTests.scenarios. If a change added or renamed a scenario on purpose, \
+            copy its title into that list at its place in the spec (the order counts). If not, a delta \
+            forked from an older base may have dropped scenarios other changes added (#542).
+            """)
     }
 
     func testThePreExceptionsWholeSeriesScenarioIsGone() throws {
@@ -90,7 +100,9 @@ final class SeriesExceptionsSpecDocsTests: XCTestCase {
     func testTheMergedClausesAreThere() throws {
         let block = try staleAndBusyRequirement()
         for phrase in [
-            "never a second series, unless the series already holds that slot",
+            "(never a second series); when the series already holds that slot it writes nothing",
+            "with one exception: the duplicate guard of a deleted occurrence's record",
+            "else from its occurrence date or, without one, its start",
             "says that undo with restore_available restores those and keeps the others",
             "a series member whose exceptions restore failed and whose compensating delete failed too is the one member that throws a permanent error",
             "the series member described above is the one write that does",
@@ -101,6 +113,9 @@ final class SeriesExceptionsSpecDocsTests: XCTestCase {
         }
         XCTAssertFalse(block.contains("no batch member's write throws such an error today"))
         XCTAssertFalse(block.contains("A partial restore is #287"))
+        XCTAssertFalse(block.contains("never a second series, unless"))
+        // Every scenario reference names a heading as it stands, without the issue suffix.
+        XCTAssertFalse(block.contains("(the scenario \"Occurrence delete whose slot the series already holds (#285)\")"))
     }
 
     /// The change is archived with its two open tasks recorded, not marked done.
@@ -114,7 +129,8 @@ final class SeriesExceptionsSpecDocsTests: XCTestCase {
         let tasks = try repoFile("openspec/changes/archive/\(try XCTUnwrap(archived.first))/tasks.md")
         let open = tasks.split(separator: "\n").filter { $0.hasPrefix("- [ ] ") }
         XCTAssertEqual(open.count, 2)
-        XCTAssertTrue(open.contains { $0.hasPrefix("- [ ] 8.3 ") && $0.contains("#324") })
+        XCTAssertTrue(open.contains { $0.hasPrefix("- [ ] 8.3 ") && $0.contains("封存時 #324 仍開著") })
         XCTAssertTrue(open.contains { $0.hasPrefix("- [ ] 10.4 ") && $0.contains("#579") && $0.contains("CMA") })
+        XCTAssertTrue(tasks.split(separator: "\n").contains { $0.hasPrefix("- [x] 10.12 ") && $0.contains("--skip-specs") })
     }
 }
