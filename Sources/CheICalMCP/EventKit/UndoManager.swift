@@ -526,7 +526,11 @@ enum UndoOperation {
     /// nil for the kinds `CalendarUndoManager.markSeriesNotFollowed` never flags, which are the ones
     /// with nil here: a recurring update's marker (#538 fix 1, R3: its undo is refused and the record
     /// discarded before any lookup, so it never answers not found and needs no `discard_id`), a batch
-    /// (no batch recorded today names a live event), delete records, reminders and calendar operations.
+    /// (no batch recorded today names a live event), the record of a move by copy (#559: it names its copy,
+    /// and its undo restores the original first and only then looks the copy up, answering not found
+    /// when the copy is not under its recorded identifier, `MoveByCopyUndo.copyState`; where the
+    /// original's slot is already held it writes nothing and does not look the copy up,
+    /// `MoveByCopyUndo.Copy.keptSlotHeld`; it never answers the not-followed text), delete records, reminders and calendar operations.
     /// Exhaustive.
     var notFollowedTitle: String? {
         switch self {
@@ -536,9 +540,7 @@ enum UndoOperation {
             return oldSnapshot.title
         case .updateSeries(let record):
             return record.old.title
-        case .moveByCopy(let original, _, _, _, _):
-            return original.title
-        case .updateRecurringEvent, .batch, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .createReminder,
+        case .updateRecurringEvent, .batch, .moveByCopy, .deleteEvent, .deleteOccurrence, .deleteFollowingOccurrences, .createReminder,
              .deleteReminder, .updateReminder, .completeReminder, .completeRecurringReminder, .calendarOperation:
             return nil
         }
@@ -761,8 +763,8 @@ actor CalendarUndoManager {
 
     /// #538: flags every entry on both stacks that names `seriesID` (`eventIdentifiersNamed`; delete
     /// records name none) and whose undo can answer the not-followed text (#538 fix 1, R3: a kind with
-    /// a `notFollowedTitle`, so not a recurring update's marker nor a batch), and returns how many,
-    /// flagged before or not. The undo of a whole-series delete calls it instead of
+    /// a `notFollowedTitle`, so not a recurring update's marker, a batch nor a move by copy, #559), and
+    /// returns how many, flagged before or not. The undo of a whole-series delete calls it instead of
     /// `replaceEventIdentifier` when it did not follow.
     func markSeriesNotFollowed(_ seriesID: String) -> Int {
         guard !seriesID.isEmpty else { return 0 }

@@ -127,6 +127,27 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
         }
     }
 
+    /// #555 item 8: each reading of the day is built from the event alone, through
+    /// `EditedOccurrenceAddress.Reading(_:)`, and nothing else is read in the loop; the initializer
+    /// itself reads the identifier, all-day state, start and zone only (PR #562 verify r1, K8). The pins above hold the
+    /// window, the predicate and the enumeration; without this one a slot read added inside the loop
+    /// (`occurrenceDate`, the external identifier, `isDetached`) would pass them all.
+    func testEachReadingOfTheDayIsBuiltFromTheEventAlone() throws {
+        let day = try body(of: "func dayReadings(")
+        let whole = "func dayReadings(containing date: Date, in timeZone: TimeZone?) -> [EditedOccurrenceAddress.Reading] { guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone) else { return [] } let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil) var readings: [EditedOccurrenceAddress.Reading] = [] eventStore.enumerateEvents(matching: predicate) { event, _ in readings.append(EditedOccurrenceAddress.Reading(event)) } return readings }"
+        XCTAssertEqual(day, whole)
+        for slot in ["occurrenceDate", "calendarItemExternalIdentifier", "isDetached", "/RID="] {
+            XCTAssertFalse(day.contains(slot), "dayReadings reads \(slot)")
+        }
+        // PR #562 verify r1 (K8): the initializer the loop calls reads the four fields and nothing
+        // else, the start from `startDate`, not a slot. The body is pinned exactly, where the
+        // deny-lists above and in `testTheSearchReadsNoSlotAndListsNoSeries` name only spellings
+        // (which already turn red on `occurrenceDate` in its place, PR #562 verify r2).
+        let reading = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "init(_ event: EKEvent)",
+                                                                                   in: try SourcePins.source("EventKit/EditedOccurrenceAddress.swift"))))
+        XCTAssertEqual(reading, "init(_ event: EKEvent) { self.init(eventIdentifier: event.eventIdentifier, isAllDay: event.isAllDay, start: event.startDate, timeZone: event.timeZone) }")
+    }
+
     /// The lookup itself is as it was: by the exact identifier, for an occurrence starting on the day.
     func testTheLookupStillTestsTheExactIdentifier() throws {
         let find = try body(of: "func findOccurrence(")
@@ -244,7 +265,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
                            "(#548, cause not separated)",
                            // PR #545 narrowing round.
                            "an occurrence edited on its own and moved to another day, asked for by the day it was moved off",
-                           "and this server does not read that date. So the refusal says both directions without a date",
+                           "and this server does not read that date. So the refusal says both directions without the original date",
                            "Every span `future` refusal also says, whatever the occurrence, what #550 measured on iCloud",
                            "no refusal prints or implies the original date of an occurrence"]),
             ("README_zh-TW.md", ["所以系列識別碼加那一天指不到它",
@@ -258,7 +279,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
                                  "回應 `deleted`，卻留下被修改的那個場次本身",
                                  "（#548，原因還沒分開）",
                                  "被單獨修改過並移到別天的場次，用它被移走的那一天來指",
-                                 "所以訊息不寫日期，寫出兩個方向",
+                                 "所以訊息不寫原本的日期，寫出兩個方向",
                                  "都會寫出 #550 在 iCloud 量到的",
                                  "任何拒絕訊息都不寫、也不暗示場次原本的日期"]),
             ("CHANGELOG.md", ["A series' identifier and a day no longer answer not found for an occurrence edited on its own",
@@ -268,7 +289,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
                               "Google and Exchange were not run for this change",
                               "the call answers `deleted`, and the edited occurrence itself stays, #549",
                               "an occurrence edited on its own and moved to another day, asked for by the day it was moved off",
-                              "give both directions without a date",
+                              "give both directions without the original date",
                               "No refusal prints or implies an occurrence's original date."]),
             (".claude/rules/mcp-binary-version-testing.md", ["## Release gate：系列識別碼加日期指到被單獨修改過的場次（#532、#534、#535）",
                                                              "這個呼叫會被 #532 的訊息拒絕",
