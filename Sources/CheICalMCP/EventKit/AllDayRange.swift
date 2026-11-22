@@ -35,6 +35,29 @@ enum AllDayRange {
         return (firstDay, lastSecond(of: lastDay, calendar: calendar))
     }
 
+    /// #546: the days the dates of a stored all-day event stand for, as (start of the first day, last
+    /// second of the last day) in `calendar`'s zone (the host zone, #190). On a day whose midnight the
+    /// zone skips (it starts at 01:00), EventKit does not return that pair: measured on iCloud with
+    /// `TZ=America/Havana` (2026-11-22), a one-day event on such a day ends at 00:59:59 of the next day,
+    /// and the issue's Google calendar gave the start at 23:00 the evening before. Read as they are, a
+    /// start-only move counted two days and the output showed the wrong hours. A start that is not the
+    /// start of its day stands for the nearest day start (the next day from noon on); the number of
+    /// days is the elapsed time rounded to whole days, which a DST change of an hour or two cannot
+    /// move. On every other day this returns the pair it is given.
+    static func storedDays(start: Date, end: Date, calendar: Calendar) -> (start: Date, end: Date) {
+        var firstDay = calendar.startOfDay(for: start)
+        if firstDay != start, calendar.component(.hour, from: start) >= 12,
+           let next = calendar.date(byAdding: .day, value: 1, to: firstDay) {
+            firstDay = calendar.startOfDay(for: next)
+        }
+        let days = max(1, Int((end.addingTimeInterval(1).timeIntervalSince(start) / 86_400).rounded()))
+        let lastDay = calendar.date(byAdding: .day, value: days - 1, to: firstDay) ?? firstDay
+        let read = (start: firstDay, end: lastSecond(of: lastDay, calendar: calendar))
+        // Only the pair the rule above can explain is replaced; anything else stays as returned.
+        return abs(read.start.timeIntervalSince(start)) <= 3 * 3600 && abs(read.end.timeIntervalSince(end)) <= 3 * 3600
+            ? read : (start, end)
+    }
+
     /// What `update_event` writes for the dates, decided from the state the event will be in after
     /// the update (the requested `all_day`, else the stored one), not the state before it. #364 T3:
     /// the range used to be checked with the stored flag, so turning a timed event into a one-day
@@ -52,6 +75,9 @@ enum AllDayRange {
         newStart: Date?, newEnd: Date?, requestedAllDay: Bool?,
         calendar: Calendar
     ) throws -> UpdatePlan {
+        // #546: a stored all-day pair is read as the days it stands for before anything is counted.
+        let (storedStart, storedEnd) = storedAllDay
+            ? storedDays(start: storedStart, end: storedEnd, calendar: calendar) : (storedStart, storedEnd)
         let isAllDay = requestedAllDay ?? storedAllDay
         // A flip of the flag in either direction re-reads the stored pair under the new state
         // (#364 verify round 2: a flag-only `all_day: false` used to skip the timed check).

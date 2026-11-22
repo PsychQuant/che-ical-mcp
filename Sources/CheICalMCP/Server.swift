@@ -3504,16 +3504,21 @@ class CheICalMCPServer {
         _ event: some EventFormattingSource,
         detailLevel: String = "standard",
         displayTimezone: TimeZone? = nil,
-        fields: Set<String>? = nil
+        fields: Set<String>? = nil,
+        allDayZone: TimeZone = .current
     ) -> [String: Any] {
         let tz = displayTimezone ?? event.formatSourceTimeZone
+        // #546: an all-day event's dates as the days they stand for in the zone EventKit read them in.
+        let dates = event.formatIsAllDay
+            ? AllDayRange.storedDays(start: event.formatStartDate, end: event.formatEndDate, calendar: Calendar.gregorian(in: allDayZone))
+            : (start: event.formatStartDate, end: event.formatEndDate)
         var dict: [String: Any] = [
             "id": event.formatID ?? "",
             "title": event.formatTitle ?? "",
-            "start_date": dateFormatter.string(from: event.formatStartDate),
-            "start_date_local": formatLocal(event.formatStartDate, in: tz),
-            "end_date": dateFormatter.string(from: event.formatEndDate),
-            "end_date_local": formatLocal(event.formatEndDate, in: tz),
+            "start_date": dateFormatter.string(from: dates.start),
+            "start_date_local": formatLocal(dates.start, in: tz),
+            "end_date": dateFormatter.string(from: dates.end),
+            "end_date_local": formatLocal(dates.end, in: tz),
             "timezone": (event.formatSourceTimeZone ?? TimeZone.current).identifier,
             // #386: the event's own zone, null when it stores none (floating, all-day included);
             // `timezone` above falls back to the host zone, so alone it cannot tell the two apart.
