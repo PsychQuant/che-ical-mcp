@@ -326,6 +326,18 @@ final class ManifestParityTests: XCTestCase {
         XCTAssertTrue(summary.contains("calendar_names that match nothing, or fewer than two calendars, are refused"), summary)
     }
 
+    func testAllDayToolsDescribeSkippedMidnight() throws {
+        let phrases = [
+            "create_event": "A date-only value on a day whose midnight the server's time zone skips starts at that day's first instant.",
+            "list_events": "On a day whose midnight the server's time zone skips, an all-day event can start at the first instant of that day."
+        ]
+        for (name, phrase) in phrases {
+            let tool = try descriptions(of: name)
+            XCTAssertEqual(tool.declared.components(separatedBy: phrase).count, 2, "defineTools() \(name)")
+            XCTAssertEqual(tool.summary.components(separatedBy: phrase).count, 2, "mcpb/manifest.json \(name)")
+        }
+    }
+
     /// #240: the three event read tools name `alarms` and its sign, in defineTools() and in the
     /// manifest, as the reminder read tools do (#231).
     func testEventReadToolsDescribeAlarms() throws {

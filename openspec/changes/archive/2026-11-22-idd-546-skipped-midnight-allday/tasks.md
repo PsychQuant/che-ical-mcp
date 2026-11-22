@@ -10,5 +10,5 @@
 
 ## 3. Texts and device
 
-- [x] 3.1 `CHANGELOG.md` `[Unreleased]`, `README.md`, `README_zh-TW.md`, a release-gate section in `.claude/rules/mcp-binary-version-testing.md`. Verify: read against the code and the device rows.
-- [x] 3.2 Device cells on a Developer ID signed release build of the head, `--cli`, `TZ=America/Havana`, disposable iCloud calendars named with `#546`. Verify: rows 1 to 5 and the start-only move as in the release gate; calendars deleted by id, two counts a minute apart. (Done on the build of `57f5d642`, 2026-11-22: rows 1 to 5, the start-only and end-only moves and the ordinary controls as expected; row 6 still one day, as the release gate says.)
+- [x] 3.1 `create_event` and `list_events` descriptions in `Server.swift`, their manifest summaries (pinned in `ManifestParityTests`), `CHANGELOG.md` `[Unreleased]`, `README.md`, `README_zh-TW.md`, a release-gate section in `.claude/rules/mcp-binary-version-testing.md`. Verify: read against the code and the device rows.
+- [x] 3.2 Device cells on a Developer ID signed release build of the head, `--cli`, `TZ=America/Havana`, disposable iCloud calendars named with `#546`. Verify: rows 1 to 5 and the start-only move as in the release gate; calendars deleted by identifier, with two absence checks a minute apart limited to the identifiers this lane created. (Done on the build of `57f5d642`, 2026-11-22: rows 1 to 5, the start-only and end-only moves and the ordinary controls as expected; row 6 still one day, as the release gate says.)
