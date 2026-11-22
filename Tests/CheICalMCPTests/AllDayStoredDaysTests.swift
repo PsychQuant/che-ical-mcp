@@ -20,7 +20,7 @@ final class AllDayStoredDaysTests: XCTestCase {
             let next = calendar.startOfDay(for: day.start.addingTimeInterval(36 * 3600))
             return (zone, day.start, next)
         }
-        throw XCTSkip("this host's zone data has no skipped midnight in the zones tried")
+        return try XCTUnwrap(nil, "this host's zone data has no skipped midnight in the zones tried")
     }
 
     private func stored(_ start: Date, _ end: Date, _ zone: TimeZone) -> (start: Date, end: Date) {
@@ -77,23 +77,27 @@ final class AllDayStoredDaysTests: XCTestCase {
     /// On a 25-hour day (the clock goes back an hour after midnight), measured in Havana on
     /// 2028-11-05: the day reads from 00:00 to 23:59:59, 25 hours, and stays as it is.
     func testALongDayIsUnchanged() throws {
+        var total = 0
         for id in ["America/Havana", "America/Santiago", "America/Asuncion"] {
             let zone = try XCTUnwrap(TimeZone(identifier: id))
             let calendar = Calendar.gregorian(in: zone)
             var transition = zone.nextDaylightSavingTimeTransition(after: Date(timeIntervalSince1970: 978_307_200))
             var checked = 0
             while let t = transition, t < Date(timeIntervalSince1970: 1_609_459_200), checked < 4 {
-                if zone.secondsFromGMT(for: t) < zone.secondsFromGMT(for: t.addingTimeInterval(-1)) {
+                if zone.secondsFromGMT(for: t.addingTimeInterval(-1)) - zone.secondsFromGMT(for: t) == 3600 {
                     let dayStart = calendar.startOfDay(for: t)
-                    let nextStart = calendar.startOfDay(for: t.addingTimeInterval(30 * 3600))
+                    let nextStart = calendar.startOfDay(for: try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: dayStart)))
+                    XCTAssertEqual(nextStart.timeIntervalSince(dayStart), 25 * 3600, "\(id) \(t)")
                     let read = stored(dayStart, nextStart.addingTimeInterval(-1), zone)
                     XCTAssertEqual(read.start, dayStart, "\(id) \(t)")
                     XCTAssertEqual(read.end, nextStart.addingTimeInterval(-1), "\(id) \(t)")
                     checked += 1
+                    total += 1
                 }
                 transition = zone.nextDaylightSavingTimeTransition(after: t)
             }
         }
+        XCTAssertGreaterThan(total, 0)
     }
 
     func testOrdinaryDaysAreUnchanged() throws {
@@ -120,7 +124,7 @@ final class AllDayStoredDaysTests: XCTestCase {
     func testAPairFarFromItsDayBoundariesIsReturnedAsItIs() throws {
         let (zone, start, _) = try gapDay()
         let calendar = Calendar.gregorian(in: zone)
-        // 14:00 the day before: its nearest day start is the skipped-midnight day, 11 hours away.
+        // 14:00 the day before is ten elapsed hours before the gap day starts.
         let afternoon = try XCTUnwrap(calendar.date(bySettingHour: 14, minute: 0, second: 0, of: start.addingTimeInterval(-12 * 3600)))
         let read = stored(afternoon, afternoon.addingTimeInterval(12 * 3600), zone)
         XCTAssertEqual(read.start, afternoon)
@@ -151,6 +155,180 @@ final class AllDayStoredDaysTests: XCTestCase {
                 XCTAssertEqual(read.end, end, "\(id) \(end)")
             }
         }
+    }
+
+    func testAGapMorningPairStartingAfterTheFirstInstantKeepsTheRawPair() throws {
+        let (zone, start, _) = try gapDay()
+        let rawStart = start.addingTimeInterval(3600)
+        let rawEnd = rawStart.addingTimeInterval(86_399)
+        let read = stored(rawStart, rawEnd, zone)
+        XCTAssertEqual(read.start, rawStart)
+        XCTAssertEqual(read.end, rawEnd)
+    }
+
+    func testATimedUpdateCannotUseAnAllDayEndpointFallback() throws {
+        let (zone, start, _) = try gapDay()
+        let calendar = Calendar.gregorian(in: zone)
+        XCTAssertThrowsError(try AllDayRange.planUpdate(
+            storedStart: start, storedEnd: start.addingTimeInterval(3600), storedAllDay: false,
+            newStart: start, newEnd: nil, requestedAllDay: nil, calendar: calendar,
+            skippedMidnightEndpoint: "2001-04-01"))
+        let allDay = try AllDayRange.planUpdate(
+            storedStart: start, storedEnd: start.addingTimeInterval(3600), storedAllDay: true,
+            newStart: start, newEnd: nil, requestedAllDay: nil, calendar: calendar,
+            skippedMidnightEndpoint: "2001-04-01")
+        XCTAssertTrue(allDay.isAllDay)
+    }
+
+    func testTheThreeHourMidnightGapIsCorrectedAtTheUpperLimit() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "Antarctica/Casey"))
+        let iso = ISO8601DateFormatter()
+        let start = try XCTUnwrap(iso.date(from: "2016-10-21T16:00:00Z"))
+        let end = try XCTUnwrap(iso.date(from: "2016-10-22T12:59:59Z"))
+        let calendar = Calendar.gregorian(in: zone)
+        XCTAssertEqual(calendar.startOfDay(for: start), start)
+        XCTAssertEqual(calendar.component(.hour, from: start), 3)
+        let read = stored(start, start.addingTimeInterval(86_399), zone)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, end)
+    }
+
+    func testAMidnightGapOfFifteenMinutesUsesTheFirstInstant() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "Asia/Kathmandu"))
+        let iso = ISO8601DateFormatter()
+        let start = try XCTUnwrap(iso.date(from: "1985-12-31T18:30:00Z"))
+        let end = try XCTUnwrap(iso.date(from: "1986-01-01T18:14:59Z"))
+        let calendar = Calendar.gregorian(in: zone)
+        XCTAssertEqual(calendar.startOfDay(for: start), start)
+        XCTAssertEqual(calendar.component(.minute, from: start), 15)
+        let read = stored(start, start.addingTimeInterval(86_399), zone)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, end)
+    }
+
+    func testAnOrdinaryEveningPairThatMatchesTheGoogleTimesIsReturnedUnchanged() throws {
+        let utc = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let iso = ISO8601DateFormatter()
+        let start = try XCTUnwrap(iso.date(from: "2028-03-11T23:00:00Z"))
+        let end = try XCTUnwrap(iso.date(from: "2028-03-12T22:59:59Z"))
+        let read = stored(start, end, utc)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, end)
+    }
+
+    func testAMidnightGapOverThreeHoursKeepsTheRawPair() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "Antarctica/Casey"))
+        let start = try XCTUnwrap(ISO8601DateFormatter().date(from: "1969-01-01T00:00:00Z"))
+        let calendar = Calendar.gregorian(in: zone)
+        XCTAssertEqual(calendar.startOfDay(for: start), start)
+        XCTAssertEqual(calendar.component(.hour, from: start), 8)
+        let end = start.addingTimeInterval(86_399)
+        let read = stored(start, end, zone)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, end)
+    }
+
+    func testASecondsOnlyMidnightGapKeepsTheRawPair() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "America/Whitehorse"))
+        let start = try XCTUnwrap(ISO8601DateFormatter().date(from: "1900-08-20T09:00:12Z"))
+        let calendar = Calendar.gregorian(in: zone)
+        XCTAssertEqual(calendar.startOfDay(for: start), start)
+        XCTAssertEqual(calendar.component(.second, from: start), 12)
+        let end = start.addingTimeInterval(86_399)
+        let read = stored(start, end, zone)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, end)
+    }
+
+    func testAnEveningPairNearAGapIsReturnedUnchanged() throws {
+        let (zone, start, next) = try gapDay()
+        let rawStart = start.addingTimeInterval(-7200)
+        for rawEnd in [next.addingTimeInterval(-7200), next.addingTimeInterval(-3601)] {
+            let read = stored(rawStart, rawEnd, zone)
+            XCTAssertEqual(read.start, rawStart)
+            XCTAssertEqual(read.end, rawEnd)
+        }
+    }
+
+    func testAFirstInstantWithAnUnrecognizedEndIsReturnedUnchanged() throws {
+        let (zone, start, next) = try gapDay()
+        let rawEnd = next.addingTimeInterval(-3600)
+        let read = stored(start, rawEnd, zone)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, rawEnd)
+    }
+
+    func testAGoogleStartWithAnUnrecognizedEndIsReturnedUnchanged() throws {
+        let (zone, start, next) = try gapDay()
+        let rawStart = start.addingTimeInterval(-3600)
+        let rawEnd = next.addingTimeInterval(-5401)
+        let read = stored(rawStart, rawEnd, zone)
+        XCTAssertEqual(read.start, rawStart)
+        XCTAssertEqual(read.end, rawEnd)
+    }
+
+    func testAnAllDayToTimedFlipKeepsTheStoredEndpoints() throws {
+        let (zone, start, _) = try gapDay()
+        let end = start.addingTimeInterval(86_399)
+        let plan = try AllDayRange.planUpdate(
+            storedStart: start, storedEnd: end, storedAllDay: true,
+            newStart: nil, newEnd: nil, requestedAllDay: false, calendar: Calendar.gregorian(in: zone))
+        XCTAssertFalse(plan.isAllDay)
+        XCTAssertEqual(plan.start, start)
+        XCTAssertEqual(plan.end, end)
+        XCTAssertNil(plan.datesToWrite)
+    }
+
+    func testMovingATimedEventOnTheGapDayKeepsItsElapsedDuration() throws {
+        let (zone, start, _) = try gapDay()
+        let moved = start.addingTimeInterval(4 * 86_400)
+        let plan = try AllDayRange.planUpdate(
+            storedStart: start, storedEnd: start.addingTimeInterval(86_399), storedAllDay: false,
+            newStart: moved, newEnd: nil, requestedAllDay: nil, calendar: Calendar.gregorian(in: zone))
+        XCTAssertEqual(plan.datesToWrite?.end, moved.addingTimeInterval(86_399))
+    }
+
+    func testTurningATimedPairIntoAllDayCountsTheRawDays() throws {
+        let (zone, start, _) = try gapDay()
+        let calendar = Calendar.gregorian(in: zone)
+        let moved = calendar.startOfDay(for: start.addingTimeInterval(4 * 86_400))
+        let plan = try AllDayRange.planUpdate(
+            storedStart: start, storedEnd: start.addingTimeInterval(86_399), storedAllDay: false,
+            newStart: moved, newEnd: nil, requestedAllDay: true, calendar: calendar)
+        XCTAssertEqual(plan.datesToWrite?.end, moved.addingTimeInterval(2 * 86_400 - 1))
+    }
+
+    func testTheGoogleEventDictUsesTheAllDayZoneBeforeRenderingInAnotherZone() async throws {
+        let (zone, start, next) = try gapDay()
+        let utc = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let server = try await CheICalMCPServer()
+        let event = FakeFormattableEvent(formatStartDate: start.addingTimeInterval(-3600),
+                                         formatEndDate: next.addingTimeInterval(-3601),
+                                         formatSourceTimeZone: utc, formatIsAllDay: true)
+        let dict = server.formatEventDict(event, displayTimezone: utc, allDayZone: zone)
+        let iso = ISO8601DateFormatter()
+        let expectedStart = iso.string(from: start)
+        let expectedEnd = iso.string(from: next.addingTimeInterval(-1))
+        XCTAssertEqual(dict["start_date"] as? String, expectedStart)
+        XCTAssertEqual(dict["end_date"] as? String, expectedEnd)
+        XCTAssertEqual(dict["start_date_local"] as? String, String(expectedStart.dropLast()))
+        XCTAssertEqual(dict["end_date_local"] as? String, String(expectedEnd.dropLast()))
+    }
+
+    func testTheEventDictDefaultsToTheProcessZoneForAllDayDates() async throws {
+        let (zone, start, next) = try gapDay()
+        let utc = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let server = try await CheICalMCPServer()
+        let rawEnd = start.addingTimeInterval(86_399)
+        let event = FakeFormattableEvent(formatStartDate: start, formatEndDate: rawEnd,
+                                         formatSourceTimeZone: utc, formatIsAllDay: true)
+        let dict = server.formatEventDict(event, displayTimezone: utc)
+        // The Havana run exercises the correction with no injected all-day zone.
+        if ProcessInfo.processInfo.environment["TZ"] == "America/Havana" {
+            XCTAssertEqual(TimeZone.current.identifier, "America/Havana")
+        }
+        let expectedEnd = TimeZone.current.identifier == zone.identifier ? next.addingTimeInterval(-1) : rawEnd
+        XCTAssertEqual(dict["end_date"] as? String, ISO8601DateFormatter().string(from: expectedEnd))
     }
 
     // spec-example: all-day-skipped-midnight / moving that event by its start keeps one day
@@ -201,6 +379,12 @@ final class AllDayStoredDaysTests: XCTestCase {
                                          formatSourceTimeZone: zone, formatIsAllDay: false)
         let dict = server.formatEventDict(event, displayTimezone: zone, allDayZone: zone)
         let iso = ISO8601DateFormatter()
-        XCTAssertEqual(dict["end_date"] as? String, iso.string(from: start.addingTimeInterval(86_399)))
+        let expectedStart = iso.string(from: start)
+        let expectedEnd = iso.string(from: start.addingTimeInterval(86_399))
+        let local = FlexibleDate.formatter("yyyy-MM-dd'T'HH:mm:ss", zone: zone)
+        XCTAssertEqual(dict["start_date"] as? String, expectedStart)
+        XCTAssertEqual(dict["end_date"] as? String, expectedEnd)
+        XCTAssertEqual(dict["start_date_local"] as? String, local.string(from: start))
+        XCTAssertEqual(dict["end_date_local"] as? String, local.string(from: start.addingTimeInterval(86_399)))
     }
 }

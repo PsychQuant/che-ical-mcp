@@ -11,6 +11,23 @@ final class EventUpdateHandlerTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }
 
+    func testAnUpdateCanPassTheGapFallbackForAStoredAllDayEvent() async throws {
+        let fake = FakeEventWriteSource()
+        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let gapDay = "2028-03-12"
+        let result = try await update(server, ["event_id": .string("allday-1"), "end_time": .string(gapDay)])
+        XCTAssertEqual(result["action"] as? String, "updated")
+        let requests = await fake.updates
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertNil(request.isAllDay)
+        if TimeZone.current.identifier == "America/Havana" {
+            XCTAssertEqual(request.skippedMidnightEndpoint, gapDay)
+            XCTAssertEqual(request.endDate, ISO8601DateFormatter().date(from: "2028-03-12T05:00:00Z"))
+        } else {
+            XCTAssertNil(request.skippedMidnightEndpoint)
+        }
+    }
+
     // MARK: - #268 identifier after the save
 
     func testUpdateToACalendarInAnotherAccountReportsTheNewIdentifier() async throws {

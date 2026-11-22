@@ -5,7 +5,7 @@ import Foundation
 /// 1. full ISO8601: "2026-02-06T14:00:00+08:00" (the offset is explicit);
 /// 2. ISO8601 without an offset: "2026-02-06T14:00:00", read in `defaultTimezone`;
 /// 3. a date: "2026-02-06", 00:00:00 of that day in `defaultTimezone` (the first instant of the
-///    day when the zone skips that midnight, #546);
+///    day when the zone skips that midnight and the caller opts in, #546);
 /// 4. a time: "14:00" or "14:00:00", that time today in `defaultTimezone`.
 /// `defaultTimezone` nil means the host zone.
 ///
@@ -14,7 +14,7 @@ import Foundation
 /// (Buddhist, ROC, Japanese, …) never reads it as another year.
 enum FlexibleDate {
     static func parse(_ string: String, defaultTimezone: TimeZone? = nil, now: Date = Date(),
-                      iso: ISO8601DateFormatter) throws -> Date {
+                      iso: ISO8601DateFormatter, allowSkippedMidnight: Bool = false) throws -> Date {
         // 1. Full ISO8601 (with timezone) — offset is explicit, no ambiguity
         if let date = iso.date(from: string) {
             return date
@@ -34,7 +34,7 @@ enum FlexibleDate {
             if let date = formatter("yyyy-MM-dd", zone: tz).date(from: string) {
                 return date
             }
-            if let date = firstInstant(ofDay: string, in: tz) {
+            if allowSkippedMidnight, let date = firstInstant(ofDay: string, in: tz) {
                 return date
             }
         }
@@ -57,17 +57,24 @@ enum FlexibleDate {
             }
         }
 
-        throw ToolError.invalidParameter("'\(string)' is not a valid date. Supported formats: ISO8601 (2026-02-06T14:00:00+08:00), datetime (2026-02-06T14:00:00), date (2026-02-06), time (14:00)")
+        throw invalidDate(string)
+    }
+
+    static func invalidDate(_ string: String) -> ToolError {
+        return ToolError.invalidParameter("'\(string)' is not a valid date. Supported formats: ISO8601 (2026-02-06T14:00:00+08:00), datetime (2026-02-06T14:00:00), date (2026-02-06), time (14:00)")
     }
 
     /// #546: the first instant of the day `string` names, for a day the formatter above cannot read
     /// in `zone` because its 00:00 does not exist there (the zone moves its clock from 23:59:59 to
     /// 01:00, as `America/Havana` does on 2028-03-12). The value is read by the same formatter in
     /// UTC, which skips no time, so only a calendar date in that exact form gets this far (#299:
-    /// `2026-02-30` stays refused); its day is then taken in `zone` from noon, which every day has.
+    /// `2026-02-30` stays refused). Noon anchors the day in `zone`; a civil date skipped in full
+    /// fails the day check below.
     static func firstInstant(ofDay string: String, in zone: TimeZone) -> Date? {
         let utc = TimeZone(identifier: "UTC")!
-        guard let utcMidnight = formatter("yyyy-MM-dd", zone: utc).date(from: string) else { return nil }
+        let dateOnly = formatter("yyyy-MM-dd", zone: utc)
+        guard let utcMidnight = dateOnly.date(from: string),
+              dateOnly.string(from: utcMidnight) == string else { return nil }
         var parts = Calendar.gregorian(in: utc).dateComponents([.year, .month, .day], from: utcMidnight)
         parts.hour = 12
         let calendar = Calendar.gregorian(in: zone)

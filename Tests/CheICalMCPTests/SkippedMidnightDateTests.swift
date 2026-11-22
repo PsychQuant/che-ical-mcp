@@ -20,7 +20,8 @@ final class SkippedMidnightDateTests: XCTestCase {
         var transition = zone.nextDaylightSavingTimeTransition(after: Date(timeIntervalSince1970: 978_307_200))
         while let t = transition, t < Date(timeIntervalSince1970: 1_609_459_200) {
             let dayStart = calendar.startOfDay(for: t)
-            if dayStart == t, calendar.component(.hour, from: t) != 0 {
+            let clock = calendar.dateComponents([.hour, .minute, .second], from: t)
+            if dayStart == t, clock.hour != 0 || clock.minute != 0 || clock.second != 0 {
                 let f = DateFormatter()
                 f.locale = Locale(identifier: "en_US_POSIX")
                 f.timeZone = zone
@@ -45,12 +46,14 @@ final class SkippedMidnightDateTests: XCTestCase {
     // spec-example: all-day-skipped-midnight / a date on the skipped-midnight day
     func testADayWhoseMidnightIsSkippedIsReadFromItsFirstInstant() throws {
         for (zone, day, start) in try zonesWithASkippedMidnight() {
-            let date = try FlexibleDate.parse(day, defaultTimezone: zone, iso: iso)
+            XCTAssertNil(FlexibleDate.formatter("yyyy-MM-dd", zone: zone).date(from: day), zone.identifier)
+            let date = try FlexibleDate.parse(day, defaultTimezone: zone, iso: iso, allowSkippedMidnight: true)
             XCTAssertEqual(date, start, "\(zone.identifier) \(day)")
             let calendar = Calendar.gregorian(in: zone)
             let parts = calendar.dateComponents([.year, .month, .day, .hour], from: date)
             XCTAssertEqual(String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!), day, zone.identifier)
-            XCTAssertNotEqual(parts.hour, 0, "\(zone.identifier) \(day): that day has no 00:00")
+            let before = calendar.dateComponents([.year, .month, .day], from: date.addingTimeInterval(-1))
+            XCTAssertNotEqual(before.day, parts.day, zone.identifier)
         }
     }
 
@@ -60,7 +63,7 @@ final class SkippedMidnightDateTests: XCTestCase {
             for offset in [-1, 1] {
                 let other = try XCTUnwrap(calendar.date(byAdding: .day, value: offset, to: calendar.date(bySettingHour: 12, minute: 0, second: 0, of: start)!))
                 let f = FlexibleDate.formatter("yyyy-MM-dd", zone: zone)
-                let date = try FlexibleDate.parse(f.string(from: other), defaultTimezone: zone, iso: iso)
+                let date = try FlexibleDate.parse(f.string(from: other), defaultTimezone: zone, iso: iso, allowSkippedMidnight: true)
                 XCTAssertEqual(calendar.component(.hour, from: date), 0, zone.identifier)
                 XCTAssertEqual(date, calendar.startOfDay(for: other), zone.identifier)
             }
@@ -71,7 +74,7 @@ final class SkippedMidnightDateTests: XCTestCase {
     func testADateThatDoesNotExistIsStillRefusedInSuchAZone() throws {
         for (zone, _, _) in try zonesWithASkippedMidnight() {
             for text in ["2026-02-30", "2026-13-01", "2026-00-10", "2026-04-31", "2025-02-29", "2026-02-00"] {
-                XCTAssertThrowsError(try FlexibleDate.parse(text, defaultTimezone: zone, iso: iso), "\(zone.identifier) \(text)")
+                XCTAssertThrowsError(try FlexibleDate.parse(text, defaultTimezone: zone, iso: iso, allowSkippedMidnight: true), "\(zone.identifier) \(text)")
             }
         }
     }
@@ -80,10 +83,27 @@ final class SkippedMidnightDateTests: XCTestCase {
     /// instant: it stays refused rather than naming the next day.
     func testADayTheZoneSkipsWholeIsRefused() throws {
         let apia = try XCTUnwrap(TimeZone(identifier: "Pacific/Apia"))
-        try XCTSkipIf(FlexibleDate.formatter("yyyy-MM-dd", zone: apia).date(from: "2011-12-30") != nil,
-                      "this host's zone data keeps 2011-12-30 in Pacific/Apia")
-        XCTAssertThrowsError(try FlexibleDate.parse("2011-12-30", defaultTimezone: apia, iso: iso))
-        XCTAssertNoThrow(try FlexibleDate.parse("2011-12-31", defaultTimezone: apia, iso: iso))
+        let transition = try XCTUnwrap(iso.date(from: "2011-12-30T10:00:00Z"))
+        let calendar = Calendar.gregorian(in: apia)
+        XCTAssertEqual(calendar.component(.day, from: transition.addingTimeInterval(-1)), 29)
+        XCTAssertEqual(calendar.component(.day, from: transition), 31)
+        XCTAssertThrowsError(try FlexibleDate.parse("2011-12-30", defaultTimezone: apia, iso: iso, allowSkippedMidnight: true))
+        XCTAssertNoThrow(try FlexibleDate.parse("2011-12-31", defaultTimezone: apia, iso: iso, allowSkippedMidnight: true))
+    }
+
+    func testTheFallbackRefusesAVariableWidthSpellingOfTheGapDate() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
+        let gap = try XCTUnwrap(Self.skippedMidnight(in: zone))
+        let parts = gap.day.split(separator: "-")
+        let alternative = "0\(parts[0])-\(try XCTUnwrap(Int(parts[1])))-\(parts[2])"
+        XCTAssertNil(FlexibleDate.firstInstant(ofDay: alternative, in: zone))
+        XCTAssertThrowsError(try FlexibleDate.parse(alternative, defaultTimezone: zone, iso: iso, allowSkippedMidnight: true))
+    }
+
+    func testOrdinaryParsingStillRefusesTheGapDateWithoutOptIn() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
+        let gap = try XCTUnwrap(Self.skippedMidnight(in: zone))
+        XCTAssertThrowsError(try FlexibleDate.parse(gap.day, defaultTimezone: zone, iso: iso))
     }
 
     /// A form the date-only formatter refuses for its shape is refused the same way on that day.
@@ -91,7 +111,7 @@ final class SkippedMidnightDateTests: XCTestCase {
         for (zone, day, _) in try zonesWithASkippedMidnight() {
             let year = String(day.prefix(4))
             for text in ["\(year)-3-1200", "\(year)/03/12", "\(year)-03-1x"] {
-                XCTAssertThrowsError(try FlexibleDate.parse(text, defaultTimezone: zone, iso: iso), "\(zone.identifier) \(text)")
+                XCTAssertThrowsError(try FlexibleDate.parse(text, defaultTimezone: zone, iso: iso, allowSkippedMidnight: true), "\(zone.identifier) \(text)")
             }
         }
     }

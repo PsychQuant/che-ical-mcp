@@ -36,33 +36,39 @@ enum AllDayRange {
         return (firstDay, lastSecond(of: lastDay, calendar: calendar))
     }
 
-    /// #546: the days the dates of a stored all-day event stand for, as (start of the first day, last
-    /// second of the last day) in `calendar`'s zone (the host zone, #190). On a day whose midnight the
-    /// zone skips (it starts at 01:00), EventKit does not return that pair: measured on iCloud with
-    /// `TZ=America/Havana` (2026-11-22), a one-day event on such a day ends at 00:59:59 of the next day,
-    /// and the issue's Google calendar gave the start at 23:00 the evening before. Read as they are, a
-    /// start-only move counted two days and the output showed the wrong hours. A start that is not the
-    /// start of its day stands for the nearest day start (the next day from noon on); the number of
-    /// days is the elapsed time rounded to whole days, which a DST change of an hour or two cannot
-    /// move. Only a pair whose first day so read does not start at 00:00 is replaced; on every other
-    /// day this returns the pair it is given.
+    /// #546: recognize the measured iCloud and Google all-day shapes in the process zone.
+    /// iCloud starts at the first instant of the day and includes an exact multiple of 24 hours.
+    /// Google's Havana pair has both boundaries an hour early. Leave unrecognized pairs intact.
     static func storedDays(start: Date, end: Date, calendar: Calendar) -> (start: Date, end: Date) {
-        var firstDay = calendar.startOfDay(for: start)
-        if firstDay != start, calendar.component(.hour, from: start) >= 12,
-           let next = calendar.date(byAdding: .day, value: 1, to: firstDay) {
-            firstDay = calendar.startOfDay(for: next)
+        let raw = (start: start, end: end)
+        guard end > start else { return raw }
+
+        let day = calendar.startOfDay(for: start)
+        let inclusiveLength = end.timeIntervalSince(start) + 1
+        if start == day, (60...10_800).contains(secondsAfterMidnight(day, calendar: calendar)),
+           inclusiveLength.truncatingRemainder(dividingBy: 86_400) == 0,
+           let days = Int(exactly: inclusiveLength / 86_400),
+           let lastDay = calendar.date(byAdding: .day, value: days - 1, to: day) {
+            return (day, lastSecond(of: lastDay, calendar: calendar))
         }
-        // Only a day that starts at another time than 00:00 is read anew; on every other day the
-        // pair is used as EventKit returned it, whatever its end.
-        guard calendar.component(.hour, from: firstDay) != 0 || calendar.component(.minute, from: firstDay) != 0 else {
-            return (start, end)
-        }
-        let days = max(1, Int((end.addingTimeInterval(1).timeIntervalSince(start) / 86_400).rounded()))
-        let lastDay = calendar.date(byAdding: .day, value: days - 1, to: firstDay) ?? firstDay
-        let read = (start: firstDay, end: lastSecond(of: lastDay, calendar: calendar))
-        // Only the pair the rule above can explain is replaced; anything else stays as returned.
-        return abs(read.start.timeIntervalSince(start)) <= 3 * 3600 && abs(read.end.timeIntervalSince(end)) <= 3 * 3600
-            ? read : (start, end)
+
+        // The Google measurement is specific to an hour skipped at midnight. Checking the wall
+        // time and the offset from the next start keeps other late-evening starts as returned.
+        guard secondsAfterMidnight(start, calendar: calendar) == 23 * 3600,
+              let tomorrow = calendar.date(byAdding: .day, value: 1, to: day) else { return raw }
+        let firstDay = calendar.startOfDay(for: tomorrow)
+        guard secondsAfterMidnight(firstDay, calendar: calendar) == 3600,
+              firstDay.timeIntervalSince(start) == 3600,
+              let days = Int(exactly: (inclusiveLength / 86_400).rounded()), days > 0,
+              let lastDay = calendar.date(byAdding: .day, value: days - 1, to: firstDay) else { return raw }
+        let correctedEnd = lastSecond(of: lastDay, calendar: calendar)
+        guard correctedEnd.timeIntervalSince(end) == 3600 else { return raw }
+        return (firstDay, correctedEnd)
+    }
+
+    private static func secondsAfterMidnight(_ date: Date, calendar: Calendar) -> Int {
+        let time = calendar.dateComponents([.hour, .minute, .second], from: date)
+        return (time.hour ?? 0) * 3600 + (time.minute ?? 0) * 60 + (time.second ?? 0)
     }
 
     /// What `update_event` writes for the dates, decided from the state the event will be in after
@@ -80,12 +86,15 @@ enum AllDayRange {
     static func planUpdate(
         storedStart: Date, storedEnd: Date, storedAllDay: Bool,
         newStart: Date?, newEnd: Date?, requestedAllDay: Bool?,
-        calendar: Calendar
+        calendar: Calendar, skippedMidnightEndpoint: String? = nil
     ) throws -> UpdatePlan {
-        // #546: a stored all-day pair is read as the days it stands for before anything is counted.
-        let (storedStart, storedEnd) = storedAllDay
-            ? storedDays(start: storedStart, end: storedEnd, calendar: calendar) : (storedStart, storedEnd)
         let isAllDay = requestedAllDay ?? storedAllDay
+        if let skippedMidnightEndpoint, !isAllDay {
+            throw FlexibleDate.invalidDate(skippedMidnightEndpoint)
+        }
+        // #546: only an all-day result inherits corrected days from a stored all-day pair.
+        let (storedStart, storedEnd) = storedAllDay && isAllDay
+            ? storedDays(start: storedStart, end: storedEnd, calendar: calendar) : (storedStart, storedEnd)
         // A flip of the flag in either direction re-reads the stored pair under the new state
         // (#364 verify round 2: a flag-only `all_day: false` used to skip the timed check).
         let flipsFlag = isAllDay != storedAllDay
@@ -150,7 +159,7 @@ enum AllDayRange {
         "Turning an all-day event into a timed one needs start_time and end_time for the timed event."
 
     /// Noon of the day `date` falls on: two noons are whole days apart however long the days in
-    /// between are, and noon exists on every day (DST changes happen at night).
+    /// between are. If the zone skips noon, fall back to the original instant.
     private static func noon(of date: Date, calendar: Calendar) -> Date {
         calendar.date(bySettingHour: 12, minute: 0, second: 0, of: date) ?? date
     }

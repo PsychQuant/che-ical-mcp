@@ -7,6 +7,30 @@ import XCTest
 final class OccurrenceDayTests: XCTestCase {
     private let day = "2026-12-06"
 
+    func testAnOccurrenceSelectorCanUseTheFirstInstantOfItsGapDay() async throws {
+        let iso = ISO8601DateFormatter()
+        let zone = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
+        let date = try await OccurrenceDateInput.resolve("2028-03-12", iso: iso, span: "this") { zone }
+        XCTAssertEqual(date, iso.date(from: "2028-03-12T05:00:00Z"))
+    }
+
+    func testAGapDayDoesNotIncludeTheNextDaysFirstHour() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
+        let iso = ISO8601DateFormatter()
+        let requested = try XCTUnwrap(iso.date(from: "2028-03-12T05:00:00Z"))
+        let nextMidnight = try XCTUnwrap(iso.date(from: "2028-03-13T04:00:00Z"))
+        let nextHalfHour = nextMidnight.addingTimeInterval(1800)
+        let window = try XCTUnwrap(OccurrenceDay.window(containing: requested, in: zone))
+        XCTAssertEqual(window.start, requested)
+        XCTAssertEqual(window.end, nextMidnight)
+        XCTAssertFalse(OccurrenceDay.startsOnRequestedDay(occurrenceStart: nextHalfHour, isAllDay: false,
+                                                           requested: requested, in: zone))
+        for requestedZone in [zone, TimeZone(secondsFromGMT: 0)!] {
+            let candidate = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: requested, in: requestedZone, host: zone))
+            XCTAssertEqual(candidate.end, nextMidnight, requestedZone.identifier)
+        }
+    }
+
     func testTheWindowIsTheDayInTheGivenZone() throws {
         let zone = TestZones.eventZone(differingFromHostAt: TestZones.noonUTC(day))
         let start = TestZones.midnight(day, in: zone)

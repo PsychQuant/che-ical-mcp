@@ -328,8 +328,15 @@ final class ManifestParityTests: XCTestCase {
 
     func testAllDayToolsDescribeSkippedMidnight() throws {
         let phrases = [
-            "create_event": "A date-only value on a day whose midnight the server's time zone skips starts at that day's first instant.",
-            "list_events": "On a day whose midnight the server's time zone skips, an all-day event can start at the first instant of that day."
+            "list_events": "For recognized all-day pairs, the server process time zone determines the corrected dates. display_timezone controls rendering. Range membership uses the stored dates.",
+            "list_events_quick": "Quick ranges use stored dates for membership. The server process time zone determines corrected dates for recognized all-day pairs, and display_timezone controls rendering.",
+            "search_events": "Event search matches stored dates. For recognized all-day pairs, the server process time zone determines the corrected dates, and display_timezone controls rendering.",
+            "check_conflicts": "Conflict checks use stored dates for overlap. The response displays corrected dates for recognized all-day pairs using the server process time zone for correction.",
+            "find_duplicate_events": "Duplicate matching and response dates use the stored event dates.",
+            "delete_events_batch": "Dry-run rows display corrected dates for recognized all-day pairs in the server process time zone. Selection and deletion use the stored dates.",
+            "create_event": "An all-day start_time or end_time given as YYYY-MM-DD uses the first instant of that day if the server process time zone skips its midnight.",
+            "create_events_batch": "Each all-day item's date-only endpoints can use the first instant of a day whose midnight the server process time zone skips. Similar-event hints show stored dates.",
+            "update_event": "A date-only endpoint can use the first instant of a day whose midnight the server process time zone skips when the resulting event is all-day. occurrence_start shows the stored start of the matched occurrence."
         ]
         for (name, phrase) in phrases {
             let tool = try descriptions(of: name)

@@ -7,9 +7,13 @@ enum OccurrenceDay {
     static func window(containing date: Date, in zone: TimeZone?) -> (start: Date, end: Date)? {
         var calendar = Calendar.current
         if let zone { calendar.timeZone = zone }
+        return bounds(containing: date, calendar: calendar)
+    }
+
+    private static func bounds(containing date: Date, calendar: Calendar) -> (start: Date, end: Date)? {
         let start = calendar.startOfDay(for: date)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return nil }
-        return (start, end)
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: start) else { return nil }
+        return (start, calendar.startOfDay(for: tomorrow))
     }
 
     /// #391: whether an occurrence is on the requested day, the test `findOccurrence` applies to
@@ -56,8 +60,8 @@ enum OccurrenceDay {
         var hostCalendar = Calendar.current
         hostCalendar.timeZone = host
         let day = requestedCalendar.dateComponents([.era, .year, .month, .day], from: date)
-        guard let hostStart = hostCalendar.date(from: day),
-              let hostEnd = hostCalendar.date(byAdding: .day, value: 1, to: hostStart) else { return nil }
-        return (min(search.start, hostStart), max(search.end, hostEnd))
+        guard let hostDate = hostCalendar.date(from: day),
+              let hostDay = bounds(containing: hostDate, calendar: hostCalendar) else { return nil }
+        return (min(search.start, hostDay.start), max(search.end, hostDay.end))
     }
 }

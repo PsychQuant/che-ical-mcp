@@ -1198,7 +1198,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         occurrenceDate: Date? = nil,
         applyToAll: Bool = false,
         timezone: TimeZone? = nil,
-        clearTimezone: Bool = false
+        clearTimezone: Bool = false,
+        skippedMidnightEndpoint: String? = nil
     ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?, deletionsChecked: DeletionCheckHorizon?) {
         try await ensureCalendarAccess()
 
@@ -1217,7 +1218,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                         location: location, url: url, calendarName: calendarName, calendarSource: calendarSource, isAllDay: isAllDay,
                         alarmOffsets: alarmOffsets, recurrenceRule: recurrenceRule, clearRecurrence: clearRecurrence,
                         structuredLocation: structuredLocation, span: span, occurrenceDate: occurrenceDate, applyToAll: applyToAll,
-                        timezone: timezone, clearTimezone: clearTimezone)
+                        timezone: timezone, clearTimezone: clearTimezone,
+                        skippedMidnightEndpoint: skippedMidnightEndpoint)
                 } catch EventKitError.occurrenceAddressRefused(let reason) {
                     // verify r2: the occurrence's texts speak to a caller who named it.
                     throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.throughSeriesID(reason, allEdited: first.allEdited, firstDeleted: first.firstDeleted))
@@ -1394,7 +1396,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let datePlan = try AllDayRange.planUpdate(
             storedStart: event.startDate, storedEnd: event.endDate, storedAllDay: event.isAllDay,
             newStart: startDate, newEnd: endDate, requestedAllDay: isAllDay,
-            calendar: Calendar.gregorian(in: .current))
+            calendar: Calendar.gregorian(in: .current), skippedMidnightEndpoint: skippedMidnightEndpoint)
 
         // #190 — resolved-state check: whether all-day came from this request or
         // the stored event, pairing it with a non-nil timezone strips the flag.
