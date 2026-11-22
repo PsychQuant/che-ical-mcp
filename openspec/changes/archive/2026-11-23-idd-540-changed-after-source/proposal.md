@@ -9,7 +9,7 @@ The source is a fixed string (`changedBy` in `UndoTargetChangedError.init`), not
 ## Proposed Solution
 
 - The undo text names this server's own later operations as a possible source next to another app and the calendar server: "or by a later operation of this server that has no entry in the undo history now (for example one whose entry was given up with discard_id)". Reminders keep the failed-write source of #274.
-- The redo text names "a later operation or undo of this server that has no entry in the redo history now" the same way (every recorded write clears the redo history, so only an unrecorded write or an undo whose redo entry is gone can be the server's own source there).
+- The redo text names no source. Redo writes only completions, every recorded write clears the redo history, and undo and redo run in order; whether this server can change a completion between an undo and its redo was neither shown nor ruled out, so the text claims nothing about it. The changed fields move to right after "was changed after this operation" / "after the undo", so they do not read as part of the list of sources.
 - "Whoever made the change should decide:" is dropped; the sentence goes on with "ask the user whether to change it back".
 
 ## Non-Goals
@@ -20,7 +20,7 @@ The source is a fixed string (`changedBy` in `UndoTargetChangedError.init`), not
 
 ## Success Criteria
 
-- The event and reminder undo texts and the redo texts name another app, the calendar server and this server's own later operations without an entry; reminders still name the failed write; events do not.
+- The event and reminder undo texts name another app, the calendar server and this server's own later operations without an entry; reminders still name the failed write; events do not. The redo texts name no source.
 - No text says "Whoever made the change".
 - The fixed prefixes "was changed after this operation" and "was changed after the undo" and the #265 note stay.
 
