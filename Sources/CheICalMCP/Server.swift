@@ -1502,7 +1502,7 @@ class CheICalMCPServer {
         // verify finding #12: created and skipped shapes stay congruent).
         var payload: [String: Any]
         if result.isDuplicate {
-            payload = ["action": "skipped", "reason": "duplicate", "title": result.event.title ?? title, "id": result.event.eventIdentifier ?? "unknown"]
+            payload = ["action": "skipped", "reason": "duplicate", "title": result.event.title ?? title, "id": result.answeredIdentifier ?? "unknown"]
         } else {
             payload = ["action": "created", "title": result.event.title ?? title, "id": result.event.eventIdentifier ?? "unknown"]
         }
@@ -2872,7 +2872,7 @@ class CheICalMCPServer {
                 var entry: [String: Any] = [
                     "index": index,
                     "success": true,
-                    "event_id": result.event.eventIdentifier ?? "",
+                    "event_id": result.answeredIdentifier ?? "",
                     "title": result.event.title ?? title
                 ]
                 if result.isDuplicate {
