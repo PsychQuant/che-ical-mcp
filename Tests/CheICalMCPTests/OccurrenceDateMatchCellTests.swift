@@ -15,7 +15,7 @@ import XCTest
 /// Pure: zones are parameters, so the result does not follow the process zone.
 final class OccurrenceDateMatchCellTests: XCTestCase {
     private static let utc = TimeZone(identifier: "UTC")!
-    private static let seriesZone = TimeZone(identifier: "Asia/Tokyo")!
+    private static let tokyo = TimeZone(identifier: "Asia/Tokyo")!
     private static let hosts = ["Asia/Taipei", "UTC", "America/Los_Angeles"]
     /// The occurrence's original civil day, 2026-12-28; a moved occurrence starts on 2026-12-30.
     private static let year = 2026, month = 12, original = 28, moved = 30
@@ -47,20 +47,20 @@ final class OccurrenceDateMatchCellTests: XCTestCase {
 
     /// The hours of a timed slot: one before, one at and one after 00:00 UTC in the series' zone
     /// (Asia/Tokyo 07:00, 09:00, 12:00), and wall-clock 00:00, 07:00 and 20:00 for a floating series.
-    private static func hours(_ kind: Kind) -> [Int] {
+    private static func hours(_ kind: Kind, zoned: [Int]) -> [Int] {
         switch kind {
         case .allDay: return [0]
-        case .timedZoned: return [7, 9, 12]
+        case .timedZoned: return zoned
         case .timedFloating: return [0, 7, 20]
         }
     }
 
-    private static func cells() -> [Cell] {
+    private static func cells(kinds: [Kind] = Kind.allCases, seriesZone: TimeZone = tokyo, zonedHours: [Int] = [7, 9, 12]) -> [Cell] {
         var cells: [Cell] = []
         for name in hosts {
             let host = TimeZone(identifier: name)!
-            for kind in Kind.allCases {
-                for hour in hours(kind) {
+            for kind in kinds {
+                for hour in hours(kind, zoned: zonedHours) {
                     let (rid, written): (Date, Written) = switch kind {
                     case .allDay: (date(original, in: utc), .floating)
                     case .timedZoned: (date(original, hour: hour, in: seriesZone), .instant)
@@ -126,35 +126,46 @@ final class OccurrenceDateMatchCellTests: XCTestCase {
         return [shown, original]
     }
 
-    func testEveryCellMatchesMainFixesItOrRefusesWhereMainTookTheWrongDay() {
+    private struct Sets {
         var newlyWrong: Set<String> = []   // a wrong day taken that `main` refused
         var lost: Set<String> = []         // a right day refused that `main` took
         var fixed: Set<String> = []        // a right day taken that `main` refused
         var cellCount = 0
-        for cell in Self.cells() {
-            cellCount += 1
-            let right = Self.rightDays(cell)
+    }
+
+    private static func sets(_ cells: [Cell]) -> Sets {
+        var sets = Sets()
+        for cell in cells {
+            sets.cellCount += 1
+            let right = rightDays(cell)
             for requestedDay in 25...31 {
-                let requested = Self.date(requestedDay, in: cell.zone ?? cell.host)
-                let main = Self.mainAccepts(cell, requested)
+                let requested = date(requestedDay, in: cell.zone ?? cell.host)
+                let main = mainAccepts(cell, requested)
                 let head = OccurrenceDateMatch.answer(
                     requested: requested, start: cell.start, startIsAllDay: cell.startIsAllDay, zone: cell.zone,
-                    eventIdentifier: Self.identifier(cell), externalIdentifier: nil, occurrenceDate: cell.start,
+                    eventIdentifier: identifier(cell), externalIdentifier: nil, occurrenceDate: cell.start,
                     seriesIsAllDay: cell.seriesIsAllDayNow, host: cell.host) == .matches
                 let isRight = right.contains(requestedDay)
                 let key = "\(cell.name) 12-\(requestedDay)"
-                if head, !isRight, !main { newlyWrong.insert(key) }
-                if !head, isRight, main { lost.insert(key) }
-                if head, isRight, !main { fixed.insert(key) }
+                if head, !isRight, !main { sets.newlyWrong.insert(key) }
+                if !head, isRight, main { sets.lost.insert(key) }
+                if head, isRight, !main { sets.fixed.insert(key) }
             }
         }
+        return sets
+    }
+
+    func testEveryCellMatchesMainFixesItOrRefusesWhereMainTookTheWrongDay() {
+        let sets = Self.sets(Self.cells())
+        let (newlyWrong, lost, fixed, cellCount) = (sets.newlyWrong, sets.lost, sets.fixed, sets.cellCount)
         XCTAssertEqual(cellCount, 3 * (1 * 5 + 3 * 5 + 3 * 5) * 2)
         // The one cell whose flags of now agree but whose digits are an instant at exactly 00:00 UTC
         // (a timed slot at 09:00 Asia/Tokyo, series and occurrence both made all-day after the edit),
         // read as the floating date on a host west of UTC. It cannot be told from plain #543.
         XCTAssertEqual(newlyWrong, ["America/Los_Angeles timedZoned 9h bothConverted readable 12-28"], "\(newlyWrong.sorted())")
         // The right day refused where `main` took it: the same 00:00 UTC instant on an all-day occurrence
-        // west of UTC, where the two readings give different days and nothing tells which holds.
+        // west of UTC, where the two readings give different days and nothing tells which holds. The
+        // class is wider than this cell; see the America/New_York test below.
         XCTAssertEqual(lost, ["America/Los_Angeles timedZoned 9h madeAllDay readable 12-27",
                               "America/Los_Angeles timedZoned 9h madeAllDay unreadable 12-27",
                               "America/Los_Angeles timedZoned 9h bothConverted readable 12-27",
@@ -163,5 +174,30 @@ final class OccurrenceDateMatchCellTests: XCTestCase {
         // whose series and occurrence were both made all-day.
         XCTAssertEqual(fixed, ["America/Los_Angeles allDay 0h moved readable 12-28",
                                "America/Los_Angeles timedFloating 0h bothConverted readable 12-28"], "\(fixed.sorted())")
+    }
+
+    /// A timed series in a zone west of UTC whose slot is exactly 00:00 UTC (America/New_York 19:00
+    /// on 2026-12-28 is 2026-12-29 00:00 UTC). Where the reading is unknown the instant gives the 28th
+    /// in the occurrence's zone and the date reading the 29th, so the right day `main` took is refused
+    /// on every host for a timed occurrence, and on a host west of UTC for an all-day one. The class
+    /// of the grid above, not only its Tokyo cell: 00:00 UTC digits, an unknown reading, compared in
+    /// a zone where that instant is the day before (the occurrence's zone, the host's without one).
+    func testASlotAtMidnightUTCInAZoneWestOfUTCIsRefusedWhereTheReadingIsUnknown() {
+        let sets = Self.sets(Self.cells(kinds: [.timedZoned], seriesZone: TimeZone(identifier: "America/New_York")!, zonedHours: [19]))
+        XCTAssertEqual(sets.cellCount, 3 * 5 * 2)
+        XCTAssertEqual(sets.newlyWrong, ["America/Los_Angeles timedZoned 19h bothConverted readable 12-29"], "\(sets.newlyWrong.sorted())")
+        var lost: Set<String> = []
+        for host in Self.hosts {
+            lost.insert("\(host) timedZoned 19h moved unreadable 12-28")
+            lost.insert("\(host) timedZoned 19h seriesConverted readable 12-28")
+            lost.insert("\(host) timedZoned 19h seriesConverted unreadable 12-28")
+        }
+        for state in ["madeAllDay", "bothConverted"] {
+            for readable in ["readable", "unreadable"] {
+                lost.insert("America/Los_Angeles timedZoned 19h \(state) \(readable) 12-28")
+            }
+        }
+        XCTAssertEqual(sets.lost, lost, "\(sets.lost.sorted())")
+        XCTAssertEqual(sets.fixed, [], "\(sets.fixed.sorted())")
     }
 }
