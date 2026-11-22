@@ -1363,7 +1363,7 @@ session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的
 
 場次自己的識別碼：移動之後，在拋棄式日曆上用 `list_events` 讀出那一場的 `id`（形如 `<series id>/RID=…`）。
 
-2026-11-22 已在 iCloud 上做過下面第 1 到 3 步，每列一次。用的是 branch 的 release build `d33e0988`（Developer ID 簽章），也就是 fix round 1 之前的程式。round 1 改了 `Sources`，**新的 head 沒有重跑**。依程式判斷，新的讀法在這三步的答案和 `d33e0988` 相同：
+2026-11-22 已在 iCloud 上做過下面第 1 到 3 步，每列一次（第 4 步見該步）。用的是 branch 的 release build `d33e0988`（Developer ID 簽章），也就是 fix round 1 之前的程式。round 1 改了 `Sources`，**新的 head 沒有重跑**。依程式判斷，新的讀法在這三步的答案和 `d33e0988` 相同：
 - 第 1、2 步：浮動日期，系列與場次都是全天；
 - 第 3 步：`/RID=` 不是 00:00 UTC，照 `main` 讀。
 
@@ -1380,10 +1380,16 @@ session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的
    - 讀回的 `/RID=` 是 2026-12-27 23:00 UTC，是瞬間，不是浮動日期。
    - 主機時區下 12-28 `updated`，12-27 被拒絕。
    - 那一場落在 12-29 到 12-30 兩天，不是要求的 12-30 一天。這另開了 #564，不在這裡處理，所以這一列的 12-30 被拒絕。
-4. **沒有做過**：全天每週 ×3 的系列，setup 用 `update_event` span `this`、`occurrence_date` 2026-12-28、`all_day: false`、`start_time` 2026-12-30 10:00、`end_time` 11:00、`timezone` `America/Los_Angeles`，把那一場單獨改成計時，並用 `list_events` 讀回它的 `timezone`。之後經它自己的識別碼、span `this`、帶 `notes`：
-   - 讀回的時區是 America/Los_Angeles 時，預期 `TZ=America/Los_Angeles` 與主機時區下都一樣：12-28 與 12-27 都以 round 1 的新理由被拒絕（含 `It may be its original day`），12-30 `updated`。比對是在場次的時區裡做的，所以結果不隨 process 時區改變。
+4. 全天每週 ×3 的系列，setup 用 `update_event` span `this`、`occurrence_date` 2026-12-28、`all_day: false`、`start_time` 2026-12-30T10:00:00-08:00、`end_time` 11:00、`timezone` `America/Los_Angeles`，把那一場單獨改成計時，並用 `list_events` 讀回它的 `timezone`。之後經它自己的識別碼、span `this`、帶 `notes`：
+   - 讀回的時區是 America/Los_Angeles 時，預期 `TZ=America/Los_Angeles` 與主機時區下都一樣：12-28 與 12-27 都以 round 1 的新理由被拒絕（含 `It may be its original day`），而它開始的那天 `updated`。比對是在場次的時區裡做的，所以結果不隨 process 時區改變。
    - 讀回的時區不是 America/Los_Angeles，或 setup 被拒絕時，記下讀回的值與回應，這一步不算數。
    - 這一步驗的是：場次改成計時之後，系列與場次的全天旗標在裝置上真的不同。
+   - 2026-11-22 在 iCloud 上用 fix round 1 的 release build `15c6cca5`（Developer ID 簽章）做過一次，結果和預期相同：
+     - 讀回 `/RID=` 2026-12-28 00:00 UTC，`timezone` America/Los_Angeles。
+     - 開始時間是 2026-12-30 18:00 America/Los_Angeles，不是要求的 10:00，晚了 8 小時，也就是主機的 offset。這另開了 #570，不在這裡處理。
+     - `TZ=America/Los_Angeles` 下：12-28、12-27 以新理由被拒絕；12-29 以 #416 原本的理由被拒絕；12-30 `updated`。
+     - 主機時區下：12-28、12-27 以新理由被拒絕。
+     - 讀回時，只有 12-30 那次寫入了 `notes`。
 
 **出版前**：用出版的 binary 重做下列各列（對照組不必重做）：
 - 第 1 步的六列：`TZ=America/Los_Angeles` 四列，主機時區兩列；
