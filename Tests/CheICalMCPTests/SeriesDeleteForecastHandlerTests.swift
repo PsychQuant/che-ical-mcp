@@ -53,15 +53,18 @@ private actor ForecastBatch: EventBatchDeletionSource {
                               goneInTheCall: Set<String>, forecast: BatchDeletionForecastContext?) async throws -> BatchDeletionPreviewRow {
         let start = Date(timeIntervalSinceReferenceDate: 0)
         if identifier == "S", let firstEditRequest, !goneInTheCall.contains(firstEditRequest) {
-            let identity = BatchForecastIdentity(requested: identifier, resolved: firstEditRequest, external: nil)
+            // Even with a known external series key, this route invalidates forecasts for later rows.
+            let identity = BatchForecastIdentity(requested: identifier, resolved: firstEditRequest, external: firstEditRequest,
+                                                 throughFirstOccurrence: true)
             return .deletesThroughFirstOccurrence(start: start, end: start.addingTimeInterval(3600),
                                                   occurrenceID: firstEditRequest, identity: identity)
         }
         if let row = rows[identifier] { return row }
         let identity = identities[identifier] ?? BatchForecastIdentity(requested: identifier, resolved: identifier, external: nil)
-        let estimate = forecast?.read(identity, eligible: forecasts[identifier] != nil) {
+        let estimate = forecast?.read(identity) { remaining in
+            guard remaining >= 3, let note = forecasts[identifier] else { return (0, nil) }
             forecastAsks.append(identifier)
-            return forecasts[identifier]
+            return (3, note)
         }
         return .deletes(start: start, end: start.addingTimeInterval(3600), forecast: estimate)
     }
@@ -248,18 +251,58 @@ final class SeriesDeleteForecastHandlerTests: XCTestCase {
         XCTAssertFalse(asked.contains("S"))
     }
 
-    func testTheDryRunBoundsAdditionalCaptureReads() async throws {
+    func testTheDryRunAbstainsAfterAChangedIdentifierWithoutAnExternalSeriesKey() async throws {
+        let requested = "old/RID=42"
+        for detached in [true, false] {
+            let fake = ForecastBatch(forecasts: ["current": forecastOf(1), "other": forecastOf(2)], identities: [
+                requested: .init(requested: requested, resolved: "opaque", external: nil, detached: detached)
+            ])
+            let answer = try await batch(fake, ["event_ids": .array([requested, "current", "other"].map(Value.string)),
+                                                "span": .string("all"), "dry_run": .bool(true)])
+            let preview = try rows(answer)
+            XCTAssertEqual(preview.count, 3)
+            XCTAssertTrue(preview.allSatisfy { $0["undo_note"] == nil })
+            let asked = await fake.forecastAsks
+            XCTAssertEqual(asked, [])
+        }
+    }
+
+    func testTheDryRunKeepsProviderSuffixesOtherThanRID() async throws {
+        let requested = "provider/series-A/RID=42"
+        let other = "provider/series-B"
+        let fake = ForecastBatch(forecasts: [other: forecastOf(1)], identities: [
+            requested: .init(requested: requested, resolved: requested, external: nil, detached: true)
+        ])
+        let answer = try await batch(fake, ["event_ids": .array([requested, other].map(Value.string)),
+                                            "span": .string("all"), "dry_run": .bool(true)])
+        XCTAssertNotNil(try rows(answer)[1]["undo_note"])
+        let asked = await fake.forecastAsks
+        XCTAssertEqual(asked, [other])
+    }
+
+    func testFirstEditedRouteSuppressesEvenAnUnrelatedLaterForecast() async throws {
+        let fake = ForecastBatch(forecasts: ["other": forecastOf(1)], firstEditRequest: "S/RID=42")
+        let answer = try await batch(fake, ["event_ids": .array([.string("S"), .string("other")]),
+                                            "span": .string("all"), "dry_run": .bool(true)])
+        let preview = try rows(answer)
+        XCTAssertEqual(preview[0]["occurrence_id"] as? String, "S/RID=42")
+        XCTAssertNil(preview[1]["undo_note"])
+        let asked = await fake.forecastAsks
+        XCTAssertEqual(asked, [])
+    }
+
+    func testTheDryRunStopsAtTheListingBudget() async throws {
         let ids = (1...17).map { "series-\($0)" }
         let fake = ForecastBatch(forecasts: Dictionary(uniqueKeysWithValues: ids.map { ($0, forecastOf(1)) }))
         let answer = try await batch(fake, ["event_ids": .array(ids.map(Value.string)),
                                             "span": .string("all"), "dry_run": .bool(true)])
         let preview = try rows(answer)
         XCTAssertEqual(preview.count, 17)
-        XCTAssertEqual(preview.filter { $0["undo_note"] != nil }.count, 16)
-        XCTAssertNotNil(preview[15]["undo_note"])
-        XCTAssertNil(preview[16]["undo_note"])
+        XCTAssertEqual(preview.filter { $0["undo_note"] != nil }.count, 5)
+        XCTAssertNotNil(preview[4]["undo_note"])
+        XCTAssertNil(preview[5]["undo_note"])
         let asked = await fake.forecastAsks
-        XCTAssertEqual(asked, Array(ids.prefix(16)))
+        XCTAssertEqual(asked, Array(ids.prefix(5)))
     }
 
     /// The three row-level notes exclude each other: a row through the first occurrence (#436) and an

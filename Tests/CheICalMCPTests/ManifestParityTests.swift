@@ -699,17 +699,18 @@ final class ManifestParityTests: XCTestCase {
     func testTheDeleteSurfacesSayWhenTheUndoIsForecastFromTheRulesAlone() throws {
         let declared = CheICalMCPServer.defineTools()
         let absent = "A delete without the note can still come back from its rules alone."
+        let model = "The forecast is computed from the recurrence rule. The store may list different slots at undo."
         let phrases = [
             "delete_event": ["each recorded window of a simple daily or weekly rule from a proven first slot",
                              "timed RIDs as instants, all-day RIDs by local day, and occurrence date or start without a readable RID",
                              "the forecast assumes the time zone used for the rule is the same at undo",
                              "Reasons to skip the forecast include a stand-in or an unproven first slot, failed capture or no recorded edit",
-                             "more than 20,000 expanded slots, and a kept slot absent from the model.", absent],
+                             "more than 20,000 expanded slots, and a kept slot absent from the model.", model, absent],
             "delete_events_batch": ["rules_alone_on_undo with event_id and undo_note",
                                     "A recorded delete of an occurrence and the following ones suppresses all forecasts",
                                     "when its listed /RID= ID inherits the series row's answer.",
                                     "after an earlier successful row of the same series",
-                                    "after 16 additional captures.",
+                                    "16 additional store listings per call.", model,
                                     "A span future dry run gives no forecast.", absent]
         ]
         for (name, list) in phrases {
@@ -720,11 +721,11 @@ final class ManifestParityTests: XCTestCase {
         }
         let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
         let packageSummary = manifest?["long_description"] as? String ?? ""
-        let deletePhrase = "For delete_event, a whole-series delete can add undo_note (a forecast, not given in every case) when the undo's check is expected to apply none of the recorded exceptions: an occurrence edited on its own whose original time, read as undo reads it, is absent from the predicted restore listings, #539. A delete without the note can still come back from its rules alone."
+        let deletePhrase = "For delete_event, a whole-series delete can add undo_note (a forecast, not given in every case) when the undo's check is expected to apply none of the recorded exceptions: an occurrence edited on its own whose original time, read as undo reads it, is absent from the predicted restore listings, #539. The forecast is computed from the recurrence rule. The store may list different slots at undo. A delete without the note can still come back from its rules alone."
         XCTAssertEqual(packageSummary.components(separatedBy: deletePhrase).count - 1, 1, "mcpb/manifest.json long_description")
         let tools = manifest?["tools"] as? [[String: Any]] ?? []
         let batchSummary = tools.first { $0["name"] as? String == "delete_events_batch" }?["description"] as? String ?? ""
-        let batchPhrase = "series rows whose undo's check is forecast to apply none of the recorded exceptions can be listed in rules_alone_on_undo with an undo_note (not in every case), and an eligible span all dry-run row can give the note, #539. A delete without the note can still come back from its rules alone"
+        let batchPhrase = "series rows whose undo's check is forecast to apply none of the recorded exceptions can be listed in rules_alone_on_undo with an undo_note (not in every case), and an eligible span all dry-run row can give the note with up to 16 additional store listings per call, #539. The forecast is computed from the recurrence rule. The store may list different slots at undo. A delete without the note can still come back from its rules alone"
         XCTAssertEqual(batchSummary.components(separatedBy: batchPhrase).count - 1, 1, "mcpb/manifest.json delete_events_batch")
     }
 
@@ -758,6 +759,8 @@ final class ManifestParityTests: XCTestCase {
                        "On a Google calendar the series read a time zone again within 90 seconds",
                        "A reader can adjust a time skipped at a daylight-saving change",
                        "display_timezone controls the server's formatted local strings",
+                       "This server reads a timed RID as an instant and an all-day RID by its local day.",
+                       "On iCloud on a Mac at +08:00",
                        "the nonzero offset makes this wall-clock reading differ from the intended instant",
                        "Other changes, such as a move after the edit, can leave a stale slot even at UTC."] {
             XCTAssertEqual(text.components(separatedBy: phrase).count - 1, 1, phrase)

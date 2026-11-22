@@ -20,41 +20,51 @@ struct BatchForecastIdentity: Sendable, Equatable {
     let keys: Set<String>
     let unknownSeries: Bool
 
-    init(requested: String, resolved: String?, external: String?, detached: Bool = false) {
-        let identifiers = [requested, resolved, external]
-        keys = Set(identifiers.compactMap { id in
-            guard let id, !id.isEmpty else { return nil }
-            return String(id.prefix { $0 != "/" })
-        })
-        unknownSeries = detached && !identifiers.contains { id in
-            id.flatMap(DetachedOccurrenceSpan.seriesIdentifier(of:)) != nil
+    init(requested: String, resolved: String?, external: String?, detached: Bool = false,
+         throughFirstOccurrence: Bool = false) {
+        let identifiers = [requested, resolved, external].compactMap { $0 }.filter { !$0.isEmpty }
+        keys = Set(identifiers.map { DetachedOccurrenceSpan.seriesIdentifier(of: $0) ?? $0 })
+
+        let hasRID = identifiers.contains { DetachedOccurrenceSpan.seriesIdentifier(of: $0) != nil }
+        let externalSeries = external.flatMap { id -> String? in
+            guard !id.isEmpty else { return nil }
+            return DetachedOccurrenceSpan.seriesIdentifier(of: id) ?? ((!detached && !hasRID) ? id : nil)
         }
+        // A RID on the request alone does not link the resolved row to that series.
+        unknownSeries = throughFirstOccurrence || (requested != resolved && externalSeries == nil)
+            || (detached && !hasRID)
     }
 }
 
 struct BatchDeletionForecastRow: Sendable, Equatable {
     let identity: BatchForecastIdentity
-    let read: Bool
+    let listings: Int
     let note: RulesAloneOnUndo?
 }
 
 struct BatchDeletionForecastContext: Sendable {
+    static let listingLimit = 16
+
     private var touched: Set<String> = []
     private var unknownSeries = false
-    private var reads = 0
+    private var listingsUsed = 0
 
-    mutating func record(_ identity: BatchForecastIdentity, read: Bool) {
+    mutating func record(_ identity: BatchForecastIdentity, listings: Int) {
         touched.formUnion(identity.keys)
         unknownSeries = unknownSeries || identity.unknownSeries
-        if read { reads += 1 }
+        listingsUsed += listings
     }
 
-    /// At most 16 extra captures per call, independent of the date-range deletion limit.
     /// After any successful row of the series, the live resolution may take a different route.
-    func read(_ identity: BatchForecastIdentity, eligible: Bool,
-              capture: () -> RulesAloneOnUndo?) -> BatchDeletionForecastRow {
-        let allowed = eligible && reads < 16 && !unknownSeries && touched.isDisjoint(with: identity.keys)
-        return BatchDeletionForecastRow(identity: identity, read: allowed, note: allowed ? capture() : nil)
+    /// Charge only the exact store listings admitted for the forecast.
+    func read(_ identity: BatchForecastIdentity,
+              capture: (Int) -> (listings: Int, note: RulesAloneOnUndo?)) -> BatchDeletionForecastRow {
+        let remaining = Self.listingLimit - listingsUsed
+        guard remaining > 0, !unknownSeries, touched.isDisjoint(with: identity.keys) else {
+            return BatchDeletionForecastRow(identity: identity, listings: 0, note: nil)
+        }
+        let result = capture(remaining)
+        return BatchDeletionForecastRow(identity: identity, listings: result.listings, note: result.note)
     }
 }
 
@@ -118,8 +128,8 @@ extension EventKitManager: EventBatchDeletionSource {
                 }
                 let start: Date = occurrence.startDate, end: Date = occurrence.endDate
                 let identity = forecast.map { _ in
-                    BatchForecastIdentity(requested: identifier, resolved: first.id,
-                                          external: occurrence.calendarItemExternalIdentifier)
+                    BatchForecastIdentity(requested: identifier, resolved: occurrence.eventIdentifier,
+                                          external: occurrence.calendarItemExternalIdentifier, throughFirstOccurrence: true)
                 }
                 return .deletesThroughFirstOccurrence(start: start, end: end, occurrenceID: first.id, identity: identity)
             }
@@ -135,12 +145,12 @@ extension EventKitManager: EventBatchDeletionSource {
         let estimate = forecast.map { context in
             let identity = BatchForecastIdentity(requested: identifier, resolved: event.eventIdentifier,
                                                  external: event.calendarItemExternalIdentifier, detached: event.isDetached)
-            let anchor = SeriesDeleteAnchor(of: event, viaStandIn: resolved.viaStandIn)
-            return context.read(identity, eligible: anchor != nil) {
-                let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: {
-                    self.captureSeriesExceptionsForDelete(of: event, anchor: anchor)
-                })
-                return anchor?.forecast(for: snapshot)
+            return context.read(identity) { remainingListings in
+                guard let anchor = SeriesDeleteAnchor(of: event, viaStandIn: resolved.viaStandIn) else { return (0, nil) }
+                let store = self.seriesExceptionsStore
+                store.observeForForecast = anchor.observe
+                return anchor.preview(of: event, in: store, snapshot: EventSnapshot(from: event),
+                                      remainingListings: remainingListings)
             }
         }
         return .deletes(start: start, end: end, forecast: estimate)

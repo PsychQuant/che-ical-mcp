@@ -56,8 +56,10 @@ final class ZonedSeriesUndoOnMainTests: XCTestCase {
             let (store, occurrences, moved) = movedSeries(slots: slots, edited: 1, move: 16 * 3600)
             let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: slots[0].addingTimeInterval(-30 * day)))
 
-            let recorded = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 6, startDate: moved[0]).withExceptions(exceptions)
-                .withSeriesIdentity(.init(eventIdentifier: "S", externalIdentifier: "X-S"))
+            let dailyRule = EKRecurrenceRule(recurrenceWith: .daily, interval: 1, end: EKRecurrenceEnd(occurrenceCount: 6))
+            let recorded = UndoSnapshotFixtures.event(title: "Standup", startDate: moved[0], recurrence: dailyRule, timeZone: zone)
+                .withExceptions(exceptions).withSeriesIdentity(.init(eventIdentifier: "S", externalIdentifier: "X-S"))
+            XCTAssertEqual(recorded.recurrenceRules?.first?.frequency, .daily)
             let after = FakeSeriesExceptionsStore()
             after.zone = zone
             after.seriesSlots = moved

@@ -183,9 +183,8 @@ final class SeriesDeleteForecastTests: XCTestCase {
                                                           calendar: .gregorian(in: taipei)))
     }
 
-    /// An independently listed DST edit can report an end before its shown start. The forecast
-    /// abstains for both forms of the slot. The restore still decides on its own listing.
-    func testARecordOfOneReadingThatEndsBeforeItStartsIsNotCounted() throws {
+    /// The forecast abstains at a daylight-saving gap with either source of the recorded slot.
+    func testForecastAbstainsAcrossTheDSTGapWithOrWithoutARID() throws {
         let calendar = Calendar.gregorian(in: losAngeles)
         let first = date(2027, 2, 28, 2, 30, in: losAngeles)
         let shifted = date(2027, 3, 14, 3, 30, in: losAngeles)
@@ -199,10 +198,8 @@ final class SeriesDeleteForecastTests: XCTestCase {
                 } else {
                     edited.detached = true
                 }
-                edited.end = shifted.addingTimeInterval(-1800)
             }
-            let detached = try XCTUnwrap(exceptions.detached.first)
-            XCTAssertLessThan(detached.snapshot.endDate, detached.snapshot.startDate)
+            XCTAssertEqual(exceptions.detached.count, 1)
             XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(count: 4)],
                                                               firstSlot: first, calendar: calendar))
         }
@@ -243,7 +240,7 @@ final class SeriesDeleteForecastTests: XCTestCase {
                                       snapshot: UndoSnapshotFixtures.event(startDate: middle))
         let windows = [
             DateInterval(start: first.addingTimeInterval(day), end: first.addingTimeInterval(5 * day + 1800)),
-            DateInterval(start: first.addingTimeInterval(day + 1800), end: first.addingTimeInterval(5 * day)),
+            DateInterval(start: first.addingTimeInterval(day + 1800), end: first.addingTimeInterval(5 * day + 0.5)),
             DateInterval(start: first.addingTimeInterval(day + 3600), end: first.addingTimeInterval(5 * day + 1800))
         ]
         for window in windows {
@@ -251,6 +248,39 @@ final class SeriesDeleteForecastTests: XCTestCase {
             XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(.daily)],
                                                               firstSlot: first, calendar: .gregorian(in: utc)))
         }
+    }
+
+    func testAnOpenDailyRuleForecastsThroughTheRealDeleteWindow() throws {
+        let first = date(2027, 2, 1, 10, in: utc)
+        let store = FakeSeriesExceptionsStore()
+        store.seriesEnd = .open
+        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Daily",
+                                          slots: (0...3).map { first.addingTimeInterval(Double($0) * day) })
+        edit(occurrences[1], rid: zonedRID(occurrences[1].start.addingTimeInterval(3600)), title: "Off the rule")
+        let exceptions = try XCTUnwrap(SeriesExceptionsUndo.capture(of: occurrences[0], in: store, now: first))
+        XCTAssertEqual(exceptions.window.end, first.addingTimeInterval(1459 * day))
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(.daily)],
+                                                              firstSlot: first, calendar: .gregorian(in: utc)), 1)
+    }
+
+    func testForecastAbstainsOnTheLocalRuleEndDayWhenTheRuleCouldHaveASlot() {
+        let first = date(2027, 2, 1, 10, in: taipei)
+        let last = first.addingTimeInterval(14 * day)
+        let offRule = last.addingTimeInterval(3600)
+        let edit = DetachedOccurrence(slot: offRule, snapshot: UndoSnapshotFixtures.event(startDate: offRule))
+        let window = DateInterval(start: first.addingTimeInterval(-day), end: last.addingTimeInterval(2 * day))
+        let exceptions = SeriesExceptions(window: window, keptSlots: [first], detached: [edit])
+        for end in [last.addingTimeInterval(-3600), last, last.addingTimeInterval(3600)] {
+            XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(end: end)],
+                                                              firstSlot: first, calendar: .gregorian(in: taipei)))
+        }
+        let sameDayEnd = last.addingTimeInterval(7200)
+        let endingWindow = DateInterval(start: window.start, end: sameDayEnd)
+        let endingExceptions = SeriesExceptions(window: endingWindow, keptSlots: [first], detached: [edit])
+        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(endingExceptions, rules: [rule(end: sameDayEnd)],
+                                                          firstSlot: first, calendar: .gregorian(in: taipei)))
+        XCTAssertEqual(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(end: last.addingTimeInterval(day))],
+                                                              firstSlot: first, calendar: .gregorian(in: taipei)), 1)
     }
 
     func testForecastAbstainsOutsideTheSupportedRecurrenceOrDuration() {
@@ -281,6 +311,99 @@ final class SeriesDeleteForecastTests: XCTestCase {
         }
     }
 
+    func testPreviewSkipsListingsForKnownAbstentions() {
+        let first = date(2027, 2, 28, 2, 30, in: losAngeles)
+        let shapes: [(EKRecurrenceFrequency, TimeZone, Date)] = [
+            (.monthly, utc, first),
+            (.weekly, losAngeles, first),
+            (.weekly, utc, first.addingTimeInterval(5000 * day + 1800))
+        ]
+        for (frequency, zone, now) in shapes {
+            let store = FakeSeriesExceptionsStore()
+            store.seriesEnd = .open
+            let series = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: [first])[0]
+            let snapshot = UndoSnapshotFixtures.event(startDate: first,
+                recurrence: EKRecurrenceRule(recurrenceWith: frequency, interval: 1, end: nil))
+            let anchor = SeriesDeleteAnchor(start: first, occurrenceDate: first, isAllDay: false, zone: zone)
+            store.observeForForecast = anchor.observe
+            let result = anchor.preview(of: series, in: store, snapshot: snapshot, remainingListings: 16, now: now)
+            XCTAssertEqual(result.listings, 0, "\(frequency) \(zone) \(now)")
+            XCTAssertNil(result.note)
+            XCTAssertEqual(store.log, [])
+        }
+    }
+
+    func testPreviewChargesActualListingsForBothCaptureWindows() throws {
+        let first = date(2027, 2, 1, 10, in: utc)
+        let slots = weekly(from: first, count: 6)
+        let now = first.addingTimeInterval(5000 * day + 1800)
+        let store = FakeSeriesExceptionsStore()
+        store.seriesEnd = .endsBy(first.addingTimeInterval(7000 * day))
+        let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots)
+        edit(occurrences[1], rid: zonedRID(slots[1].addingTimeInterval(3600)), title: "Off the rule")
+        let series = occurrences[0]
+        let baseline = try XCTUnwrap(SeriesUndoOnMain.capture(of: series, in: store, now: now))
+        XCTAssertEqual(baseline.windows.count, 2)
+        XCTAssertEqual(store.log, Array(repeating: "list", count: 4))
+
+        let snapshot = UndoSnapshotFixtures.event(weeklyOccurrences: 1000, startDate: first)
+        let anchor = SeriesDeleteAnchor(start: first, occurrenceDate: first, isAllDay: false, zone: utc)
+        store.observeForForecast = anchor.observe
+        let denied = anchor.preview(of: series, in: store, snapshot: snapshot, remainingListings: 3, now: now)
+        XCTAssertEqual(denied.listings, 0)
+        XCTAssertNil(denied.note)
+        XCTAssertEqual(store.log.count, 4, "no partial capture")
+        let admitted = anchor.preview(of: series, in: store, snapshot: snapshot, remainingListings: 4, now: now)
+        XCTAssertEqual(admitted.listings, 4)
+        XCTAssertEqual(admitted.note, edits(1))
+        XCTAssertEqual(store.log.count, 8, "exactly four additional store queries")
+
+        let realAnchor = SeriesDeleteAnchor(start: first, occurrenceDate: first, isAllDay: false, zone: utc)
+        store.observeForForecast = realAnchor.observe
+        let live = try XCTUnwrap(SeriesExceptionsUndo.capture(of: series, in: store, now: now))
+        XCTAssertEqual(live.windows, baseline.windows)
+        XCTAssertEqual(live.keptSlots, baseline.keptSlots)
+        XCTAssertEqual(live.detached.map(\.slot), baseline.detached.map(\.slot))
+        XCTAssertEqual(realAnchor.forecast(for: snapshot.withExceptions(live)), edits(1))
+        XCTAssertEqual(store.log.count - 8, 4, "the real delete adds no queries to main's four")
+
+        let before = store.log.count
+        // Main's ordinary span-all preview reaches this guard. Its neighbours query is lazy.
+        func listNeighbours() -> DetachedOccurrenceSpan.Neighbours? {
+            _ = store.events(in: baseline.window, inCalendarOf: series)
+            return nil
+        }
+        for index in 0..<5 {
+            XCTAssertNil(DetachedOccurrenceSpan.seriesDeleteRefusal(identifier: "S\(index)", isDetached: false,
+                                                                    batch: true, neighbours: listNeighbours()))
+        }
+        XCTAssertEqual(store.log.count - before, 0, "the ordinary preview does not query the calendar")
+        var context = BatchDeletionForecastContext()
+        for index in 0..<5 {
+            let identity = BatchForecastIdentity(requested: "S\(index)", resolved: "S\(index)", external: nil)
+            let forecast = context.read(identity) { remaining in
+                let rowAnchor = SeriesDeleteAnchor(start: first, occurrenceDate: first, isAllDay: false, zone: utc)
+                store.observeForForecast = rowAnchor.observe
+                return rowAnchor.preview(of: series, in: store, snapshot: snapshot, remainingListings: remaining, now: now)
+            }
+            XCTAssertEqual(forecast.listings, index < 4 ? 4 : 0)
+            context.record(identity, listings: forecast.listings)
+        }
+        XCTAssertEqual(store.log.count - before, 16, "four complete captures, with no fifth capture")
+
+    }
+
+    func testExpansionCapAlsoCoversHistoryOutsideANarrowWindow() {
+        let first = date(1964, 2, 1, 10, in: utc)
+        let nearEnd = first.addingTimeInterval(20_015 * day)
+        let window = DateInterval(start: nearEnd.addingTimeInterval(-1.5 * day), duration: 3 * day)
+        let edit = DetachedOccurrence(slot: nearEnd.addingTimeInterval(3600),
+                                      snapshot: UndoSnapshotFixtures.event(startDate: nearEnd))
+        let exceptions = SeriesExceptions(window: window, keptSlots: [nearEnd], detached: [edit])
+        XCTAssertNil(SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule(.daily)], firstSlot: first,
+                                                          calendar: .gregorian(in: utc)))
+    }
+
     // MARK: - RulesAloneForecast
 
     private func wholeSeries(_ title: String = "Standup") -> UndoOperation {
@@ -289,23 +412,44 @@ final class SeriesDeleteForecastTests: XCTestCase {
 
     private func edits(_ count: Int) -> RulesAloneOnUndo { RulesAloneOnUndo(edits: count) }
 
+    private func candidate(edits count: Int, identifier: String) -> (UndoOperation, SeriesDeleteAnchor) {
+        let first = date(2027, 1, 11, 10, in: utc)
+        let slots = weekly(from: first, count: 6)
+        let store = FakeSeriesExceptionsStore()
+        let rows = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots)
+        for index in 0..<count {
+            self.edit(rows[index + 1], rid: zonedRID(slots[index + 1].addingTimeInterval(3600)), title: "Off the rule")
+        }
+        let anchor = SeriesDeleteAnchor(start: first, occurrenceDate: first, isAllDay: false, zone: utc)
+        store.observeForForecast = anchor.observe
+        let capture = SeriesExceptionsUndo.capture(of: rows[0], in: store, now: first)
+        let snapshot = UndoSnapshotFixtures.event(weeklyOccurrences: 6, startDate: first).withExceptions(capture)
+        return (.deleteEvent(id: identifier, snapshot: snapshot), anchor)
+    }
+
     /// Only a whole-series record with a forecast forecasts, in the order the rows were recorded.
     func testOnlyAWholeSeriesRecordWithUnplacedEditsForecasts() {
         var forecast = RulesAloneForecast()
-        forecast.recorded(wholeSeries(), identifier: "A", unplacedEdits: edits(2))
-        forecast.recorded(wholeSeries(), identifier: "B", unplacedEdits: nil)
-        forecast.recorded(.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(), notCarriedOver: []), identifier: "C", unplacedEdits: edits(3))
-        forecast.recorded(wholeSeries(), identifier: "D", unplacedEdits: edits(1))
+        let (a, anchorA) = candidate(edits: 2, identifier: "A")
+        let (b, anchorB) = candidate(edits: 0, identifier: "B")
+        let (d, anchorD) = candidate(edits: 1, identifier: "D")
+        forecast.recorded(a, identifier: "A", anchor: anchorA)
+        forecast.recorded(b, identifier: "B", anchor: anchorB)
+        forecast.recorded(.deleteOccurrence(snapshot: UndoSnapshotFixtures.event(), notCarriedOver: []),
+                          identifier: "C", anchor: anchorA)
+        forecast.recorded(d, identifier: "D", anchor: anchorD)
         XCTAssertEqual(forecast.expected, [.init(identifier: "A", forecast: edits(2)), .init(identifier: "D", forecast: edits(1))])
     }
 
-    /// A delete of an occurrence and the following ones makes the whole batch's undo refuse, so that
-    /// undo restores no row: no row forecasts a restore, recorded before or after it.
     func testARecordThatRefusesTheCallsUndoClearsEveryForecast() {
         var forecast = RulesAloneForecast()
-        forecast.recorded(wholeSeries(), identifier: "A", unplacedEdits: edits(2))
-        forecast.recorded(.deleteFollowingOccurrences(title: "Standup"), identifier: "B", unplacedEdits: nil)
-        forecast.recorded(wholeSeries(), identifier: "C", unplacedEdits: edits(1))
+        let (a, anchorA) = candidate(edits: 2, identifier: "A")
+        let (c, anchorC) = candidate(edits: 1, identifier: "C")
+        forecast.recorded(a, identifier: "A", anchor: anchorA)
+        XCTAssertFalse(forecast.isSuppressed)
+        forecast.recorded(.deleteFollowingOccurrences(title: "Standup"), identifier: "B", anchor: nil)
+        XCTAssertTrue(forecast.isSuppressed)
+        forecast.recorded(c, identifier: "C", anchor: anchorC)
         XCTAssertEqual(forecast.expected, [])
     }
 
@@ -361,8 +505,8 @@ final class SeriesDeleteForecastTests: XCTestCase {
     /// recorded edits; fix round 5, Q9: only what that check establishes).
     func testTheNotesSayTheForecastWithItsCount() {
         XCTAssertEqual(CheICalMCPServer.rulesAloneUndoNote(edits(2)),
-                       "Undo is expected to bring this series back from its rules alone: 2 recorded occurrence(s) edited on their own have an original time, as recorded from a readable RID or otherwise the occurrence date or start, that is absent from the predicted restore listings, so the undo's check is expected to apply none of the exceptions recorded with it: the series is expected to be recreated from its rule, with no edited occurrence written back as a one-off event and no slot of it removed.")
+                       "Undo is expected to bring this series back from its rules alone: 2 recorded occurrence(s) edited on their own have an original time, as recorded from a readable RID or otherwise the occurrence date or start, that is absent from the predicted restore listings. The forecast is computed from the recurrence rule, and the store may list different slots at undo. If those slots are absent, undo applies none of the recorded exceptions.")
         XCTAssertEqual(CheICalMCPServer.batchPreviewRulesAloneNote(edits(1)),
-                       "Undo of this row would be expected to bring the series back from its rules alone: 1 recorded occurrence(s) edited on their own have an original time, as recorded from a readable RID or otherwise the occurrence date or start, that is absent from the predicted restore listings, so the undo's check is expected to apply none of the exceptions recorded with it: the series is expected to be recreated from its rule, with no edited occurrence written back as a one-off event and no slot of it removed.")
+                       "Undo of this row would be expected to bring the series back from its rules alone: 1 recorded occurrence(s) edited on their own have an original time, as recorded from a readable RID or otherwise the occurrence date or start, that is absent from the predicted restore listings. The forecast is computed from the recurrence rule, and the store may list different slots at undo. If those slots are absent, undo applies none of the recorded exceptions.")
     }
 }

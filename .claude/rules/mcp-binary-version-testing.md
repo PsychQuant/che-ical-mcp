@@ -1317,25 +1317,21 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 
 ## Release gate：整個系列刪除的預告（#539）
 
-**#539 維持開啟。** 整個系列刪除的擷取與 undo，以及單一場次刪除和 split move 來源的 #321 時段檢查沿用 `main`。非全天場次的 `/RID=` 讀成時刻，全天場次則依本地日期讀取。系列沒有時區時做的修改，
-如果記錄下來的時段和重建後的規則時段不符，整個系列的 undo 就不套用任何記錄的例外。PR #558 加入刪除時的預告（`undo_note`、`rules_alone_on_undo`）並更新 #541 的 `clear_timezone` 說明。預告以可確認的第一場和逐一推算的紀錄視窗為準，僅涵蓋可判定的簡單每日及每週規則。沒有預告時，undo 仍可能只依規則重建系列。Dry run 遇到同系列有成功前列時略過預告，每次呼叫最多增加 16 次擷取。
+**#539 維持開啟。** 整個系列刪除的擷取與 undo，以及單一場次刪除和 split move 來源的 #321 時段檢查沿用 `main`。非全天場次的 `/RID=` 讀成時刻，全天場次則依本地日期讀取。系列沒有時區時做的修改，如果記錄的時段和重建後實際列出的場次不符，整個系列的 undo 就不套用記錄的例外。PR #558 加入刪除時的預告（`undo_note`、`rules_alone_on_undo`）並更新 #541 的 `clear_timezone` 說明。預告以可確認的第一場和重複規則推算各個視窗的場次，undo 時列出的場次可能不同。沒有預告時，undo 仍可能只依規則重建。Dry run 遇到同系列或無法辨識系列的成功前列時略過預告，每次呼叫最多增加 16 次儲存服務列舉。
 
-預告是 stateless 的，`--cli` 走得到。**出 #539 的那個版本打 tag 之前**，用剛 build 的 binary 的 `--cli`（見上表），只用名稱含 `#539` 的拋棄式 iCloud 日曆，
-系列都是每週、第一場 2027-01-04 10:00、帶 `timezone: Asia/Taipei` 與 `end_date` 2027-02-15 23:00 建立；「說明」指回應的 `undo_note` 以
-`Undo is expected to bring this series back from its rules alone: ` 加上件數開頭（dry run 的列是 `Undo of this row would be expected to bring the series back
-from its rules alone: `）：
+版本打 tag 前，從待發行的 commit 編譯 release binary 並用 Developer ID 簽章。只用本次建立、名稱含 `#539` 的拋棄式 iCloud 行事曆。每格只啟動該 binary 的一個獨立 stdio 程序，刪除與 undo 都在同一程序執行。設定與篩選讀回可用該 binary 的 `--cli`。系列每週一次，第一場是 2027-01-04 10:00，建立時用 `timezone: Asia/Taipei` 與 `end_date` 2027-02-16 23:00（如果測試日期變動，用同樣的相對間隔往後移）。「說明」指回應的 `undo_note` 以 `Undo is expected to bring this series back from its rules alone: ` 加上件數開頭，dry run 的列以 `Undo of this row would be expected to bring the series back from its rules alone: ` 開頭。
 
-1. **E1**：第 3 場改標題 → 用系列 id、span `all` 把整個系列往後移一小時（第 3 場的 `/RID=` 留在舊時段，cell N1）→ `delete_event` span `all`：說明，`1 recorded occurrence(s)`。
-2. **E2**：同 E1 的系列 → `delete_event` span `future`、`occurrence_date` 為第一場（11:00）：說明，`1 recorded occurrence(s)`。
-3. **E3**：`clear_timezone`（span `all`）→ 第 3 場改標題 → `delete_event` span `all`：這台 Mac 在 `+08:00` 時有說明。
-4. **E4**（對照）：第 3 場改標題、不移動 → `delete_event` span `all`：沒有說明。
-5. **B1**：同 E1 的系列 → `delete_events_batch` dry run `[系列 id]`：那一列有說明 → 確認第 3 場自己的 id 與篩選列出的 id 相同 → dry run `[第 3 場自己的 id, 系列 id]`：沒有說明 → 實際呼叫同樣兩列：
-   沒有 `rules_alone_on_undo`，兩列都刪除。
-6. **B2**：同 E1 的系列 → `delete_events_batch` 實際呼叫 `[系列 id]`：`rules_alone_on_undo` 列出那一列與說明。
+1. **E1**：第 3 場改標題，再用系列 ID、span `all` 把整個系列往後移一小時。以 `delete_event` span `all` 刪除，預期說明列出 1 筆，undo 回應只依規則重建。
+2. **E2**：同 E1，但以 `delete_event` span `future`、`occurrence_date` 為移動後的第一場（11:00）刪除。預期說明列出 1 筆，undo 回應只依規則重建。
+3. **E3**：以 span `all` 清除時區，再改第 3 場標題。以 `delete_event` span `all` 刪除，在時差為 `+08:00` 的測試主機預期說明列出 1 筆，undo 回應只依規則重建。
+4. **E4**（對照）：第 3 場改標題，時間維持原時段。以 `delete_event` span `all` 刪除，預期沒有說明，undo 套用例外並寫回 1 筆獨立事件。
+5. **B1**：同 E1。以 `delete_events_batch` dry run 查 `[系列 ID]`，預期有說明。確認第 3 場自己的 id 與篩選列出的 id 相同，再查 `[第 3 場自己的 ID, 系列 ID]`，預期兩列都沒有說明。實際刪除同兩列時，預期兩列都刪除且沒有 `rules_alone_on_undo`。
+6. **B2**：同 E1，但以 `delete_events_batch` 刪除 `[系列 ID]`。預期 `rules_alone_on_undo` 列出該列與 1 筆說明，undo 回應只依規則重建。
+7. **E5**（對照）：第 3 場用 span `this` 刪除，再以 `delete_event` span `all` 刪除整個系列。預期沒有說明，undo 套用例外，第 3 場維持刪除。
 
-**本輪裝置紀錄**放在 [PR #558](https://github.com/PsychQuant/che-ical-mcp/pull/558) 的 **Verify-fix (round 6)**。以推送的 head 建置並用 Developer ID 簽章，透過 `--cli` 量 E1 至 E4、B1、B2，B1 另核對請求 ID 等於本次列出的場次 ID。該則留言列出建置 SHA、開始及結束時間、各格結果，以及依 ID 刪除後相隔一分鐘的兩次複查。複查只查詢本次建立的六個拋棄式行事曆名稱。
+在 E1 至 E5 與 B2 比對刪除預告和實際 undo 回應。任一格不一致時，停止後續測試並記錄該格差異。依 ID 刪除本次建立的日曆，仍要完成清理。接著用 `--cli` 篩選查詢兩次，間隔至少一分鐘。複查只查詢本次建立的拋棄式行事曆名稱，記錄仍可找到的名稱、數量及時間。版本打 tag 前的結果記在 #539，列出建置 SHA、簽章、各格的預告與 undo 回應，以及兩次清理複查。
 
-**預期對照及量測範圍**：E3 的 UTC 結果由固定時差的單元測試檢查。Opaque ID、其他提供者與實際 undo 不在這六格的裝置量測中。測試副本取自 `92d9b796`，對照的函式本體與 `7f75f97d` 相同。矩陣在共用解析結果及重建場次下比對擷取和 undo，15,696 格中有 2,324 格兩邊都未執行 undo。鏈式測試另共用 occurrence origin 的讀法。
+本輪建置 SHA、簽章、逐格結果及清理時間記在 [PR #558](https://github.com/PsychQuant/che-ical-mcp/pull/558) 的 **Verify-fix (round 7)**。E3 的 UTC 結果由固定時差的單元測試檢查。Opaque ID 與其他提供者未納入這批裝置量測。儲存層矩陣採用共用解析結果及重建場次，15,696 格中有 2,324 格兩邊都未執行 undo。鏈式測試共用 occurrence origin 的讀法與擬定的刪除後狀態。
 
 
 ## Release gate：delete 的 undo 之後較舊的紀錄（#538）

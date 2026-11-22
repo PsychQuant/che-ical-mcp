@@ -49,8 +49,10 @@ import XCTest
 /// The two store-level paths share one resolution result and the recreated slots supplied by
 /// the fixture, over six fixed offsets. Of the 15,696 cells, 2,324 fail resolution and run neither
 /// undo. For the rest, each path captures, restores and produces its own answer. The copy is
-/// from 92d9b796, whose corresponding bodies match origin/main at 7f75f97d.
-/// Handler and wiring tests cover the separate preview and delete paths.
+/// from 92d9b796. The copied routines match the corresponding bodies at b7cb36db, with the
+/// one-window capture wrapper inlined. The calendar projection compares start, end, title,
+/// recurrence, zone, and the fake's identifiers and membership flags. Separate handler and
+/// wiring tests cover the preview and delete routes.
 final class FloatingSeriesUndoMatrixTests: XCTestCase {
     private let hour: TimeInterval = 3_600
     private let day: TimeInterval = 86_400
@@ -401,7 +403,10 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
     // spec-example: undo-history-discard / H1
     func testH1IsRestoredAsOnMain() throws {
         let cell = Cell(host: TimeZone(secondsFromGMT: 8 * 3600)!, step: day, hourOfDay: 6, edited: 1, move: day, deleted: [0], route: .seriesObject)
-        XCTAssertEqual(try run(cell).failures, [])
+        let result = try run(cell)
+        XCTAssertNotEqual(result.kind, .notRestorable)
+        XCTAssertNotEqual(result.kind, .noCapture)
+        XCTAssertEqual(result.failures, [])
     }
 
     /// H4, H5: the first occurrence edited, the series moved one day earlier, the occurrence now on the second
@@ -409,7 +414,10 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
     /// `main`.
     func testH4IsRestoredAsOnMain() throws {
         let cell = Cell(host: TimeZone(secondsFromGMT: 8 * 3600)!, step: day, hourOfDay: 6, edited: 0, move: -day, deleted: [1], route: .seriesObject)
-        XCTAssertEqual(try run(cell).failures, [])
+        let result = try run(cell)
+        XCTAssertNotEqual(result.kind, .notRestorable)
+        XCTAssertNotEqual(result.kind, .noCapture)
+        XCTAssertEqual(result.failures, [])
     }
 
     /// The first occurrence edited, the series moved two days earlier, the slot the stale record's

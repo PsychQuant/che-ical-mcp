@@ -12,8 +12,8 @@ A delete forecast should preserve the existing dry-run answers and stay silent w
 
 ## Impact
 
-The existing delete, dry run and undo outcomes remain as on main. Only the optional forecast and its documentation change.
+The existing delete, dry run and undo outcomes remain as on main. The optional forecast, batch preview field descriptions and the clear_timezone description change.
 
 ## Non-Goals
 
-No change to undo records, slot readers, exception restoration or ordinary preview answers. Earlier archived forecast filters document superseded rounds.
+No change to undo records, slot readers, exception restoration or ordinary preview answers. This forecast superseded `idd-539-rid-slot-readings` and `idd-539-fix1` through `idd-539-fix5`. It withdrew fix5’s dry-run capture filter. `idd-539-fix7` supersedes this forecast.

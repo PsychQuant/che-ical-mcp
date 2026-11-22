@@ -225,6 +225,10 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
         let start: Date
         let end: Date
         let title: String
+        let eventIdentifier: String?
+        let externalIdentifier: String?
+        let isDetached: Bool
+        let hasRules: Bool
         let recurrenceRules: [RecurrenceRuleSnapshot]?
         let timeZone: TimeZone?
     }
@@ -232,7 +236,8 @@ final class FakeSeriesExceptionsStore: SeriesExceptionsStoreSource {
     var calendarProjection: [CalendarRow] {
         events.map {
             CalendarRow(start: $0.start, end: $0.end ?? $0.start.addingTimeInterval(3600), title: $0.title,
-                        recurrenceRules: $0.recurrenceRules, timeZone: $0.timeZone)
+                        eventIdentifier: $0.id, externalIdentifier: $0.external, isDetached: $0.detached,
+                        hasRules: $0.hasRules, recurrenceRules: $0.recurrenceRules, timeZone: $0.timeZone)
         }.sorted { ($0.start, $0.title) < ($1.start, $1.title) }
     }
 

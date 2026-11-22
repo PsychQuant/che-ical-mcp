@@ -2142,7 +2142,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     failures.append((id, refusal))
                     continue
                 }
-                let anchor = SeriesDeleteAnchor(of: event, viaStandIn: resolved.viaStandIn)
+                let anchor = forecast.isSuppressed ? nil : SeriesDeleteAnchor(of: event, viaStandIn: resolved.viaStandIn)
                 let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: { self.captureSeriesExceptionsForDelete(of: event, anchor: anchor) })
                 // #538: read before the removal.
                 let removedID = DeleteUndoFollow.removedIdentifier(eventIdentifier: event.eventIdentifier, hasRules: event.hasRecurrenceRules)
@@ -2152,8 +2152,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     try eventStore.remove(event, span: .thisEvent)
                 }
                 successCount += 1
-                undoOperations.append(.deleteEvent(id: removedID, snapshot: snapshot))
-                forecast.recorded(.deleteEvent(id: removedID, snapshot: snapshot), identifier: id, unplacedEdits: anchor?.forecast(for: snapshot))
+                let record = UndoOperation.deleteEvent(id: removedID, snapshot: snapshot)
+                undoOperations.append(record)
+                forecast.recorded(record, identifier: id, anchor: anchor)
             } catch {
                 let code = EventKitErrorSanitizer.writeFailureLog(
                     handler: "deleteEventsBatch",
@@ -2371,7 +2372,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                         failures.append((item.identifier, "No occurrence found on specified date"))
                         continue
                     }
-                    anchor = span == .futureEvents ? SeriesDeleteAnchor(of: masterEvent, viaStandIn: resolvedRow.viaStandIn) : nil
+                    anchor = span == .futureEvents && !forecast.isSuppressed
+                        ? SeriesDeleteAnchor(of: masterEvent, viaStandIn: resolvedRow.viaStandIn) : nil
                     snapshots = DeletedEventSnapshots(series: masterEvent, removed: occurrence, span: span,
                                                       seriesExceptions: { self.captureSeriesExceptionsForDelete(of: masterEvent, anchor: anchor) })
                     let removedStart = occurrence.startDate, removedSlot = occurrence.occurrenceDate
@@ -2404,8 +2406,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 if kind != .wholeEvent || undoSeenWholeIdentifiers.insert(item.identifier).inserted {
                     let record = snapshots.record(for: kind)
                     undoOperations.append(record)
-                    forecast.recorded(record, identifier: item.identifier,
-                                      unplacedEdits: kind == .wholeEvent ? anchor?.forecast(for: snapshots.series) : nil)
+                    forecast.recorded(record, identifier: item.identifier, anchor: anchor)
                 }
             } catch {
                 let code = EventKitErrorSanitizer.writeFailureLog(

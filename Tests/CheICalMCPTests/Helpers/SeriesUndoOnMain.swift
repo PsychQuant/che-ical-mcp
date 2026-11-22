@@ -5,10 +5,11 @@ import Foundation
 /// PR #558 fix round 4 (verify findings C1, C10, L14): the undo of a whole-series delete, and of one
 /// occurrence's delete, as `main` runs them, so a test runs one sequence through this server's production
 /// path and through `main`'s and compares the calendars and answers. Which commit each copy is of:
-/// - copied from `main` at 92d9b796, without a change but their names, the names of the copies they call and
+/// - copied from `main` at 92d9b796: renamed, with calls routed to the matching copies and
 ///   their comments (left out): the store-level capture (`SeriesExceptionsUndo.capture(of:in:now:)`) with its
 ///   lister, `recreateDeletedEvent`, `undoDeleteOccurrence`, `seriesHoldsSlot`, `held`, `slotLength`, and
 ///   `OccurrenceSlotGuard.isHeld` (below, `isHeldOnMain`);
+///   The single-window capture inlines main's wrapper.
 /// - the planner's capture they call, `SeriesExceptionsPlanner.captureOnMain`, is bdcb8f9e's, the same as
 ///   92d9b796's;
 /// - the store-level restore they call, `SeriesExceptionsUndo.restoreAtBase` (below), is 92d9b796's too

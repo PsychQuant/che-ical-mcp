@@ -4,7 +4,8 @@ import XCTest
 
 /// Store-level comparison of two linked undos, using one store setup for each arm. Both arms
 /// share the occurrence-origin reader and the fixture's generated slots. Each runs its own
-/// capture, whole-series restore and single-occurrence undo from those inputs.
+/// capture, whole-series restore and single-occurrence undo from those inputs. The fixture
+/// supplies the forward deletions and the origin. It does not drive the live delete or split move.
 ///
 /// The sequences: two occurrences, A and B, are retitled while the series has a time zone, so their
 /// `/RID=` digits are instants (#311); the series is then given no time zone (`clear_timezone`) without

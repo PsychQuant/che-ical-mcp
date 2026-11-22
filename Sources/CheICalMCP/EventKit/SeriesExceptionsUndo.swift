@@ -12,7 +12,8 @@ enum SeriesExceptionsUndo {
     /// around `now`, #319), split into those that stay and those edited on their own. Nil when they
     /// cannot be listed (no identifier or calendar, or no occurrence of the series found inside the
     /// window), so the record says so instead of claiming there were none.
-    static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store, now: Date = Date()) -> SeriesExceptions? {
+    static func capture<Store: SeriesExceptionsStoreSource>(of series: Store.Event, in store: Store, now: Date = Date(),
+                                                            admitPreview: (([DateInterval], [DateInterval]) -> Bool)? = nil) -> SeriesExceptions? {
         let ids = store.identifiers(of: series)
         guard let id = ids.eventIdentifier, !id.isEmpty, store.hasCalendar(series) else { return nil }
         let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: ids.externalIdentifier)
@@ -30,20 +31,23 @@ enum SeriesExceptionsUndo {
         // ranges (`listingRanges(covering:)`).
         let fromFirst = UndoPostState.seriesScanWindow(firstStart: store.startDate(of: series), ruleEnd: nil)
         if seriesEnd.isCount, window.start > fromFirst.start {
-            let both = observedOccurrences(of: series, ids: seriesIDs,
-                                           over: SeriesExceptionsPlanner.listingRanges(covering: [window, fromFirst]), in: store)
+            let windows = [window, fromFirst]
+            let ranges = SeriesExceptionsPlanner.listingRanges(covering: windows)
+            guard admitPreview?(windows, ranges) ?? true else { return nil }
+            let both = observedOccurrences(of: series, ids: seriesIDs, over: ranges, in: store)
             // Round 7: always kept. It is exactly the window before #319, so its early part behaves as
             // it did then, whether the user deleted those occurrences one by one or the store lacks
             // that history (rounds 5-6 dropped it when its early part listed nothing, which brought a
             // user's early deletions back from the rules).
-            let windows = [window, fromFirst]
             guard var exceptions = SeriesExceptionsPlanner.capture(both, of: seriesIDs, windows: windows) else { return nil }
             exceptions.seriesStartsBeforeWindow = false
             exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
             exceptions.seriesMayContinueAfterWindow = placed.seriesMayContinueAfter
             return exceptions
         }
-        let observed = observedOccurrences(of: series, ids: seriesIDs, over: SeriesExceptionsPlanner.listingRanges(for: window), in: store)
+        let ranges = SeriesExceptionsPlanner.listingRanges(for: window)
+        guard admitPreview?([window], ranges) ?? true else { return nil }
+        let observed = observedOccurrences(of: series, ids: seriesIDs, over: ranges, in: store)
         guard var exceptions = SeriesExceptionsPlanner.capture(observed, of: seriesIDs, window: window) else { return nil }
         exceptions.seriesStartsBeforeWindow = placed.seriesStartsBefore
         exceptions.seriesContinuesAfterWindow = placed.seriesContinuesAfter
