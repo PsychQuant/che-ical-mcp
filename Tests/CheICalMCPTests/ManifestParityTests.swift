@@ -675,7 +675,7 @@ final class ManifestParityTests: XCTestCase {
 
     /// #539: the surfaces that describe the undo of a whole-series delete say how an occurrence edited while
     /// its timed series had no time zone is read (as an instant, `main`'s behaviour), once per description, and
-    /// in the manifest summary of undo. PR #558 fix round 5: the undo of one occurrence's delete is `main`'s too,
+    /// in the manifest's package description. PR #558 fix round 5: the undo of one occurrence's delete is `main`'s too,
     /// so no surface describes a refusal at the wall-clock reading (ruling F, removed).
     func testUndoSurfacesSayHowAnOccurrenceEditedWithoutATimeZoneIsRead() throws {
         let read = "#539: measured on iCloud, an occurrence edited while its timed series had no time zone carries its original time as wall-clock time, which this undo reads as an instant, so on a Mac not at offset 0 at that time such a record is usually no slot of the recreated series and none of the series' exceptions is applied; #539 stays open for that"
@@ -690,9 +690,9 @@ final class ManifestParityTests: XCTestCase {
         let batchRead = "(#539: the record of an occurrence edited while its timed series had no time zone, read as an instant, is usually no slot of the recreated series on a Mac not at offset 0, as delete_event says)"
         XCTAssertEqual(batch.components(separatedBy: batchRead).count - 1, 1, "defineTools() delete_events_batch")
         let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
-        let summary = (manifest?["tools"] as? [[String: Any]] ?? []).first { $0["name"] as? String == "undo" }?["description"] as? String ?? ""
-        let phrase = "(#539: the record of an occurrence edited while its series had no time zone is read as an instant, so on a Mac not at offset 0 it is usually no slot of the recreated series and none is applied; #539 stays open)"
-        XCTAssertEqual(summary.components(separatedBy: phrase).count - 1, 1, "mcpb/manifest.json undo: \(phrase)")
+        let summary = manifest?["long_description"] as? String ?? ""
+        let phrase = "#539: the record of an occurrence edited while its series had no time zone is read as an instant, so on a Mac not at offset 0 it is usually no slot of the recreated series and none is applied; #539 stays open."
+        XCTAssertEqual(summary.components(separatedBy: phrase).count - 1, 1, "mcpb/manifest.json long_description: \(phrase)")
     }
 
     /// #539 step 6: the two delete tools say when their answer forecasts that undo restores a series
@@ -720,12 +720,13 @@ final class ManifestParityTests: XCTestCase {
             }
         }
         let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
+        let packageSummary = manifest?["long_description"] as? String ?? ""
+        let deletePhrase = "For delete_event, a whole-series delete can add undo_note (a forecast, not given in every case) when the undo's check is expected to apply none of the recorded exceptions: an occurrence edited on its own whose original time, read as the undo reads it, is no slot of the series' rule, #539."
+        XCTAssertEqual(packageSummary.components(separatedBy: deletePhrase).count - 1, 1, "mcpb/manifest.json long_description")
         let tools = manifest?["tools"] as? [[String: Any]] ?? []
-        for (name, phrase) in [("delete_event", "a whole-series delete can add undo_note (a forecast, not given in every case) when the undo's check is expected to apply none of the recorded exceptions: an occurrence edited on its own whose original time, read as the undo reads it, is no slot of the series' rule, #539"),
-                               ("delete_events_batch", "series rows whose undo's check is forecast to apply none of the recorded exceptions can be listed in rules_alone_on_undo with an undo_note (not in every case), and the span all dry run gives it in the row, #539")] {
-            let summary = tools.first { $0["name"] as? String == name }?["description"] as? String ?? ""
-            XCTAssertEqual(summary.components(separatedBy: phrase).count - 1, 1, "mcpb/manifest.json \(name)")
-        }
+        let batchSummary = tools.first { $0["name"] as? String == "delete_events_batch" }?["description"] as? String ?? ""
+        let batchPhrase = "series rows whose undo's check is forecast to apply none of the recorded exceptions can be listed in rules_alone_on_undo with an undo_note (not in every case), and the span all dry run gives it in the row, #539"
+        XCTAssertEqual(batchSummary.components(separatedBy: batchPhrase).count - 1, 1, "mcpb/manifest.json delete_events_batch")
     }
 
     /// PR #558 fix round 4: no surface describes the restore rounds 0 to 3 changed and fix round 4 gave back
@@ -736,6 +737,7 @@ final class ManifestParityTests: XCTestCase {
         var texts = CheICalMCPServer.defineTools().map { "\($0.description ?? "") \(String(describing: $0.inputSchema))" }
         let manifest = try JSONSerialization.jsonObject(with: try Data(contentsOf: try locateManifest())) as? [String: Any]
         texts += (manifest?["tools"] as? [[String: Any]] ?? []).compactMap { $0["description"] as? String }
+        if let summary = manifest?["long_description"] as? String { texts.append(summary) }
         for text in texts {
             for retired in ["cannot be read reliably", "two readings", "stops them as well", "ends before it starts as this Mac reads it",
                             "on a Mac at offset 0 that time has one reading and is applied as before #539",
