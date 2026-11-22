@@ -776,18 +776,23 @@ final class ManifestParityTests: XCTestCase {
                 XCTAssertFalse(tool.declared.contains(gone), "\(name): \(gone)")
                 XCTAssertFalse(tool.summary.contains(gone), "\(name) summary: \(gone)")
             }
-            once("gives that occurrence's identifier (#532)", in: tool.declared, name)
-            // PR #545 verify round 2: the refusal needs an edited occurrence that belongs to the day; a day
-            // with no occurrence is not refused.
+            once("gives that occurrence's identifier (#532: only an occurrence whose identifier is the series' identifier followed by /RID= is found, the shape read on iCloud and, through EventKit, on Google; its identifier is given only when /RID= is followed by digits alone and it passes the echo check on characters and length, and otherwise the text points to list_events)", in: tool.declared, name)
+            XCTAssertFalse(tool.declared.contains("gives that occurrence's identifier (#532);"), "#555: the shape limit: \(name)")
+            // PR #545 verify round 2: the refusal needs an edited occurrence that starts on the day; a day
+            // with no occurrence is not refused. #555: it is found only in the identifier shape read on
+            // iCloud and Google, and the identifier is given only when it passes the echo check.
             once("does not reach an occurrence edited on its own: when no occurrence that was not edited on its own starts on that day and one edited on its own starts on it,", in: tool.summary, name)
             once(name == "move_events_batch" ? "(for a day with no occurrence, or one an edited occurrence was moved off, the row's error says so)" : "(a day with no occurrence, or one an edited occurrence was moved off, answers not found)", in: tool.summary, name)
-            XCTAssertTrue(tool.summary.contains("gives its identifier"), "\(name): \(tool.summary)")
+            once("found by an identifier of the series' id followed by /RID= (the shape on iCloud and Google),", in: tool.summary, name)
+            once("gives its identifier, or points to list_events when it does not echo it", in: tool.summary, name)
         }
         let update = try descriptions(of: "update_event").declared
-        once("with span 'this' pass it as event_id without occurrence_date, and with span 'future' the refusal says which way is left and that a write through that identifier starts at that occurrence's original date, which this server does not read, so it can reach occurrences before that day and miss some after it; where the store recorded that occurrence at another time of day than the series, such a write moved the later occurrences to another day (#550).", in: update, "update_event")
+        once("with span 'this' pass it as event_id without occurrence_date (measured on iCloud, where an occurrence edited on its own reports no recurrence rule of its own; where one does, the call asks for occurrence_date; Google and Exchange were not measured), and with span 'future' the refusal says which way is left and that a write through that identifier starts at that occurrence's original date, which this server does not read, so it can reach occurrences before that day and miss some after it; where the store recorded that occurrence at another time of day than the series, such a write moved the later occurrences to another day (#550).", in: update, "update_event")
         once("When no occurrence is on that day, the error names the day as a date in the event's time zone, this Mac's for an event with none (#535).", in: update, "update_event")
         let delete = try descriptions(of: "delete_event").declared
-        once("with span 'future' a delete through it starts at that occurrence's original date, which this server does not read, so it can delete occurrences before that day and leave some after it, and cannot be undone; in a timed series with no time zone that delete answers deleted and leaves the edited occurrence itself, a known defect (#549).", in: delete, "delete_event")
+        once("with span 'this' pass it as event_id without occurrence_date (measured on iCloud, where an occurrence edited on its own reports no recurrence rule of its own; where one does, the call asks for occurrence_date; Google and Exchange were not measured), and with span 'future' a delete through it starts at that occurrence's original date, which this server does not read, so it can delete occurrences before that day and leave some after it, and cannot be undone; where the store recorded that occurrence at another time of day than the series, such a delete removed that occurrence and the later ones, and an occurrence the rule shows on its day stayed (#550); in a timed series with no time zone that delete answered deleted and left the edited occurrence itself, for one edited in place and for one moved later (the shapes measured), a known defect (#549).", in: delete, "delete_event")
+        // #555 item 1: the delete's span 'future' sentence carries #550, as every span 'future' refusal does.
+        once("(#550)", in: delete, "delete_event")
         once("When no occurrence is on that day, the error names the day as a date in the event's time zone, this Mac's for an event with none (#535).", in: delete, "delete_event")
         let move = try descriptions(of: "move_events_batch").declared
         once("to pass in event_ids with the day it starts, read in that occurrence's own time zone, as its occurrence_dates entry.", in: move, "move_events_batch")
@@ -904,16 +909,19 @@ final class ManifestParityTests: XCTestCase {
             XCTAssertEqual(text.components(separatedBy: pin).count - 1, 1, "\(place): exactly one \"\(pin)\" in: \(text)", line: line)
         }
         let update = try descriptions(of: "update_event")
-        assertOnce("calendar_name moves the event to another calendar and the store gives it a new identifier there: a calendar in another account, and within a Google account another calendar of the same account (measured; within an iCloud account the identifier stayed the same)", in: update.declared, "update_event")
+        // PR #562 verify r2 (D7): the condition is the new identifier; the accounts are the instances measured.
+        assertOnce("calendar_name moves the event to another calendar and the store gives it a new identifier there (measured: a calendar in another account, and within a Google account another calendar of the same account; within an iCloud account the identifier stayed the same; Exchange was not measured)", in: update.declared, "update_event")
+        XCTAssertFalse(update.declared.contains("gives it a new identifier there: a calendar in another account"), "D7: the closed-list colon: \(update.declared)")
         XCTAssertFalse(update.declared.contains("calendar_name moves the event to a calendar in another account ("), "the old first case: \(update.declared)")
         assertOnce("After a calendar change over the whole event (a one-off event, or a series with span 'all' through its own identifier), older undo entries of the event follow it to the new identifier (#484); a split of the series is not followed, nor is span 'future' from the series' first occurrence with calendar_name, which moved the whole series under a new identifier within a Google account while older entries kept the old one (#551).", in: update.declared, "update_event")
-        assertOnce("a move to another calendar (another account, or within a Google account)", in: update.summary, "manifest update_event")
+        assertOnce("a move to another calendar (measured: another account, or within a Google account; Exchange not measured)", in: update.summary, "manifest update_event")
         assertOnce("(older undo entries follow a calendar change of the whole event, not one through span future from the first occurrence, #551)", in: update.summary, "manifest update_event")
         XCTAssertFalse(update.summary.contains("when a move to another account or a split"), update.summary)
 
         let tool = CheICalMCPServer.defineTools().first { $0.name == "update_event" }
         let calendarName = tool?.inputSchema.objectValue?["properties"]?.objectValue?["calendar_name"]?.objectValue?["description"]?.stringValue ?? ""
-        assertOnce("Another calendar can give the event a new identifier (in another account, and within a Google account): use the response's id (see id_changed).", in: calendarName, "calendar_name")
+        assertOnce("Another calendar can give the event a new identifier (measured: a calendar in another account, and another calendar within a Google account; within an iCloud account it stayed the same; Exchange was not measured): use the response's id (see id_changed).", in: calendarName, "calendar_name")
+        XCTAssertFalse(calendarName.contains("(in another account, and within a Google account)"), "#554: the closed list: \(calendarName)")
         XCTAssertTrue(calendarName.contains("(#503: the move is a create plus a delete, not measured)"), "the #503 sentence stays: \(calendarName)")
 
         let undo = try descriptions(of: "undo")
@@ -930,14 +938,30 @@ final class ManifestParityTests: XCTestCase {
         let undo = try descriptions(of: "undo")
         assertOnce("older entries of that event or reminder follow it, so a further undo acts on the recreated item and is checked like any undo (#538, measured on iCloud)", in: undo.declared, "undo")
         assertOnce("They do not follow a series whose occurrences edited on their own came back as separate events", in: undo.declared, "undo")
-        assertOnce("The undo of one occurrence's delete, of a split move or of a move by copy moves no entry, and no entry of a whole-series update that undo could restore (#263) is moved", in: undo.declared, "undo")
+        assertOnce("The undo of one occurrence's delete, of a split move or of a move by copy moves no entry, and the undo of a delete moves no entry of a whole-series update that undo could restore (#263)", in: undo.declared, "undo")
         // #538 fix 1 (F22): which undos follow, in both texts, and the exceptions and the measurement in the summary.
         assertOnce("The undo of a delete_event of a one-off event or of a whole series, of a delete_reminder, or of one member of a batch delete writes the item again under a new identifier", in: undo.declared, "undo")
         assertOnce("the undo of such an entry that is not found answers that the series it names was recreated as a new one", in: undo.declared, "undo")
         assertOnce("when one of them is an entry whose undo looks the series up", in: undo.declared, "undo")
-        assertOnce("whose entries that undo looks up are not moved, said in the answer when there are any", in: undo.summary, "manifest undo")
+        assertOnce("no entry follows a series whose edited occurrences came back as separate events; when entries of it whose undo looks it up remain (not when it reads back under its old identifier), the delete's undo says so", in: undo.summary, "manifest undo")
+        // #559 (G6, G9, G15, G16, G32): the limit of entries named by an occurrence's own identifier is the #426 move's,
+        // in both texts; the delete's undo is the one that says so; a recreated series under the removed identifier flags nothing.
+        // PR #562 verify r2 (D10): the calendar the move goes back to is read first, as for every move.
+        assertOnce("entries naming the series by an occurrence's own identifier (a whole-series move made through it, #426) are neither moved nor flagged, and their undo, once the calendar it moves back to is found (a missing one is refused first), answers the generic not-found while the removed identifier no longer resolves (as on iCloud);", in: undo.summary, "manifest undo")
+        assertOnce("Entries that name the series by the own identifier of one of its occurrences (a whole-series move made through it, #426) are neither moved nor flagged, and their undo, once the calendar it moves the series back to is found (a missing one is refused first), answers the generic not-found while the removed identifier no longer resolves (as on iCloud).", in: undo.declared, "undo")
+        // PR #562 verify r2 (M24, D8): the entry of a move by copy is not among the flagged ones, in both texts.
+        // PR #562 verify r3 (N2, E5): with the exception of a split whose original slot is held (`keptSlotHeld`).
+        assertOnce("(its create, an update of it while it was one-off, an in-place move of the whole event, a whole-series update that undo could restore, #263; not the entry of a move by copy, whose undo restores the original first and reports a copy it does not find as not found, or, where the original's slot is already held, writes nothing and does not look the copy up)", in: undo.declared, "undo")
+        assertOnce("a move by copy's entry is not flagged: its undo restores the original first and reports a copy it does not find as not found, or, where the original's slot is already held, writes nothing and does not look the copy up;", in: undo.summary, "manifest undo")
+        XCTAssertFalse(undo.declared.contains("reports a copy it does not find as not found)"), "r3 N2: the clause without the slot-held case: \(undo.declared)")
+        XCTAssertFalse(undo.summary.contains("reports a copy it does not find as not found;"), "r3 N2: the clause without the slot-held case: \(undo.summary)")
+        assertOnce("the answer of the delete's undo (a batch undo's too) says so", in: undo.declared, "undo")
+        assertOnce("when the recreated series reads back under the removed identifier, no entry is flagged and nothing is said.", in: undo.declared, "undo")
+        XCTAssertFalse(undo.declared.contains("a whole-series move or an update made through it"), "#559 G15: such an update is a marker")
+        XCTAssertFalse(undo.summary.contains("a whole-series move or an update made through it"), "#559 G15: such an update is a marker")
         assertOnce("the undo of a delete_event of a one-off event or a whole series, of a delete_reminder or of a batch member recreates the item under a new identifier (measured on iCloud) and older entries of it follow", in: undo.summary, "manifest undo")
-        assertOnce("an entry of a whole-series update that undo could restore (#263) is not moved; and the undo of one occurrence's delete, a split move or a move by copy moves no entry (#538)", in: undo.summary, "manifest undo")
+        assertOnce("an entry of a whole-series update that undo could restore (#263) is not moved;", in: undo.summary, "manifest undo")
+        assertOnce("and the undo of one occurrence's delete, a split move or a move by copy moves no entry (#538)", in: undo.summary, "manifest undo")
         for character in ["<", ">", "&"] {
             XCTAssertFalse(undo.summary.contains(character), "manifest undo: \(character)")
         }

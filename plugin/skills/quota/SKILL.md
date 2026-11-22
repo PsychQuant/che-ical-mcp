@@ -26,7 +26,7 @@ Reminders only, no calendar events: a calendar event cannot be ticked, so it can
 
 **v1 is per-period only.** There is no recurring reminder: a period is never inferred from a series that rolled forward. Every reminder carries its period's key, and a record is written down, not guessed from a date (section 5).
 
-**Needs a server with #333** (the release after v1.23.0): relative alarms on reminders. With an older server the alarm is silently not written; the read-back of section 6 catches it, and the report then says the server is too old instead of claiming the reminder is complete.
+**Needs a server with #333** (v1.23.0 and later): relative alarms on reminders. With an older server the alarm is silently not written; the read-back of section 6 catches it, and the report then says the server is too old instead of claiming the reminder is complete.
 
 ## 1. Operations (closed list)
 
