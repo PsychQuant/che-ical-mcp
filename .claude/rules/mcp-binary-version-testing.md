@@ -1481,3 +1481,22 @@ G6 的批次建立會跨行事曆搜尋相似事件。G11 與 G12 的場次查�
 - 場次單獨修改之後系列才在全天與計時之間轉換，以及轉換時 store 會不會重寫 `/RID=`。
 
 結束後依 id 刪掉這次建立的拋棄式日曆，再隔一分鐘以上分兩次確認已記錄的 id 都找不到。只查這次建立的 id。
+
+## Release gate：重試的比對是系列被單獨修改過的第一個場次（#544）
+
+#544 的選擇（`ExclusionRetryTarget.resolve`）是純函式，`createEvent` 的接線由 `ExclusionRetryTargetWiringTests` 釘住。它依賴一件只在裝置上量過的事：
+系列的第一個場次被單獨修改過之後，用 `/RID=` 前面那段識別碼讀到的系列物件（`storedEvent`，不 refresh）仍回報重複規則。重試什麼都不寫，是 stateless 的，
+所以用 `--cli` 做（見上表），不用 AppleScript、不用 session MCP，只在名稱含 `#544` 的拋棄式日曆上做。
+
+**出 #544 的版本打 tag 之前**，用出版的 binary 重做下面五列。setup：每週一次、共六場、時區 Asia/Taipei 的系列，建立時排除第五場；再用 span `this` 只改第一場與第四場的
+`notes`。`list_events` 讀回時，第一場與第四場的識別碼是 `<series id>/RID=…`，其餘是 `<series id>`。每一列都是同標題、同開始時間的 `create_event` 重試：
+
+1. 改動之前，排除第五場：`skipped`，`id` 是系列的識別碼。
+2. 改動之後，排除第五場（#544 的形狀）：`skipped`，`id` 是系列的識別碼（`main` 回衝突，指名第一場的識別碼與第五場的日期）。
+3. 排除第五場與第三場（沒改過、還在）：衝突，指名系列的識別碼與第三場的日期。
+4. 排除第四場（被單獨改過）：#534 的那句，指名系列的識別碼與第四場的日期。
+5. `create_events_batch` 一列，排除第五場：該列 `skipped`，`event_id` 是系列的識別碼。
+
+重試前後的 `list_events` 要相同。2026-11-23 在 iCloud 用這個 branch 與 `main`（`65722b27`）的 Developer ID 簽章 release build 做過，結果記在 #544 與 PR #582。
+沒量過：series-unread 那個錯誤（沒有看到哪個來源會走到它；一次性事件被來源回報成 detached 時也會走到，句子說的系列對它不成立，兩邊都拒絕、都不寫入）、
+iCloud 以外的來源、比對到的是被移到請求開始時間的較後場次。結束後依 id 刪掉日曆，隔一分鐘以上用名稱過濾的列表數兩次，名稱含 `#544` 的都是 0。
