@@ -1306,74 +1306,36 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 一次**：iCloud 曾把刪掉的拋棄式日曆空著帶回來（#416 一節記過 2026-11-05 的一次，新的 id、空的；2026-11-16 又出現一個空的 `#532 L`），
 有的話依 id 再刪一次並記下來。計數只代表計數的那一刻。
 
-## Release gate：沒有時區的系列，修改過的場次在 undo 裡的讀法（#539）
+## Release gate：整個系列刪除的預告（#539）
 
-**沒有時區的系列的修改不由整個系列刪除的 undo 還原，#539 保持 open。** PR #558 fix round 4 讓整個系列刪除的 undo 回到 `main`（`92d9b796`）：
-擷取與還原把修改過的場次的 `/RID=` 一律讀成時刻，有沒有時區都一樣，一致性檢查、多餘時段的移除、一次性事件與計數都是 `main` 的（round 0 到 3 在這裡
-讀兩種讀法、放置、停止還原，每一輪 verify 都找到比 `main` 差的形狀）。PR #558 只保留四件永遠不比 `main` 差的事：
-- 單一場次刪除（與 split move 的來源）的 undo 檢查（`OccurrenceSlotGuard.answer`）：讀成時刻的時段有系列的場次時回答 held，跟 `main` 一樣；沒有、而只有
-  一個沒單獨修改的場次在同樣數字讀成牆上時間的時間時，拒絕 undo、什麼都不寫、保留紀錄（裁定 F），`main` 在那裡寫一次性事件；其餘跟 `main` 一樣寫。
-- 牆上時間的讀法只在場次的系列沒有時區時取，系列的時區在系列上讀（經由 `/RID=` 之前的 id 讀系列物件；讀不到，或 `/RID=` 只在 external identifier 裡時，
-  只取時刻，裁定 J、verify round 4 的 C5）。
-- 刪除時的預告（`undo_note`、`rules_alone_on_undo`）只預測 `main` 的一致性檢查：記錄的時段（讀成時刻）有不是規則時段的，就預告照規則重建；
-  `delete_events_batch` 的 dry run 不算同一次呼叫裡較早的列刪掉的場次（C3）。
+**沒有時區的系列的修改不由 undo 還原，#539 保持 open。** PR #558 fix round 5 之後，每一個 undo 都是 `main`（`92d9b796`）的：整個系列刪除的擷取與還原，
+以及單一場次刪除（與 split move 的來源）的 undo 裡 #321 的時段檢查，都把修改過的場次的 `/RID=` 讀成時刻（round 0 到 3 在整個系列的還原、round 1 到 4 在
+時段檢查裡讀兩種讀法，每一輪 verify 都找到比 `main` 差的形狀）。PR #558 只加上兩件事：
+- 刪除時的預告（`undo_note`、`rules_alone_on_undo`）：記錄的時段（讀成時刻）有不是規則時段的，`main` 的一致性檢查就不套用任何例外，回應預告這件事；
+  `delete_events_batch` 的 dry run 以識別碼排除同一次呼叫裡較早的列刪掉的場次（C3、Q2）。
 - #541 的 `clear_timezone` 描述。
 
-純函式、記憶體內 store 與三個主機時區都有測試；矩陣測試（`FloatingSeriesUndoMatrixTests`）每一格都同時跑這個 server 與 `main` 自己的擷取與 undo，
-斷言行事曆、回答與文字相同；裝置上只在**單一 stdio process**（不是 session MCP）做過，所以**出 #539 的那個版本打 tag 之前**，在重啟後的 session MCP 上
-（行為探測確認是新 binary 之後：第 4 步 MA 的第二次 undo 回 `Cannot undo the deletion of an occurrence of`，舊 binary 會寫出第二個事件）重做下面幾格，只用
-名稱含 `#539` 的拋棄式 iCloud 日曆。系列都是每週、第一場在未來、帶 `timezone: Asia/Taipei` 與 `end_date` 建立（第 7、8 步除外）；修改與 `clear_timezone`
-用 `--cli` 做（不進 session 的 undo stack），刪除與 undo 在 session 上做，讀回用 `--cli`。「規則外的說明」指刪除回應的 `undo_note` 以
-`Undo is expected to bring this series back from its rules alone: ` 加上記到的件數開頭，「對不上的還原」指 undo 回
-`Restored from the series rules alone: the recorded exceptions did not match`：
+預告是 stateless 的，`--cli` 走得到。**出 #539 的那個版本打 tag 之前**，用剛 build 的 binary 的 `--cli`（見上表），只用名稱含 `#539` 的拋棄式 iCloud 日曆，
+系列都是每週、第一場 2027-01-04 10:00、帶 `timezone: Asia/Taipei` 與 `end_date` 2027-02-15 23:00 建立；「說明」指回應的 `undo_note` 以
+`Undo is expected to bring this series back from its rules alone: ` 加上件數開頭（dry run 的列是 `Undo of this row would be expected to bring the series back
+from its rules alone: `）：
 
-1. **F1**：`clear_timezone`（span `all`）→ 第 3 場改標題、第 4 場延後一小時（span `this`）→ session：`delete_event` span `all`（規則外的說明，`2 recorded
-   occurrence(s)`）→ `undo`：對不上的還原，讀回每一場都是系列的標題、在規則的時間。
-2. **D2**：`clear_timezone` → 第 3 場改標題、第 5 場刪除 → 刪除（規則外的說明）、undo：對不上的還原，第 5 場回來。
-3. **R2**：第 3 場在有時區時改標題 → `clear_timezone` → 第 4 場改標題 → 刪除（規則外的說明，`1 recorded occurrence(s)`：只有第 4 場的時間讀成時刻不在規則上）
-   → undo：對不上的還原。
-4. **MA**：`clear_timezone` → 第 3、5 場改標題 → session：用第 3 場自己的 id 刪除（span `this`）→ 刪整個系列（規則外的說明）→ `undo`（對不上的還原，第 3 場的
-   時段照規則回來）→ `undo`：被拒絕（`Cannot undo the deletion of an occurrence of 'Third': its series had no time zone when it was deleted, …`），什麼都沒寫，
-   讀回那個時間只有一個事件（+0 與 +30 秒）。`main` 在這一步寫出一次性事件，那個時間有兩個事件（#539 的回報）。
-5. **C1**（verify round 4 的 C1）：系列保有時區時第 2、4 場改標題 → `clear_timezone` → session：用第 2 場自己的 id 刪除 → 刪整個系列（沒有說明：第 4 場的
-   時間讀成時刻就是它的時段）→ `undo`：`1 occurrence(s) deleted on their own earlier stayed deleted, 1 … came back`→ `undo`：第 2 場以一次性事件寫回；讀回
-   六個場次，第 2、4 場是改過的標題，同一時間沒有兩個事件。round 3 在這裡照規則重建，第 2 場的紀錄被用掉、修改遺失。
-6. **N1**：保有時區的系列 → `--cli` 改第 3 場標題 → `--cli` 用系列 id、span `all` 把整個系列往後移一小時（回 `updated`；第 3 場跟著移、保留標題，`/RID=` 仍是
-   舊時段）→ session：`delete_event` span `all`：規則外的說明 → `undo`：對不上的還原，讀回刪除前的每一個時間都是系列的標題（不寫固定的場數：`end_date`
-   涵蓋的週數決定，L18）。
-7. **S1**：有時區（`Asia/Taipei`）的每日系列 06:00、6 場、`end_date` 在最後一場當天 23:00 → `--cli` 改第 2 場標題 → `--cli` 用系列 id、span `all` 把
-   `start_time` 改到同一天 22:00（延後 16 小時，回 `updated`；第 2 場跟著移、`/RID=` 留在舊時段）。(a) session：`delete_event` span `all`：規則外的說明 →
-   `undo`：對不上的還原，讀回 6 場、都是系列的標題。(b) 另一個同樣的系列，session：用第 2 場自己的 id `delete_event` span `this` → `undo`：
-   `restored the deleted occurrence … as a one-off event`，讀回 6 場、第 2 場是改過的標題、沒有重複。**S2**：同 S1，刪除前先 `--cli` 的
-   `clear_timezone`（span `all`）：被 #503 的檢查拒絕（`a listed occurrence falls where the rule gives none … Nothing was written.`），之後 (a)(b) 與 S1 相同。
-8. **FR**（裁定 F 在另一個主機時區）：每週 02:30（`Asia/Taipei`）、30 分鐘、第一場 2027-02-28、`end_date` 2027-04-05 的系列，`clear_timezone` 與修改用主機時區
-   （`+08:00`）的 `--cli`：改 2027-03-14 與 2027-03-28 兩場的標題 → stdio server 與讀回用 `TZ=America/Los_Angeles`：用 2027-03-28 那場自己的 id
-   `delete_event` span `this` → `delete_event` span `all` → `undo`：對不上的還原 → `undo`：被拒絕（`Cannot undo the deletion of an occurrence of '…'`），
-   什麼都沒寫，`undo_history` 最上面仍是那一筆 → `undo` 帶它的 `discard_id` 移除。`main` 在這一步寫出一次性事件。
+1. **E1**：第 3 場改標題 → 用系列 id、span `all` 把整個系列往後移一小時（第 3 場的 `/RID=` 留在舊時段，cell N1）→ `delete_event` span `all`：說明，`1 recorded occurrence(s)`。
+2. **E2**：同 E1 的系列 → `delete_event` span `future`、`occurrence_date` 為第一場（11:00）：說明，`1 recorded occurrence(s)`。
+3. **E3**：`clear_timezone`（span `all`）→ 第 3 場改標題 → `delete_event` span `all`：這台 Mac 在 `+08:00` 時有說明；在 UTC 的 Mac 上沒有。
+4. **E4**（對照）：第 3 場改標題、不移動 → `delete_event` span `all`：沒有說明。
+5. **B1**：同 E1 的系列 → `delete_events_batch` dry run `[系列 id]`：那一列有說明 → dry run `[第 3 場自己的 id, 系列 id]`：沒有說明 → 實際呼叫同樣兩列：
+   沒有 `rules_alone_on_undo`，兩列都刪除。
+6. **B2**：同 E1 的系列 → `delete_events_batch` 實際呼叫 `[系列 id]`：`rules_alone_on_undo` 列出那一列與說明。
 
-以上答案除了第 4、8 步的拒絕（`main` 在那裡寫出第二個事件），都是 `main` 的答案：這個 server 與 `main` 在每一格的行事曆、回答與文字相同，由測試對 `main` 的
-副本（`SeriesUndoOnMain`）斷言（`FloatingSeriesExceptionsUndoTests`、`WholeSeriesUndoChainOnMainTests`、`ZonedSeriesUndoOnMainTests`、矩陣）；裝置上沒有跑 `main`。
-另外做 #538 gate 第 1、3 步（#538 Implementation Complete 編號的 sequence 1 與 8）。
+不透明 id（`/RID=` 只在 external identifier 裡）的 dry run 形狀在 iCloud 上做不出來（它的 id 都是 `/RID=` 形式），只有記憶體內 store 的測試。undo 是 `main` 的，
+答案以測試對 `main` 的副本（`SeriesUndoOnMain`）斷言（`FloatingSeriesExceptionsUndoTests`、`WholeSeriesUndoChainOnMainTests`、`ZonedSeriesUndoOnMainTests`、矩陣），
+不在這個 gate 裡。
 
-PR #558 fix round 4（2026-11-22）用 `f868bfce` 的 Developer ID 簽章 release build（有時間戳記）在 stdio process 上做第 1 到 8 步（第 8 步 server 在 `TZ=America/Los_Angeles`）與 #538 gate 第 1、3 步，結果都如上：F1、D2、R2、MA、FR、N1、S1、S2 的刪除帶規則外的說明，undo 都是對不上的還原；C1 沒有說明，第一次 undo 回 `1 … stayed deleted, 1 … came back`，第二次寫回第 2 場，讀回與刪除前相同；MA 與 FR 的第二次 undo 被拒絕、什麼都沒寫，FR 的紀錄以 `discard_id` 移除；S1、S2 的 (b) 寫回一次性事件；S2 的 `clear_timezone` 被 #503 拒絕；#538 gate 第 1 步讀回空日曆，第 3 步的第二次 undo 回 #538 的 flagged 文字、紀錄以 `discard_id` 移除。13 個拋棄式日曆依 id 刪除；01:49:33 與 01:50:34（+08:00）兩次計數，名稱含 `#539` 的都是 0（只有 #484 的兩個 Google 日曆）。
+PR #558 fix round 5（2026-11-22）用 `19ab96dd` 的 Developer ID 簽章 release build（有時間戳記）以 `--cli` 做第 1 到 6 步，結果都如上（E3 在這台 `+08:00` 的 Mac 上）；6 個拋棄式日曆依 id 刪除；11:02:47 與 11:03:52（+08:00）兩次計數，名稱含 `#539` 的都是 0（只有 #484 的兩個 Google 日曆）。發布的 binary 還沒有做。
 
-**沒做、出版前要補或記成未量**：
-
-- 上面每一步在重啟後的 session MCP 上（第 8 步要另一個主機時區的 server，在 stdio process 上做即可）。
-- 從 round 3 起沒有重做：Z1、D1、L1、U1、B1、N2、N3、DS1、DS2、SD、FW。它們的整個系列 undo 現在是 `main` 的，答案以測試對 `main` 斷言。
-- `main` 本身的行為，從矩陣讀出、記在 #539，不是這個 PR 的：矩陣 15,696 格（含系列有時區時修改、之後 `clear_timezone` 的一半，L1、L3）裡 `main` 自己的結果，已釘在測試：2,324 格沒有可還原的擷取（#428 路線），2,234 格與刪除前相同，660 格第一個場次照規則保留（它的回應有說），7,646 格照規則重建，2,832 格留下檢查不接受的行事曆，其中 326 格同一時間有兩個事件。這個 server 在每一格與 `main` 相同；能讀出預告的 8,112 格，預告都跟 undo 一致。
-- 刪除前又讀到時區的系列（#541 在 Google 日曆上看到）：讀成時刻，跟 `main` 一樣，沒有量。
-- split move（`move_events_batch` span `this`）在這種系列上的 undo（#466 走同一個檢查與同一個拒絕，沒有量）。
-- 單一場次的時區與系列不同（`update_event` span `this` 帶 `clear_timezone`）時 store 是否保留：沒有量；裁定 J 讓 origin 一律讀系列的時區。
-- #321 gate 第 3、4 步在保有時區的系列上（#321 起一直欠著）。
-- **Not covered**：重建的系列在被刪場次的時段上有一個單獨修改過、`/RID=` 是另一種的場次時，檢查只比讀成時刻的時段，會像 `main` 一樣在旁邊寫第二個事件。
-- 矩陣只建模 stand-in 刪除的兩種結果；量到的第三種（stand-in 自己被留下，`main` 的 #561）沒有建模（L19）。
-- iCloud 以外的來源。
-- 計畫裡移出這個 PR 的部分：#503 檢查（計畫第 4 步、mutant 10、裝置格 MB 與 R1）的提案在 #553；其他三個讀者（create-undo 的檢查、#416 的星期檢查、
-  #509 的規則結束檢查；計畫第 5 步、mutant 11）在 #557。
-
-較早幾輪的裝置紀錄（round 0 到 3，`83d2418a`、`3587d72e`、`6851a4b9`、`80e3179d`、`ab1a94ec`、`041a5b5f`，2026-11-16 到 18）記在 #539 的 Implementation
-Complete 與 Verify-fix 留言；那些 build 的整個系列 undo 與現在不同，結果不適用於這個 head。
+**沒做、記成未量**：iCloud 以外的來源；session MCP（預告不需要它）；`main` 的 undo 在這種系列上的結果記在 #539，不是這個 PR 的。較早幾輪的裝置紀錄（round 0 到 4，
+2026-11-16 到 22）記在 #539 的 Implementation Complete 與 Verify-fix 留言；那些 build 的 undo 與現在不同，結果不適用於這個 head。
 
 結果記在 #539。結束後刪掉拋棄式日曆，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#539` 的都是 0。
 

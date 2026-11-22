@@ -249,24 +249,16 @@ code:
 -->
 
 ---
-### Requirement: An edited occurrence's recorded slot is read both ways
+### Requirement: An edited occurrence's recorded slot is read as an instant, and a whole-series delete forecasts its undo
 
-The identifier of an occurrence edited on its own carries its original time after `/RID=`. Measured on iCloud (#539), when the occurrence was edited while its timed series had no time zone that time is wall-clock time written as UTC; otherwise it is an instant, and one series can hold both. The undo of a whole-series delete SHALL read that time as an instant, for every series, with or without a time zone, and its capture, restore, consistency check, placement of one-off events, removal of surplus slots and counts SHALL be those of `main` before #539 (PR #558 fix round 4: rounds 0 to 3 read both readings there and each verify round found a shape in which that did worse than `main`). On a host not at offset 0, an occurrence edited while its series had no time zone is then usually read at no slot of the recreated series, the undo applies none of the series' exceptions and says the recorded exceptions did not match; #539 stays open for restoring such edits.
+The identifier of an occurrence edited on its own carries its original time after `/RID=`. Measured on iCloud (#539), when the occurrence was edited while its timed series had no time zone that time is wall-clock time written as UTC; otherwise it is an instant, and one series can hold both. Every undo SHALL read that time as `main` before #539 reads it (as an instant; an all-day one as its local day): the undo of a whole-series delete, with its capture, restore, consistency check, placement of one-off events, removal of surplus slots and counts, and the check of #321 whether a restored series holds the slot of a deleted occurrence, in the undo of one occurrence's delete and of a split move's source. PR #558 read the time both ways in rounds 0 to 4, in the whole-series undo and then in the check of #321, and each verify round found a shape in which that did worse than `main`. On a host not at offset 0, the record of an occurrence edited while its series had no time zone is then usually no slot of the recreated series, and the undo applies none of the series' exceptions and says the recorded exceptions did not match; in some shapes the record is a slot and is applied, and in some the calendar after the undo has two events at one start. These are `main`'s results; #539 stays open for them.
 
-One reader of this server SHALL read a timed `/RID=` both ways, as an instant and as wall-clock time in the host's time zone: the check whether a restored series holds a deleted occurrence's slot, for the undo of the delete of one occurrence (and of a split move's source). It SHALL take the wall-clock reading only for an occurrence of a series that has no time zone when the delete or move read it: the event the delete or move resolved, when it was reached through the series' identifier; the series object stored under the part before `/RID=`, when the occurrence was addressed by its own identifier. When that series object cannot be read, or the `/RID=` is only in the occurrence's external identifier, the origin SHALL take the instant reading alone. When the two readings are the same instant (a host at offset 0 when the slot falls) there is one reading. An all-day occurrence and an occurrence without a `/RID=` keep one reading. The check SHALL count only occurrences of the same series or of a series an undo recreated from it, and SHALL compare an occurrence edited on its own by its instant reading only. When such an occurrence is at the instant reading of the deleted occurrence's slot, the slot is held: nothing is written and the record is used up, as on `main`. When none is there and only an occurrence not edited on its own is at the deleted occurrence's wall-clock reading, the server SHALL write nothing, SHALL refuse the undo and SHALL keep the record, with a text that says the series holds an occurrence at that time as this Mac's time zone reads the recorded time, that this server cannot tell whether it is the deleted occurrence's slot, and that the entry can be given up with `discard_id`; for a split move's source the text SHALL say that the copy the move made was not looked up or touched. Otherwise the occurrence is written as a one-off event, as on `main`. What this check writes SHALL be a part of what `main`'s writes.
-
-Before a whole-series delete removes anything, the server SHALL read the recorded edited occurrences and check each record's slot, read as the undo reads it, against the slots the series' rule gives, expanded from the series' first slot to the end of the last recorded window, and count those that are no slot. When the count is above 0 and the delete is recorded as a whole-series delete, the delete's answer SHALL carry an `undo_note` saying that undo is expected to bring the series back from its rules alone, with the count; in a real `delete_events_batch` call the note is in its `rules_alone_on_undo` list. The note is a forecast of `main`'s check: the restore decides on the recreated series. A dry run with span `all` SHALL leave out of the record and of the first slot's listing the occurrences that the call's earlier rows delete, as the real call's series row no longer sees them. The server SHALL NOT write the note when the series was reached through a stand-in or its first occurrence is not a plain occurrence at its own start (for example edited or deleted on its own, or when it cannot be shown), when the series has more than one rule or a rule the expander does not follow, when the expander would take more slots than its limit, when an occurrence not edited on its own that the delete recorded is no slot of the expander, or when the call's undo would be refused as a whole (a row of a `delete_events_batch` call recorded as deleting an occurrence and the following ones). The delete SHALL NOT be refused for it.
+Before a whole-series delete removes anything, the server SHALL read the recorded edited occurrences and check each record's slot, read as the undo reads it, against the slots the series' rule gives, expanded from the series' first slot to the end of the last recorded window, and count those that are no slot. When the count is above 0 and the delete is recorded as a whole-series delete, the delete's answer SHALL carry an `undo_note` saying that the undo's check is expected to apply none of the exceptions recorded with the series, with the count; in a real `delete_events_batch` call the note is in its `rules_alone_on_undo` list. The note SHALL NOT say more than that check establishes: the series is expected to be recreated from its rule, with no edited occurrence written back and no slot removed. The note is a forecast of `main`'s check: the restore decides on the recreated series. A dry run with span `all` SHALL leave out of the record and of the first slot's listing the occurrences that the call's earlier rows delete, by their own event identifiers, before the record reduces an occurrence to its slot, as the real call's series row no longer lists them. The server SHALL NOT write the note when the series was reached through a stand-in or its first occurrence is not a plain occurrence at its own start (for example edited or deleted on its own, or when it cannot be shown), when the series has more than one rule or a rule the expander does not follow, when the rule gives more slots from the first slot to the end of that window than the expander takes, when an occurrence not edited on its own that the delete recorded is no slot of the expander, or when the call's undo would be refused as a whole (a row of a `delete_events_batch` call recorded as deleting an occurrence and the following ones). The delete SHALL NOT be refused for it.
 
 #### Scenario: A floating edit comes back as on main
 
 - **WHEN** a weekly series is given no time zone, one occurrence is retitled and another moved, the series is deleted whole and the delete is undone
 - **THEN** the undo leaves the calendar and answer `main`'s run of the same sequence leaves: on a host not at offset 0 the series comes back from its rules alone and the undo text says the recorded exceptions did not match; on a host at UTC both edits come back as one-off events
-
-##### Example: the two readings of an identifier
-
-- **GIVEN** a host at `Asia/Taipei` and an occurrence of 2027-02-25 10:00 local edited while its series had no time zone, whose identifier ends `/RID=` with the seconds of 2027-02-25T10:00:00Z
-- **WHEN** its readings are taken
-- **THEN** they are 2027-02-25T10:00:00Z and 2027-02-25T02:00:00Z
 
 ##### Example: a floating edit comes back as on main
 
@@ -299,7 +291,7 @@ Before a whole-series delete removes anything, the server SHALL read the recorde
 #### Scenario: The undo of an occurrence's delete after its series was restored
 
 - **WHEN** an occurrence edited on its own was deleted, the whole series was deleted and restored, and the occurrence's delete is undone
-- **THEN** the occurrence is written when the restored series does not hold its slot, nothing is written when an occurrence of the series is at the slot read as an instant, and when only an occurrence not edited on its own is at its wall-clock reading the undo is refused, nothing is written, and the entry stays in the history
+- **THEN** the calendar and both answers, outcomes and texts, are those of `main`'s run of the same sequence
 
 ##### Example: C1 the older record writes its edit as on main
 
@@ -313,22 +305,16 @@ Before a whole-series delete removes anything, the server SHALL read the recorde
 - **WHEN** the series' delete is undone and then the second occurrence's delete
 - **THEN** the calendar and both answers are `main`'s, with no two events at one start
 
-##### Example: MA writes one event
+##### Example: MA is as on main
 
-- **GIVEN** the third and fifth occurrences edited while the series had no time zone, the third deleted through its own identifier, then the whole series deleted
-- **WHEN** the series' delete is undone and then the third occurrence's delete
-- **THEN** the series' undo is `main`'s; on a host not at offset 0 it comes back from its rules alone and the second undo is refused with nothing written, where `main`'s wrote a second event at the third occurrence's time; at UTC the second undo writes one one-off event, as on `main`
-
-##### Example: the restored series holds the wall-clock reading
-
-- **GIVEN** a host at `Asia/Taipei`, a weekly series at 10:00 with no time zone, its third occurrence retitled and deleted through its own identifier, and the series recreated from its rules with a plain occurrence at the third slot
-- **WHEN** the third occurrence's delete is undone
-- **THEN** the undo is refused with the text naming `discard_id`, nothing is written, and the record is kept
+- **GIVEN** the second and fourth occurrences of a weekly series edited while it had no time zone, the second deleted through its own identifier, then the whole series deleted, on a host at `+08:00`, `-08:00`, `+05:45` or UTC
+- **WHEN** the series' delete is undone and then the second occurrence's delete
+- **THEN** the calendar and both answers are `main`'s: away from offset 0 two events at the second occurrence's start, `main`'s own; at UTC one
 
 #### Scenario: The delete forecasts a restore from the rules alone
 
 - **WHEN** a whole series is deleted while its record holds an edit whose slot, read as an instant, is off the rule expanded from its first slot
-- **THEN** the series is deleted and the answer's `undo_note` says undo is expected to bring it back from its rules alone, with the count; in a `delete_events_batch` call the series' row is listed in `rules_alone_on_undo`, and a dry run with span `all` carries the note in the series' row (by date range, in the row of every listed occurrence of that series) before anything is deleted
+- **THEN** the series is deleted and the answer's `undo_note` says the undo's check is expected to apply none of the recorded exceptions, with the count; in a `delete_events_batch` call the series' row is listed in `rules_alone_on_undo`, and a dry run with span `all` carries the note in the series' row (by date range, in the row of every listed occurrence of that series) before anything is deleted
 
 ##### Example: the delete forecasts a floating edit
 
@@ -342,20 +328,29 @@ Before a whole-series delete removes anything, the server SHALL read the recorde
 - **WHEN** the series' row is forecast
 - **THEN** the record leaves that occurrence out, as the real call's does, and the row has no note
 
+##### Example: the dry run leaves out an opaque occurrence
+
+- **GIVEN** the same series, the occurrence edited off the rule having an opaque identifier and its `/RID=` only in its external identifier, and the dry run naming that identifier and the series
+- **WHEN** the series' row is forecast
+- **THEN** the record leaves that occurrence out, as the real call's does, and the row has no note
+
+##### Example: the dry run keeps another occurrence at the same slot
+
+- **GIVEN** two occurrences of the series recorded at one slot off the rule, one with the series' identifier and `/RID=`, the other opaque with the same `/RID=` in its external identifier, and the dry run naming the first and the series
+- **WHEN** the series' row is forecast
+- **THEN** the record keeps the second, as the real call's does, and the row's note counts one
+
 
 <!-- @trace
-source: idd-539-fix4
+source: idd-539-fix5
 updated: 2026-11-22
 code:
-  - Sources/CheICalMCP/EventKit/SeriesExceptions.swift
-  - Sources/CheICalMCP/EventKit/SeriesExceptionsUndo.swift
-  - Sources/CheICalMCP/EventKit/SeriesExceptionsStoreSource.swift
-  - Sources/CheICalMCP/EventKit/SlotReadings.swift
+  - Sources/CheICalMCP/EventKit/DryRunCaptureStore.swift
   - Sources/CheICalMCP/EventKit/DeleteUndo.swift
-  - Sources/CheICalMCP/EventKit/UndoEventOutcome.swift
-  - Sources/CheICalMCP/EventKit/UndoBatchRestore.swift
   - Sources/CheICalMCP/EventKit/EventKitManager+SeriesExceptions.swift
+  - Sources/CheICalMCP/EventKit/EventKitManager.swift
   - Sources/CheICalMCP/EventKit/FirstRemainingOccurrence.swift
+  - Sources/CheICalMCP/EventKit/SeriesExceptions.swift
   - Sources/CheICalMCP/EventBatchDeletionSource.swift
   - Sources/CheICalMCP/Server.swift
   - mcpb/manifest.json
@@ -363,10 +358,10 @@ code:
   - Tests/CheICalMCPTests/WholeSeriesUndoChainOnMainTests.swift
   - Tests/CheICalMCPTests/FloatingSeriesUndoMatrixTests.swift
   - Tests/CheICalMCPTests/FloatingSeriesExceptionsUndoTests.swift
-  - Tests/CheICalMCPTests/OccurrenceSlotRefusalAgainstMainTests.swift
   - Tests/CheICalMCPTests/SeriesDeleteForecastTests.swift
+  - Tests/CheICalMCPTests/SeriesDeleteForecastWiringTests.swift
   - Tests/CheICalMCPTests/ManifestParityTests.swift
-  - Tests/CheICalMCPTests/SlotReadingsDocsTests.swift
+  - Tests/CheICalMCPTests/UndoForecastDocsTests.swift
   - README.md
   - README_zh-TW.md
   - CHANGELOG.md
