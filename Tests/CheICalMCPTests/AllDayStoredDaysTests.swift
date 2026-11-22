@@ -52,6 +52,17 @@ final class AllDayStoredDaysTests: XCTestCase {
         XCTAssertEqual(read.end, next.addingTimeInterval(-1))
     }
 
+    /// The issue's Google shape over two days (derived: both ends an hour early, as in its one-day row):
+    /// 47 hours elapsed still count two days.
+    func testTheIssuesGoogleShapeOverTwoDaysReadsAsTwoDays() throws {
+        let (zone, start, next) = try gapDay()
+        let calendar = Calendar.gregorian(in: zone)
+        let dayAfterNext = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: next))
+        let read = stored(start.addingTimeInterval(-3600), dayAfterNext.addingTimeInterval(-3601), zone)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, dayAfterNext.addingTimeInterval(-1))
+    }
+
     /// The measured range from the day before over the 23-hour day (`create_event` 03-11 to 03-13):
     /// EventKit returned it whole, and it stays as it is.
     func testARangeThatStartsTheDayBeforeIsUnchanged() throws {
@@ -113,6 +124,15 @@ final class AllDayStoredDaysTests: XCTestCase {
         let read = stored(morning, morning.addingTimeInterval(12 * 3600), zone)
         XCTAssertEqual(read.start, morning)
         XCTAssertEqual(read.end, morning.addingTimeInterval(12 * 3600))
+    }
+
+    /// A pair with no length (start = end at a day start) is returned as it is, not turned into a
+    /// pair that ends before it starts.
+    func testAPairWithNoLengthIsReturnedAsItIs() throws {
+        let (zone, start, _) = try gapDay()
+        let read = stored(start, start, zone)
+        XCTAssertEqual(read.start, start)
+        XCTAssertEqual(read.end, start)
     }
 
     // spec-example: all-day-skipped-midnight / moving that event by its start keeps one day

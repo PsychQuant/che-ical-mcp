@@ -76,6 +76,16 @@ final class SkippedMidnightDateTests: XCTestCase {
         }
     }
 
+    /// A day the zone skips whole (Pacific/Apia went from 2011-12-29 to 2011-12-31) has no first
+    /// instant: it stays refused rather than naming the next day.
+    func testADayTheZoneSkipsWholeIsRefused() throws {
+        let apia = try XCTUnwrap(TimeZone(identifier: "Pacific/Apia"))
+        try XCTSkipIf(FlexibleDate.formatter("yyyy-MM-dd", zone: apia).date(from: "2011-12-30") != nil,
+                      "this host's zone data keeps 2011-12-30 in Pacific/Apia")
+        XCTAssertThrowsError(try FlexibleDate.parse("2011-12-30", defaultTimezone: apia, iso: iso))
+        XCTAssertNoThrow(try FlexibleDate.parse("2011-12-31", defaultTimezone: apia, iso: iso))
+    }
+
     /// A form the date-only formatter refuses for its shape is refused the same way on that day.
     func testAMalformedValueIsStillRefused() throws {
         for (zone, day, _) in try zonesWithASkippedMidnight() {
