@@ -255,11 +255,15 @@ code:
 
 The identifier of an occurrence edited on its own carries its original time after `/RID=`. Measured on iCloud (#539), when the occurrence was edited while its timed series had no time zone that time is wall-clock time written as UTC; otherwise it is an instant, and one series can hold both. Every undo SHALL read that time as `main` before #539 reads it (as an instant; an all-day one as its local day): the undo of a whole-series delete, with its capture, restore, consistency check, placement of one-off events, removal of surplus slots and counts, and the check of #321 whether a restored series holds the slot of a deleted occurrence, in the undo of one occurrence's delete and of a split move's source. PR #558 read the time both ways in rounds 0 to 4, in the whole-series undo and then in the check of #321, and each verify round found a shape in which that did worse than `main`. On a host not at offset 0, the record of an occurrence edited while its series had no time zone is then usually no slot of the recreated series, and the undo applies none of the series' exceptions and says the recorded exceptions did not match; in some shapes the record is a slot and is applied, and in some the calendar after the undo has two events at one start. These are `main`'s results; #539 stays open for them.
 
-Before a whole-series delete removes anything, the server SHALL read the recorded edited occurrences and check each record's slot, read as the undo reads it, against the slots the series' rule gives, expanded from the series' first slot to the end of the last recorded window, and count those that are no slot. When the count is above 0 and the delete is recorded as a whole-series delete, the delete's answer SHALL carry an `undo_note` saying that the undo's check is expected to apply none of the exceptions recorded with the series, with the count; in a real `delete_events_batch` call the note is in its `rules_alone_on_undo` list. The note SHALL NOT say more than that check establishes: the series is expected to be recreated from its rule, with no edited occurrence written back and no slot removed. The note is a forecast of `main`'s check: the restore decides on the recreated series. A dry run with span `all` SHALL leave out of the record and of the first slot's listing the occurrences that the call's earlier rows delete, by their own event identifiers, before the record reduces an occurrence to its slot, as the real call's series row no longer lists them. The server SHALL NOT write the note when the series was reached through a stand-in or its first occurrence is not a plain occurrence at its own start (for example edited or deleted on its own, or when it cannot be shown), when the series has more than one rule or a rule the expander does not follow, when the rule gives more slots from the first slot to the end of that window than the expander takes, when an occurrence not edited on its own that the delete recorded is no slot of the expander, or when the call's undo would be refused as a whole (a row of a `delete_events_batch` call recorded as deleting an occurrence and the following ones). The delete SHALL NOT be refused for it.
+A whole-series delete SHALL use its own recorded capture for the forecast without additional store reads. When it records a whole-series delete, it SHALL report an `undo_note` with the count of captured edits absent from the predicted restore listings, provided the forecast can model those listings and the count is positive. A real `delete_events_batch` SHALL give it in `rules_alone_on_undo` and omit all forecast rows if the batch includes a recorded delete of an occurrence and the following ones that makes the batch undo refuse. The undo itself SHALL check its actual recreated series before attempting any exception writes.
+
+The forecast SHALL model the listing of each recorded window from a proven stored first slot with one simple daily or weekly rule and an unchanged recurrence time zone at undo. It SHALL compare the in-window anchor and kept slots before counting absent edit slots. It SHALL abstain if the record or listing cannot be modelled. Reasons include a stand-in or unproven first slot, failed capture or no detached record, multiple or unfollowed rules, more than 20,000 expanded slots, a time-zone offset change or ambiguous window boundary, and a kept slot that the model lacks. A delete without the note can still come back from its rules alone.
+
+With span `all`, a batch dry run SHALL use the existing requested-ID state to answer each ordinary preview row and separate series identities to decide whether to forecast. It SHALL skip the forecast after a successful earlier row of the same series or when an earlier successful detached row's series cannot be identified. It SHALL do at most 16 additional captures. A dry run with span `future` gives no forecast.
 
 #### Scenario: A floating edit comes back as on main
 
-- **WHEN** a weekly timed series has no time zone, a later occurrence is retitled and another later occurrence is moved while both original slots are within the recorded window, then the whole-series delete is undone
+- **WHEN** a weekly timed series has no time zone, a later occurrence is retitled and another later occurrence is moved and both edits are captured using the slots as recorded, then the whole-series delete is undone
 - **THEN** the undo leaves the calendar and answer `main`'s run of the same sequence leaves: if the instant reading leaves either record off the recreated rule, the series comes back from its rules and the undo text says the recorded exceptions did not match; when both records match generated slots and the capture passes the consistency check, both edits come back as one-off events
 
 ##### Example: a floating edit comes back as on main
@@ -315,59 +319,43 @@ Before a whole-series delete removes anything, the server SHALL read the recorde
 
 #### Scenario: The delete forecasts a restore from the rules alone
 
-- **WHEN** a whole series is deleted while its record holds an edit whose slot, read as an instant, is off the rule expanded from its first slot
-- **THEN** the series is deleted and the answer's `undo_note` says the undo's check is expected to apply none of the recorded exceptions, with the count; in a `delete_events_batch` call the series' row is listed in `rules_alone_on_undo`, and a dry run with span `all` carries the note in the series' row (by date range, in the row of every listed occurrence of that series) before anything is deleted
+- **WHEN** the delete records a whole series and its captured edit has a slot absent from the eligible model of the restore listings, with in-window anchor and kept slots accounted for
+- **THEN** the answer forecasts that undo applies none of the recorded exceptions, with the count, and a real batch lists the series row in `rules_alone_on_undo` unless a recorded structural refusal suppresses the batch's forecast
+- **AND** an eligible span `all` preview shows the note in the series row and in returned date-range rows that inherit its answer
 
 ##### Example: the delete forecasts a floating edit
 
-- **GIVEN** the six weekly occurrences of the example above, the third retitled and the fourth moved while the series had no time zone
+- **GIVEN** six weekly occurrences at 10:00 before any offset change, its first slot proven, the third retitled and the fourth moved while the series had no time zone, both edits captured inside the modelled window
 - **WHEN** the whole series is deleted
-- **THEN** at `Asia/Taipei` and `America/Los_Angeles` both edits are counted; at `UTC` none is counted and the answer has no `undo_note`
+- **THEN** the forecast counts both edits at `Asia/Taipei` and `America/Los_Angeles`, and gives no note at UTC
 
-##### Example: the dry run leaves out what an earlier row deletes
+##### Example: the dry run skips a series after deleting its edited first occurrence
 
-- **GIVEN** a series with one occurrence edited off the rule and one on its slot, and a dry run of `delete_events_batch` with span `all` naming the first one's own identifier and the series
-- **WHEN** the series' row is forecast
-- **THEN** the record leaves that occurrence out, as the real call's does, and the row has no note
+- **GIVEN** a batch preview names the first edited occurrence and its series, and the requested ID for the occurrence resolves to a different ID
+- **WHEN** the first row previews a deletion and the ordinary series preview picks a stand-in as on main
+- **THEN** the series row keeps the ordinary preview answer and the forecast reads no capture for it
 
-##### Example: the dry run leaves out an opaque occurrence
+##### Example: the dry run identifies an opaque occurrence by its external identifier
 
-- **GIVEN** the same series, the occurrence edited off the rule having an opaque identifier and its `/RID=` only in its external identifier, and the dry run naming that identifier and the series
-- **WHEN** the series' row is forecast
-- **THEN** the record leaves that occurrence out, as the real call's does, and the row has no note
-
-##### Example: the dry run keeps another occurrence at the same slot
-
-- **GIVEN** two occurrences of the series recorded at one slot off the rule, one with the series' identifier and `/RID=`, the other opaque with the same `/RID=` in its external identifier, and the dry run naming the first and the series
-- **WHEN** the series' row is forecast
-- **THEN** the record keeps the second, as the real call's does, and the row's note counts one
+- **GIVEN** a preview's earlier deleting row has an opaque occurrence ID and an external identifier shared with the series through its RID suffix
+- **WHEN** the preview reaches the series and an unrelated series
+- **THEN** it skips the earlier row's series and can forecast the unrelated one
 
 
 <!-- @trace
-source: idd-539-fix5
+source: idd-539-fix6
 updated: 2026-11-22
 code:
-  - Sources/CheICalMCP/EventKit/DryRunCaptureStore.swift
+  - Sources/CheICalMCP/EventBatchDeletionSource.swift
   - Sources/CheICalMCP/EventKit/DeleteUndo.swift
   - Sources/CheICalMCP/EventKit/EventKitManager+SeriesExceptions.swift
   - Sources/CheICalMCP/EventKit/EventKitManager.swift
-  - Sources/CheICalMCP/EventKit/FirstRemainingOccurrence.swift
   - Sources/CheICalMCP/EventKit/SeriesExceptions.swift
-  - Sources/CheICalMCP/EventBatchDeletionSource.swift
+  - Sources/CheICalMCP/EventKit/SeriesExceptionsStoreSource.swift
   - Sources/CheICalMCP/Server.swift
-  - mcpb/manifest.json
-  - Tests/CheICalMCPTests/Helpers/SeriesUndoOnMain.swift
-  - Tests/CheICalMCPTests/WholeSeriesUndoChainOnMainTests.swift
-  - Tests/CheICalMCPTests/FloatingSeriesUndoMatrixTests.swift
-  - Tests/CheICalMCPTests/FloatingSeriesExceptionsUndoTests.swift
+  - Tests/CheICalMCPTests/SeriesDeleteForecastHandlerTests.swift
   - Tests/CheICalMCPTests/SeriesDeleteForecastTests.swift
   - Tests/CheICalMCPTests/SeriesDeleteForecastWiringTests.swift
-  - Tests/CheICalMCPTests/ManifestParityTests.swift
-  - Tests/CheICalMCPTests/UndoForecastDocsTests.swift
-  - README.md
-  - README_zh-TW.md
-  - CHANGELOG.md
-  - .claude/rules/mcp-binary-version-testing.md
 -->
 
 ---

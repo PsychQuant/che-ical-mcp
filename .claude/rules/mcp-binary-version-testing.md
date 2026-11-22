@@ -1317,12 +1317,8 @@ process，不進 session 的 undo stack）；session 上只做 `update_event`、
 
 ## Release gate：整個系列刪除的預告（#539）
 
-**#539 維持開啟。** PR #558 第五輪修正後，整個系列刪除的擷取與 undo，以及單一場次刪除和 split move 來源的 #321 時段檢查，
-都沿用 `main`（`92d9b796`）。非全天場次的 `/RID=` 讀成時刻，全天場次則依本地日期讀取。系列沒有時區時做的修改，
-如果記錄下來的時段和重建後的規則時段不符，整個系列的 undo 就不套用任何記錄的例外。PR #558 只加上兩件事：
-- 刪除時的預告（`undo_note`、`rules_alone_on_undo`）：記錄的時段有不是規則時段的，`main` 的一致性檢查就不套用任何例外，回應預告這件事；
-  `delete_events_batch` 的 dry run 以識別碼排除同一次呼叫裡較早的列刪掉的場次（C3、Q2）。
-- #541 的 `clear_timezone` 描述。
+**#539 維持開啟。** 整個系列刪除的擷取與 undo，以及單一場次刪除和 split move 來源的 #321 時段檢查沿用 `main`。非全天場次的 `/RID=` 讀成時刻，全天場次則依本地日期讀取。系列沒有時區時做的修改，
+如果記錄下來的時段和重建後的規則時段不符，整個系列的 undo 就不套用任何記錄的例外。PR #558 加入刪除時的預告（`undo_note`、`rules_alone_on_undo`）並更新 #541 的 `clear_timezone` 說明。預告以可確認的第一場和逐一推算的紀錄視窗為準，僅涵蓋可判定的簡單每日及每週規則。沒有預告時，undo 仍可能只依規則重建系列。Dry run 遇到同系列有成功前列時略過預告，每次呼叫最多增加 16 次擷取。
 
 預告是 stateless 的，`--cli` 走得到。**出 #539 的那個版本打 tag 之前**，用剛 build 的 binary 的 `--cli`（見上表），只用名稱含 `#539` 的拋棄式 iCloud 日曆，
 系列都是每週、第一場 2027-01-04 10:00、帶 `timezone: Asia/Taipei` 與 `end_date` 2027-02-15 23:00 建立；「說明」指回應的 `undo_note` 以
@@ -1331,22 +1327,16 @@ from its rules alone: `）：
 
 1. **E1**：第 3 場改標題 → 用系列 id、span `all` 把整個系列往後移一小時（第 3 場的 `/RID=` 留在舊時段，cell N1）→ `delete_event` span `all`：說明，`1 recorded occurrence(s)`。
 2. **E2**：同 E1 的系列 → `delete_event` span `future`、`occurrence_date` 為第一場（11:00）：說明，`1 recorded occurrence(s)`。
-3. **E3**：`clear_timezone`（span `all`）→ 第 3 場改標題 → `delete_event` span `all`：這台 Mac 在 `+08:00` 時有說明；在 UTC 的 Mac 上沒有。
+3. **E3**：`clear_timezone`（span `all`）→ 第 3 場改標題 → `delete_event` span `all`：這台 Mac 在 `+08:00` 時有說明。
 4. **E4**（對照）：第 3 場改標題、不移動 → `delete_event` span `all`：沒有說明。
-5. **B1**：同 E1 的系列 → `delete_events_batch` dry run `[系列 id]`：那一列有說明 → dry run `[第 3 場自己的 id, 系列 id]`：沒有說明 → 實際呼叫同樣兩列：
+5. **B1**：同 E1 的系列 → `delete_events_batch` dry run `[系列 id]`：那一列有說明 → 確認第 3 場自己的 id 與篩選列出的 id 相同 → dry run `[第 3 場自己的 id, 系列 id]`：沒有說明 → 實際呼叫同樣兩列：
    沒有 `rules_alone_on_undo`，兩列都刪除。
 6. **B2**：同 E1 的系列 → `delete_events_batch` 實際呼叫 `[系列 id]`：`rules_alone_on_undo` 列出那一列與說明。
 
-不透明 id（`/RID=` 只在 external identifier 裡）的 dry run 形狀有記憶體內 store 的測試，這次 iCloud 裝置格只用到含 `/RID=` 的場次 id。undo 是 `main` 的，
-答案以測試對 `main` 的副本（`SeriesUndoOnMain`）斷言（`FloatingSeriesExceptionsUndoTests`、`WholeSeriesUndoChainOnMainTests`、`ZonedSeriesUndoOnMainTests`、矩陣），
-不在這個 gate 裡。
+**本輪裝置紀錄**放在 [PR #558](https://github.com/PsychQuant/che-ical-mcp/pull/558) 的 **Verify-fix (round 6)**。以推送的 head 建置並用 Developer ID 簽章，透過 `--cli` 量 E1 至 E4、B1、B2，B1 另核對請求 ID 等於本次列出的場次 ID。該則留言列出建置 SHA、開始及結束時間、各格結果，以及依 ID 刪除後相隔一分鐘的兩次複查。複查只查詢本次建立的六個拋棄式行事曆名稱。
 
-PR #558 fix round 5（2026-11-22）用 `19ab96dd` 的 Developer ID 簽章 release build（有時間戳記）以 `--cli` 做第 1 到 6 步，結果都如上（E3 在這台 `+08:00` 的 Mac 上）。6 個拋棄式行事曆依 id 刪除，11:02:47 與 11:03:52（+08:00）兩次計數，名稱含 `#539` 的都是 0。發布的 binary 還沒有做。
+**預期對照及量測範圍**：E3 的 UTC 結果由固定時差的單元測試檢查。Opaque ID、其他提供者與實際 undo 不在這六格的裝置量測中。測試副本取自 `92d9b796`，對照的函式本體與 `7f75f97d` 相同。矩陣在共用解析結果及重建場次下比對擷取和 undo，15,696 格中有 2,324 格兩邊都未執行 undo。鏈式測試另共用 occurrence origin 的讀法。
 
-**沒做、記成未量**：iCloud 以外的來源；session MCP（預告不需要它）；`main` 的 undo 在這種系列上的結果記在 #539，不是這個 PR 的。較早幾輪的裝置紀錄（round 0 到 4，
-2026-11-16 到 22）記在 #539 的 Implementation Complete 與 Verify-fix 留言；那些 build 的 undo 與現在不同，結果不適用於這個 head。
-
-結果記在 #539。結束後依 id 刪除這次建立的拋棄式行事曆，相隔至少一分鐘複查兩次，記錄還能查到的測試 id 數。
 
 ## Release gate：delete 的 undo 之後較舊的紀錄（#538）
 

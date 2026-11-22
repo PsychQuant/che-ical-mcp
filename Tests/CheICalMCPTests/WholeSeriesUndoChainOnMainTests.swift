@@ -2,14 +2,9 @@ import EventKit
 import XCTest
 @testable import CheICalMCP
 
-/// PR #558 fix round 4 (verify finding C1, Codex): the chained undo of a series whose occurrence was
-/// deleted on its own before the whole series was. Each sequence runs twice on the same in-memory store
-/// setup, once through this server's production path (`SeriesExceptionsUndo.capture`, `undoDeleteEvent`,
-/// `undoDeleteOccurrence`, the origin as a delete through the occurrence's own identifier records it) and
-/// once through `main`'s (`SeriesUndoOnMain`), and the two must leave the same calendar with the same
-/// answers, outcomes and texts (fix round 5, verify finding P4). Each test names its host zone; none reads the
-/// process's. Fix round 5 removed ruling F and J, so both paths record A's origin the same way (an instant
-/// reading); the chains show that the production capture, restore and slot check give `main`'s results.
+/// Store-level comparison of two linked undos, using one store setup for each arm. Both arms
+/// share the occurrence-origin reader and the fixture's generated slots. Each runs its own
+/// capture, whole-series restore and single-occurrence undo from those inputs.
 ///
 /// The sequences: two occurrences, A and B, are retitled while the series has a time zone, so their
 /// `/RID=` digits are instants (#311); the series is then given no time zone (`clear_timezone`) without
@@ -56,21 +51,19 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
         occurrence.title = title
     }
 
-    private func key(_ event: FakeSeriesExceptionsStore.Event) -> String { "\(Int(event.start.timeIntervalSinceReferenceDate)) \(event.title)" }
-
     /// What one path left: the answers of the two undos and the calendar after them.
     struct Chain: Equatable {
         var series: String
         var seriesText: String
         var occurrence: String
         var occurrenceText: String
-        var calendar: [String]
+        var calendar: [FakeSeriesExceptionsStore.CalendarRow]
     }
 
     /// One path of the sequence. `store` holds the series as it was just before A's delete; `a` is A.
     private func run(onMain: Bool, store: FakeSeriesExceptionsStore, a: FakeSeriesExceptionsStore.Event,
                      first: FakeSeriesExceptionsStore.Event, slots: [Date], host: TimeZone) throws -> Chain {
-        // A's delete through its own identifier: its origin, as on `main` (fix round 5 removed ruling J).
+        // Both paths record A's origin from the same inputs in the host zone.
         let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: a.id, externalIdentifier: a.external,
                                                        occurrenceDate: a.occurrenceDate, isAllDay: false, isDetached: true, zone: host))
         let record = UndoSnapshotFixtures.event(title: a.title, startDate: a.start).withOccurrenceOrigin(origin)
@@ -99,7 +92,7 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
             occurrenceText = error.localizedDescription
         }
         return Chain(series: "\(String(describing: seriesUndone.outcome))", seriesText: seriesUndone.text, occurrence: occurrenceAnswer,
-                     occurrenceText: occurrenceText, calendar: after.events.map(key).sorted())
+                     occurrenceText: occurrenceText, calendar: after.calendarProjection)
     }
 
     /// Builds the store of a sequence and runs both paths on a copy each.
@@ -121,9 +114,7 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
             }
             // B, the fourth, retitled while the series had its zone (MA: had none), at its time now.
             edit(occurrences[3], rid: rid(moved[3]), title: "B edited")
-            // `clear_timezone` at the same wall-clock time: the instants stay. The capture does not read the
-            // series' zone (PR #558 fix round 4; at `eb568983` the fake's series was marked floating here, so
-            // its capture took a second reading); A's origin takes it from the series (`run`).
+            // Clearing the series' zone at the same wall-clock time leaves these instants unchanged.
             return (store, occurrences[1], occurrences[0], moved)
         }
         let production = build()
@@ -138,7 +129,7 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
         for host in hosts {
             let (production, main) = try compare(host, moveBeforeB: 0)
             XCTAssertEqual(production, main, "host \(host.secondsFromGMT() / 60) min")
-            XCTAssertEqual(main.calendar.filter { $0.hasSuffix(" A edited") }.count, 1, "main writes A once")
+            XCTAssertEqual(main.calendar.filter { $0.title == "A edited" }.count, 1, "main writes A once")
         }
     }
 
@@ -149,13 +140,12 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
         for host in hosts {
             let (production, main) = try compare(host, moveBeforeB: 3 * hour)
             XCTAssertEqual(production, main, "host \(host.secondsFromGMT() / 60) min")
-            let starts = production.calendar.map { $0.split(separator: " ")[0] }
+            let starts = production.calendar.map(\.start)
             XCTAssertEqual(Set(starts).count, starts.count, "two events at one start: \(production.calendar)")
         }
     }
 
-    /// MA (fix round 5; before, ruling F refused A's undo away from offset 0, where `main` writes A beside the
-    /// plain occurrence): both edits made while the series had no time zone. The chain is `main`'s, its texts
+    /// MA: both edits were made while the series had no time zone. The chain is `main`'s, its texts
     /// included; away from offset 0 that is two events at A's start, `main`'s own (#539 stays open for it), and
     /// at UTC A is written once.
     // spec-example: undo-history-discard / MA is as on main
@@ -163,7 +153,8 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
         for host in hosts {
             let (production, main) = try compare(host, moveBeforeB: 0, floating: true)
             XCTAssertEqual(production, main, "host \(host.secondsFromGMT() / 60) min")
-            let atA = main.calendar.filter { $0.hasPrefix(main.calendar.first { $0.hasSuffix(" A edited") }!.split(separator: " ")[0] + " ") }
+            let startA = try XCTUnwrap(main.calendar.first { $0.title == "A edited" }).start
+            let atA = main.calendar.filter { $0.start == startA }
             XCTAssertEqual(atA.count, host.secondsFromGMT() == 0 ? 1 : 2, "events at A's start on main, host \(host.secondsFromGMT() / 60) min")
         }
     }

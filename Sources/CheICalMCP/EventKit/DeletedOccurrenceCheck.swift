@@ -28,6 +28,17 @@ enum DeletedOccurrenceCheck {
         let hasOtherParts: Bool
     }
 
+    // Use the saved rule fields, which are also the inputs to rebuilding it on undo.
+    static func forecastRule(from snapshot: RecurrenceRuleSnapshot) -> Rule {
+        Rule(frequency: snapshot.frequency, interval: snapshot.interval,
+             daysOfWeek: (snapshot.daysOfTheWeek ?? []).map(\.day),
+             daysOfMonth: snapshot.daysOfTheMonth ?? [], endDate: snapshot.endDate,
+             occurrenceCount: snapshot.endDate == nil ? (snapshot.occurrenceCount ?? 0) : 0,
+             hasOtherParts: (snapshot.daysOfTheWeek ?? []).contains { $0.weekNumber != 0 }
+                 || !(snapshot.monthsOfTheYear ?? []).isEmpty || !(snapshot.weeksOfTheYear ?? []).isEmpty
+                 || !(snapshot.daysOfTheYear ?? []).isEmpty || !(snapshot.setPositions ?? []).isEmpty)
+    }
+
     /// PR #505 round 3: why the span-future route is not offered, one text each (`deletedReason`).
     enum RouteBlock: Equatable {
         /// The listing does not cover the series and no horizon was evaluated (a new rule pattern, an

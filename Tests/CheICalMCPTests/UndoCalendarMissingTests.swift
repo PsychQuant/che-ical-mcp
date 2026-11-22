@@ -381,10 +381,7 @@ final class UndoCalendarMissingTests: XCTestCase {
                 uses.append(file.lastPathComponent + (code[..<use.lowerBound].hasSuffix("func ") ? " declares" : " calls"))
             }
         }
-        // PR #558 fix round 5 (#539, Q2): `DryRunCaptureStore` declares it and forwards it to the store it wraps;
-        // the dry run's forecast only captures through it, so nothing calls it there.
-        XCTAssertEqual(uses.sorted(), ["DryRunCaptureStore.swift calls", "DryRunCaptureStore.swift declares",
-                                       "SeriesExceptionsStoreSource.swift declares", "SeriesExceptionsStoreSource.swift declares",
+        XCTAssertEqual(uses.sorted(), ["SeriesExceptionsStoreSource.swift declares", "SeriesExceptionsStoreSource.swift declares",
                                        "SeriesExceptionsUndo.swift calls"])
         // PR #389 round 2 (LOW): the update and move arms read the calendar before the #236
         // post-state check, so no suspension point sits between that check and the write.

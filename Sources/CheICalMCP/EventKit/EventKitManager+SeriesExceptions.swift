@@ -26,33 +26,13 @@ extension EventKitManager {
         SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore)
     }
 
-    /// PR #558 fix round 5 (verify finding Q2): the capture a `delete_events_batch` dry run forecasts from, as
-    /// the real call's series row would capture `series` after the call's earlier rows deleted the occurrences
-    /// `gone` names: the same capture, through `DryRunCaptureStore`, which leaves those occurrences out of the
-    /// listing by identity. Read-only, and never a delete's record.
-    func captureSeriesExceptionsForDryRun(of series: EKEvent, goneInTheCall gone: Set<String>) -> SeriesExceptions? {
-        SeriesExceptionsUndo.capture(of: series, in: DryRunCaptureStore(base: seriesExceptionsStore, gone: gone))
-    }
-
-    /// #539 step 6: the forecast of a whole-series delete, read before the removal: how many of the
-    /// occurrences edited on their own that `exceptions` (this delete's capture) recorded have a slot that is
-    /// no slot of the rule (`SeriesExceptionsPlanner.unplacedEdits`), so the restore, `main`'s, applies none
-    /// of the exceptions; nil for none. The rule is expanded from the first slot #503's check proves
-    /// (`wholeSeriesBaseline`), in the zone its verdict expands in, and only when that slot is a plain first
-    /// occurrence at its own start (`.stored`): through a stand-in, or with a first occurrence edited on its
-    /// own, nil, as when the expander cannot tell. The series is listed for it only when the capture recorded
-    /// an edited occurrence. `goneInTheCall` (PR #558 fix round 4, verify finding C3): a dry run's
-    /// occurrences that earlier rows of the call delete, left out of the first slot's listing as the real
-    /// call no longer lists them (the dry run's capture leaves them out too, `captureSeriesExceptionsForDryRun`).
-    func unplacedEditsAtDelete(_ exceptions: SeriesExceptions?, of series: EKEvent, id: String, viaStandIn: Bool,
-                               goneInTheCall: Set<String> = []) -> RulesAloneOnUndo? {
-        guard let exceptions, !exceptions.detached.isEmpty else { return nil }
-        let first = wholeSeriesBaseline(of: series, id: id, viaStandIn: viaStandIn, excluding: goneInTheCall)
-        guard first.baseline == .stored else { return nil }
-        let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
-        let edits = SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: (series.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
-                                                          firstSlot: first.slot, calendar: .gregorian(in: zone)) ?? 0
-        return edits > 0 ? RulesAloneOnUndo(edits: edits) : nil
+    /// Sample the anchor from the rows this capture already reads. Passing nil uses the normal
+    /// capture path, including when the series is known to have resolved through a stand-in.
+    func captureSeriesExceptionsForDelete(of series: EKEvent, anchor: SeriesDeleteAnchor?) -> SeriesExceptions? {
+        guard let anchor else { return captureSeriesExceptions(of: series) }
+        let store = seriesExceptionsStore
+        store.observeForForecast = anchor.observe
+        return SeriesExceptionsUndo.capture(of: series, in: store)
     }
 
     /// The `.deleteEvent` undo arm (`SeriesExceptionsUndo.recreateDeletedEvent`).

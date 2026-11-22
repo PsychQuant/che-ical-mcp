@@ -46,14 +46,11 @@ import XCTest
 ///   the planner's forecast (`SeriesExceptionsPlanner.unplacedEdits`, from the test's first slot in the
 ///   host's zone) says the rules alone exactly when the undo applies nothing.
 ///
-/// What this shows, and no more (fix round 5, verify findings Q5, P14, P20): both arms run on one resolution
-/// result and on the recreated slots the test hands the fake store (for a daily cell too, whose recorded
-/// snapshot is weekly), so a cell shows that the store-level capture and undo routines give `main`'s calendar,
-/// answer and text given the same resolution and generated slots. A cell whose resolution fails is counted as
-/// the #428 route and runs neither undo, and a cell where neither arm captures runs none. The delete's own
-/// forecast wiring (`EventKitManager.unplacedEditsAtDelete`, `wholeSeriesBaseline`, `previewUndoForecast`) is
-/// not run here: `SeriesDeleteForecastWiringTests` pins it and `SeriesDeleteForecastHandlerTests` drives the
-/// handlers with doubles. The `main` arm's restore is 92d9b796's (`SeriesExceptionsUndo.restoreAtBase`).
+/// The two store-level paths share one resolution result and the recreated slots supplied by
+/// the fixture, over six fixed offsets. Of the 15,696 cells, 2,324 fail resolution and run neither
+/// undo. For the rest, each path captures, restores and produces its own answer. The copy is
+/// from 92d9b796, whose corresponding bodies match origin/main at 7f75f97d.
+/// Handler and wiring tests cover the separate preview and delete paths.
 final class FloatingSeriesUndoMatrixTests: XCTestCase {
     private let hour: TimeInterval = 3_600
     private let day: TimeInterval = 86_400
@@ -141,9 +138,12 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
 
     /// The undo of the recorded series on a fresh store whose recreated series generates `slots`, through
     /// the production arm or `main`'s: its outcome, text and the calendar it left (with `left`).
-    private func undo(_ exceptions: SeriesExceptions, slots: [Date], host: TimeZone, left: [String], onMain: Bool) throws
-        -> (outcome: UndoEventOutcome?, text: String, calendar: [String]) {
-        let recorded = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: slots.count, startDate: slots[0])
+    private func undo(_ exceptions: SeriesExceptions, slots: [Date], host: TimeZone, left: [String],
+                      frequency: EKRecurrenceFrequency, seriesZone: TimeZone?, onMain: Bool) throws
+        -> (outcome: UndoEventOutcome?, text: String, calendar: [String], projection: [FakeSeriesExceptionsStore.CalendarRow]) {
+        let recurrence = EKRecurrenceRule(recurrenceWith: frequency, interval: 1, end: EKRecurrenceEnd(occurrenceCount: slots.count))
+        let recorded = UndoSnapshotFixtures.event(title: "Standup", startDate: slots[0],
+                                                  recurrence: recurrence, timeZone: seriesZone)
             .withExceptions(exceptions).withSeriesIdentity(.init(eventIdentifier: "S", externalIdentifier: "X-S"))
         let after = FakeSeriesExceptionsStore()
         after.zone = host
@@ -155,7 +155,8 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         } else {
             undone = try SeriesExceptionsUndo.undoDeleteEvent(recorded, calendar: recorded.calendarIdentifier, in: after)
         }
-        return (undone.outcome, undone.text, (after.events.map { key($0.start, $0.title) } + left).sorted())
+        return (undone.outcome, undone.text, (after.events.map { key($0.start, $0.title) } + left).sorted(),
+                after.calendarProjection)
     }
 
     /// Runs one cell.
@@ -212,11 +213,17 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         }
         let rulesAlone = (ruleSlots.map { key($0, "Standup") } + left).sorted()
 
-        let production = try undo(exceptions, slots: ruleSlots, host: host, left: left, onMain: false)
-        let main = try undo(mainExceptions, slots: ruleSlots, host: host, left: left, onMain: true)
+        let frequency: EKRecurrenceFrequency = cell.step == day ? .daily : .weekly
+        let seriesZone: TimeZone? = cell.rid == .zoned ? host : nil
+        let production = try undo(exceptions, slots: ruleSlots, host: host, left: left,
+                                  frequency: frequency, seriesZone: seriesZone, onMain: false)
+        let main = try undo(mainExceptions, slots: ruleSlots, host: host, left: left,
+                            frequency: frequency, seriesZone: seriesZone, onMain: true)
         if production.outcome != main.outcome { fail("answer \(String(describing: production.outcome)) where main \(String(describing: main.outcome))") }
         if production.text != main.text { fail("text \(production.text) where main \(main.text)") }
-        if production.calendar != main.calendar { fail("left \(production.calendar) where main left \(main.calendar)") }
+        if production.projection != main.projection {
+            fail("left \(production.projection) where main left \(main.projection)")
+        }
 
         // `main`'s calendar, sorted.
         guard case .seriesWithExceptions(let restore)? = main.outcome else {
@@ -255,7 +262,7 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         // Compare the planner against the restore using the fixture's first slot and rule. These
         // inputs model the case where the manager can establish a plain first occurrence.
         if firstIsPlain {
-            let rule = DeletedOccurrenceCheck.Rule(frequency: cell.step == day ? .daily : .weekly, interval: 1, daysOfWeek: [], daysOfMonth: [],
+            let rule = DeletedOccurrenceCheck.Rule(frequency: frequency, interval: 1, daysOfWeek: [], daysOfMonth: [],
                                                    endDate: nil, occurrenceCount: cell.count, hasOtherParts: false)
             if let edits = SeriesExceptionsPlanner.unplacedEdits(exceptions, rules: [rule], firstSlot: start, calendar: .gregorian(in: host)) {
                 run.forecast = edits > 0
@@ -380,7 +387,7 @@ final class FloatingSeriesUndoMatrixTests: XCTestCase {
         // Of `main`'s rejected calendars, those with two events at one start (L12: counted by a check, not stated).
         XCTAssertEqual(mainDuplicates, 326)
         // Where the forecast can be read it agreed with the undo in every cell (checked per cell above).
-        XCTAssertEqual(forecasts, ["none": 3264, "rulesAlone": 4848])
+        XCTAssertEqual(forecasts, ["none": 3264, "rulesAlone": 4752])
         XCTAssertEqual(rejectedBy, ["floating offsetN applied": 230, "floating offset0 applied": 382,
                                     "zoned offsetN applied": 1850, "zoned offset0 applied": 370])
         XCTAssertEqual(duplicateBy, ["floating offsetN applied": 6, "floating offset0 applied": 56,

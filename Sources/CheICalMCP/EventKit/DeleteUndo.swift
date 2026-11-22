@@ -121,11 +121,64 @@ struct DeletedEventSnapshots {
 }
 
 /// #539 step 6: what a whole-series delete forecasts for its undo, read before the removal
-/// (`EventKitManager.unplacedEditsAtDelete`): how many recorded occurrences edited on their own have a
+/// (`SeriesDeleteAnchor.forecast`): how many recorded occurrences edited on their own have a
 /// recorded slot that is no slot of the rule as read at the delete (`SeriesExceptionsPlanner.unplacedEdits`),
 /// which makes the restore apply none of the exceptions. Never made with 0 edits: no forecast is nil.
 struct RulesAloneOnUndo: Equatable, Sendable {
     let edits: Int
+}
+
+/// Evidence of a plain first slot, collected from the series' existing capture. The same
+/// first-slot check as a whole-series write is applied to the occurrences actually observed.
+final class SeriesDeleteAnchor {
+    private let start: Date
+    private let occurrenceDate: Date?
+    private let isAllDay: Bool
+    private let zone: TimeZone
+    private var startMatches = 0
+    private var firstIsEdited = true
+    private var startRIDSlot: Date?
+    private var earliestSlot: Date?
+
+    init(start: Date, occurrenceDate: Date?, isAllDay: Bool, zone: TimeZone) {
+        self.start = start
+        self.occurrenceDate = occurrenceDate
+        self.isAllDay = isAllDay
+        self.zone = zone
+    }
+
+    convenience init?(of series: EKEvent, viaStandIn: Bool) {
+        guard !viaStandIn, series.hasRecurrenceRules, !series.isDetached else { return nil }
+        let zone = series.isAllDay ? TimeZone.current : (series.timeZone ?? .current)
+        self.init(start: series.startDate, occurrenceDate: series.occurrenceDate, isAllDay: series.isAllDay, zone: zone)
+    }
+
+    func observe(_ occurrence: SeriesExceptionsPlanner.ObservedOccurrence) {
+        let rid = UndoPostState.ruleSlot(eventIdentifier: occurrence.ids.eventIdentifier,
+                                        externalIdentifier: occurrence.ids.externalIdentifier,
+                                        occurrenceDate: nil, isAllDay: isAllDay, zone: zone)
+        let slot = rid ?? occurrence.occurrenceDate ?? occurrence.startDate
+        earliestSlot = earliestSlot.map { min($0, slot) } ?? slot
+        if UndoPostState.sameInstant(occurrence.startDate, start) {
+            startMatches += 1
+            firstIsEdited = occurrence.isDetached
+            startRIDSlot = rid
+        }
+    }
+
+    func forecast(for snapshot: EventSnapshot) -> RulesAloneOnUndo? {
+        guard let exceptions = snapshot.exceptions, !exceptions.detached.isEmpty,
+              UndoPostState.sameInstant(start, snapshot.startDate) else { return nil }
+        let first = DeletedOccurrenceCheck.firstSlot(
+            occurrenceDate: occurrenceDate, startDate: start, startMatches: startMatches,
+            startRIDSlot: startRIDSlot, earliestListedSlot: earliestSlot, viaStandIn: false, isDetached: false)
+        guard DeletedOccurrenceCheck.baseline(firstSlot: first, firstIsEdited: firstIsEdited, startDate: start) == .stored else { return nil }
+        let edits = SeriesExceptionsPlanner.unplacedEdits(
+            exceptions, rules: (snapshot.recurrenceRules ?? []).map(DeletedOccurrenceCheck.forecastRule(from:)),
+            firstSlot: first, calendar: .gregorian(in: zone),
+            duration: snapshot.endDate.timeIntervalSince(snapshot.startDate)) ?? 0
+        return edits > 0 ? RulesAloneOnUndo(edits: edits) : nil
+    }
 }
 
 /// #539 step 6: which deletes of one call forecast that their undo brings a series back from its
@@ -152,10 +205,9 @@ struct RulesAloneForecast {
     var expected: [Row] { undoRefused ? [] : rows }
 
     /// `delete_event`: the forecast of the one record it made.
-    static func expected(of record: UndoOperation, unplacedEdits: RulesAloneOnUndo?) -> RulesAloneOnUndo? {
-        var forecast = RulesAloneForecast()
-        forecast.recorded(record, identifier: "", unplacedEdits: unplacedEdits)
-        return forecast.expected.first?.forecast
+    static func expected(of record: UndoOperation, unplacedEdits: () -> RulesAloneOnUndo?) -> RulesAloneOnUndo? {
+        guard case .deleteEvent = record else { return nil }
+        return unplacedEdits()
     }
 }
 

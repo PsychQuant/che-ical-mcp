@@ -51,59 +51,45 @@ final class UndoForecastDocsTests: XCTestCase {
     }
 
     func testTheReadmesSayWhatClearTimezoneLeaves() throws {
-        try assertOnce(["leaves a timed event floating, not in the system time zone (#541)",
-                        "On iCloud with this Mac at `+08:00`, a whole-series time zone write on a series with such an occurrence was refused by the #503 check (#553): the check reads that time as an instant too, so it sees the occurrence off its slot only on a Mac not at offset 0 at that time, and only within the dates it lists (#506)."], in: "README.md")
-        try assertOnce(["會讓計時事件變成浮動，不是改用系統時區（#541）",
-                        "在 iCloud 上、這台 Mac 在 `+08:00` 時，有這種場次的系列，整個系列的時區寫入被 #503 的檢查拒絕（#553）"], in: "README_zh-TW.md")
-        try assertOnce(["it reads that time as an instant, so it sees such an occurrence off its slot only on a Mac not at offset 0 at that time, and only within the dates it lists (#506). Text only."], in: "CHANGELOG.md")
+        try assertOnce(["clears the event's zone (#541)", "Floating calendar times express local wall-clock time",
+                        "A stale slot can also differ at UTC after a move."], in: "README.md")
+        try assertOnce(["會清除事件的時區（#541）", "浮動的日曆時間表示當地鐘面時間",
+                        "系列移動後留下的舊時段在 UTC 也可能對不上。"], in: "README_zh-TW.md")
+        try assertOnce(["The nonzero offset affects the wall-clock-as-instant reading",
+                        "A stale RID after a series move can be off-slot even at UTC."], in: "CHANGELOG.md")
     }
 
     func testTheReleaseGateListsTheCellsAndWhatWasNotMeasured() throws {
-        try assertOnce(["## Release gate：整個系列刪除的預告（#539）",
-                        "**#539 維持開啟。**",
-                        "非全天場次的 `/RID=` 讀成時刻，全天場次則依本地日期讀取。",
-                        "如果記錄下來的時段和重建後的規則時段不符，整個系列的 undo 就不套用任何記錄的例外。",
-                        "PR #558 只加上兩件事：",
+        try assertOnce(["## Release gate：整個系列刪除的預告（#539）", "**#539 維持開啟。**",
                         "1. **E1**：", "2. **E2**：", "3. **E3**：", "4. **E4**（對照）：", "5. **B1**：", "6. **B2**：",
-                        "不透明 id（`/RID=` 只在 external identifier 裡）的 dry run 形狀有記憶體內 store 的測試"], in: ".claude/rules/mcp-binary-version-testing.md")
-        try assertNone(["## Release gate：沒有時區的系列，修改過的場次在 undo 裡的讀法（#539）", "永遠不比 `main` 差",
-                        "裁定 F 在另一個主機時區", "沒有時區的系列的修改不由 undo 還原"],
-                       in: ".claude/rules/mcp-binary-version-testing.md")
+                        "確認第 3 場自己的 id 與篩選列出的 id 相同", "**Verify-fix (round 6)**",
+                        "複查只查詢本次建立的六個拋棄式行事曆名稱",
+                        "E3 的 UTC 結果由固定時差的單元測試檢查",
+                        "15,696 格中有 2,324 格兩邊都未執行 undo"], in: ".claude/rules/mcp-binary-version-testing.md")
+        try assertNone(["19ab96dd", "11:02:47 與 11:03:52"], in: ".claude/rules/mcp-binary-version-testing.md")
     }
 
-    /// #539 step 6: the documents say when a whole-series delete forecasts that its undo's check applies none
-    /// of the recorded exceptions, and no more than that check establishes (fix round 5, Q9, Q11).
     func testTheDocumentsSayWhenTheDeleteForecastsTheRulesAlone() throws {
-        try assertOnce(["**The forecast at the delete (#539):**",
-                        "against the slots the series' rule gives from its first slot to the end of the last window it records, as the #503 check expands it.",
-                        "the undo's check is expected to apply none of the recorded exceptions, and the answer carries `undo_note` with the number of such records: undo is expected to recreate the series from its rule, with no edited occurrence written back as a one-off event and no slot of it removed.",
-                        "`delete_events_batch` lists such rows under `rules_alone_on_undo`, each with its `event_id` and `undo_note`",
-                        "leaving out, by their identifiers, the occurrences that the call's earlier rows delete, as the real call does, and its dry run with span \"future\" does not.",
-                        "(by date range, in the row of every listed occurrence of that series)",
-                        "when that rule gives more than 20,000 slots from the first slot to the end of that window",
-                        "a delete through the first edited occurrence (#428) records nothing to restore and gives its own note."], in: "README.md")
-        try assertOnce(["**刪除時的預告（#539）：**",
-                        "`delete_events_batch` 把這種列放在 `rules_alone_on_undo`",
-                        "並且跟實際呼叫一樣，以識別碼排除同一次呼叫裡較早的列刪掉的場次；span \"future\" 的 dry run 不給。",
-                        "規則從第一個場次到那個視窗結尾給出超過 20,000 個場次"], in: "README_zh-TW.md")
-        try assertOnce(["**A whole-series delete says when its undo's check is expected to apply none of the recorded exceptions** (#539)",
-                        "leaving out the occurrences the call's earlier rows delete, by their identifiers, before its record reduces them to slots, as the real call's record no longer holds them (PR #558 verify rounds 4 and 5, C3 and Q2)",
-                        "a rule that gives more than 20,000 slots from the first slot to the end of that window,",
-                        "**The undo of a whole-series delete, and of an occurrence's delete after it, compared with `main`'s** (#539, PR #558)",
-                        "given the same resolution of the series and the same recreated slots",
-                        "**#539 is not fixed:**",
+        try assertOnce(["**The forecast at the delete (#539):**", "the same recurrence time zone at undo",
+                        "an offset change or ambiguous window boundary", "more than 20,000 expanded slots",
+                        "A delete without the note can still come back from its rules alone.",
+                        "returned date-range rows that inherit its answer", "after 16 additional captures",
+                        "**Verify-fix (round 6)**"], in: "README.md")
+        try assertOnce(["**刪除時的預告（#539）：**", "時差變動或視窗邊界無法判定",
+                        "即使沒有預告，undo 仍可能只依規則重建系列。",
+                        "同系列已有成功前列", "已額外擷取 16 次", "**Verify-fix (round 6)**"], in: "README_zh-TW.md")
+        try assertOnce(["timed RIDs as instants, all-day RIDs by local day",
+                        "A delete without the note can still come back from its rules alone.",
+                        "The 2,324 failed resolutions run neither undo.", "For the other 13,372 cells",
+                        "**Verify-fix (round 6)**", "**#539 is not fixed:**",
                         "(step 4, its mutant 10 and device cells MB and R1; proposed on #553)",
                         "(step 5, mutant 11; #557)"], in: "CHANGELOG.md")
-        try assertNone(retired + ["**The undo of one occurrence's delete is refused where a restored series with no time zone may already hold it**",
-                                  "more than one rule or more than 20,000 slots,"], in: "CHANGELOG.md")
+        try assertNone(retired, in: "CHANGELOG.md")
         try assertNone(retired, in: "README.md")
-        let spec = [
-            "An edited occurrence's recorded slot is read as an instant, and a whole-series delete forecasts its undo",
-            "as an instant; an all-day one as its local day",
-            "by their own event identifiers, before the record reduces an occurrence to its slot",
-            "if the instant reading leaves either record off the recreated rule"
-        ]
-        try assertOnce(spec, in: "openspec/specs/undo-history-discard/spec.md")
-        try assertOnce(Array(spec.dropFirst()), in: "openspec/changes/archive/2026-11-22-idd-539-fix5/specs/undo-history-discard/spec.md")
+        try assertOnce(["An edited occurrence's recorded slot is read as an instant, and a whole-series delete forecasts its undo",
+                        "as an instant; an all-day one as its local day", "A delete without the note can still come back from its rules alone.",
+                        "both edits are captured using the slots as recorded", "after a successful earlier row of the same series",
+                        "16 additional captures", "its captured edit has a slot absent from the eligible model"],
+                       in: "openspec/specs/undo-history-discard/spec.md")
     }
 }

@@ -78,11 +78,7 @@ final class DeletedOccurrenceWiringTests: XCTestCase {
     func testTheBaselineReadsTheFirstOccurrence() throws {
         let file = SourcePins.code(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift"))
         let body = try XCTUnwrap(SourcePins.body(of: "func wholeSeriesBaseline(", in: file))
-        // PR #558 fix round 4 (C3): the listing less the occurrences a dry run counts as gone (none outside a dry run).
-        XCTAssertTrue(body.contains("guard let (_, listed) = seriesOccurrences(of: series, id: id),"), body)
-        // `SourcePins.code` blanks string literals, so the empty-string fallback is not part of the pin.
-        XCTAssertTrue(body.contains("case let candidates = listed.filter({ !gone.contains($0.eventIdentifier ??"), body)
-        XCTAssertTrue(body.contains("}), !candidates.isEmpty else { return (.unproven, nil) }"), body)
+        XCTAssertTrue(body.contains("guard let (_, candidates) = seriesOccurrences(of: series, id: id), !candidates.isEmpty else { return (.unproven, nil) }"))
         XCTAssertTrue(body.contains("let atStart = candidates.filter { UndoPostState.sameInstant($0.start, series.startDate) }"))
         XCTAssertTrue(body.contains("return (DeletedOccurrenceCheck.baseline(firstSlot: slot, firstIsEdited: atStart.first?.isDetached ?? true, startDate: series.startDate), slot)"))
     }

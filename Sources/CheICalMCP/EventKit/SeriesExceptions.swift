@@ -273,27 +273,48 @@ enum SeriesExceptionsPlanner {
         capture(observed, of: series, windows: [window])
     }
 
-    /// #539 step 6: how many of the recorded occurrences edited on their own make the restore apply none of
-    /// the exceptions, read at the delete, before anything is removed. The restore (`SeriesExceptionsRestorer`)
-    /// applies nothing when a recorded slot is no slot of the recreated series; this forecasts that by the
-    /// slots the rule gives from `firstSlot` (`DeletedOccurrenceCheck`'s expander, in `calendar`'s zone) up
-    /// to the last window's end, and counts the records whose slot (their `/RID=` read as an instant) is
-    /// none of them (cell N1: a zoned series moved after the edit; an occurrence edited while its series had
-    /// no time zone, read on a host not at offset 0, #539). A count above 0 forecasts that undo restores the
-    /// series from its rules alone. PR #558 fix round 4: the restore is `main`'s, so this is `main`'s outcome.
-    /// Nil when the expander cannot tell, so the delete says nothing rather than guess: not exactly one rule,
-    /// no first slot (a stand-in, or a first occurrence edited on its own), a rule the expander does not
-    /// follow, more slots than it takes, or (PR #558 round 1, ruling G, the #503 verdict's own guard) a
-    /// recorded occurrence not edited on its own that is no slot of the expander, so the expander is wrong here.
+    /// Model the ordered, per-window listing used by the restore. Limit the model to simple
+    /// daily and weekly rules, positive durations, a stable offset and unambiguous window edges.
+    /// A positive count predicts the detached-slot rejection, before any surplus is removed.
     static func unplacedEdits(_ exceptions: SeriesExceptions, rules: [DeletedOccurrenceCheck.Rule], firstSlot: Date?,
-                              calendar: Calendar) -> Int? {
+                              calendar: Calendar, duration: TimeInterval = 3600) -> Int? {
         guard !exceptions.detached.isEmpty else { return 0 }
-        guard rules.count == 1, let firstSlot, let end = exceptions.windows.map(\.end).max() else { return nil }
-        guard case .slots(let slots) = DeletedOccurrenceCheck.expansion(of: rules[0], firstStart: firstSlot, until: end,
-                                                                         calendar: calendar) else { return nil }
-        let set = InstantSet(slots)
-        guard exceptions.keptSlots.allSatisfy(set.contains) else { return nil }
-        return exceptions.detached.filter { !set.contains($0.slot) }.count
+        guard rules.count == 1, let rule = rules.first, let firstSlot,
+              let end = exceptions.windows.map(\.end).max(), duration.isFinite, duration > 0,
+              rule.interval <= Int.max / (7 * (DeletedOccurrenceCheck.maxSlots + 1)),
+              rule.frequency == .daily || (rule.frequency == .weekly && Set(rule.daysOfWeek).count <= 1) else { return nil }
+        guard case .slots(let slots) = DeletedOccurrenceCheck.expansion(of: rule, firstStart: firstSlot,
+                                                                         until: end.addingTimeInterval(1), calendar: calendar),
+              slots.count <= DeletedOccurrenceCheck.maxSlots, let last = slots.last else { return nil }
+        let zone = calendar.timeZone
+        // Include the last occurrence's local day and duration. Ambiguous or skipped wall times
+        // can change even slots for which the capture has no plain occurrence to compare.
+        let countedThrough = rule.occurrenceCount > 0 && slots.count == rule.occurrenceCount
+        let lastPossibleDay = countedThrough ? last : min(end, rule.endDate ?? end)
+        let stableThrough = max(last.addingTimeInterval(duration), calendar.dateInterval(of: .day, for: lastPossibleDay)?.end ?? lastPossibleDay)
+        if let change = zone.nextDaylightSavingTimeTransition(after: firstSlot.addingTimeInterval(-86_400)),
+           change <= stableThrough { return nil }
+
+        var taken = DistinctInstants()
+        var slotsListed: [Date] = []
+        for window in exceptions.windows {
+            for slot in slots {
+                let slotEnd = slot.addingTimeInterval(duration)
+                // EventKit lists overlapping events. At a query boundary its result cannot be
+                // inferred safely within the restore's same-instant tolerance.
+                guard !UndoPostState.sameInstant(slot, window.start),
+                      !UndoPostState.sameInstant(slot, window.end),
+                      !UndoPostState.sameInstant(slotEnd, window.start) else { return nil }
+                if slot < window.end, slotEnd > window.start, taken.insert(slot) { slotsListed.append(slot) }
+            }
+            guard !exceptions.detached.contains(where: {
+                UndoPostState.sameInstant($0.slot, window.start) || UndoPostState.sameInstant($0.slot, window.end)
+            }) else { return nil }
+        }
+        let generated = InstantSet(slotsListed)
+        guard !inWindows(firstSlot, exceptions.windows) || generated.contains(firstSlot),
+              exceptions.keptSlots.allSatisfy(generated.contains) else { return nil }
+        return exceptions.detached.filter { !generated.contains($0.slot) }.count
     }
 
     /// The slots of the recreated series (`generated`) that undo must remove: inside the window

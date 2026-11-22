@@ -14,13 +14,56 @@ struct BatchDeletionListedEvent: Sendable, Equatable {
     var isDetached = false
 }
 
+/// The requested, resolved and external identifiers are forecast inputs only. Match the series
+/// portion of an identifier, including a provider's own suffix if it is not a RID.
+struct BatchForecastIdentity: Sendable, Equatable {
+    let keys: Set<String>
+    let unknownSeries: Bool
+
+    init(requested: String, resolved: String?, external: String?, detached: Bool = false) {
+        let identifiers = [requested, resolved, external]
+        keys = Set(identifiers.compactMap { id in
+            guard let id, !id.isEmpty else { return nil }
+            return String(id.prefix { $0 != "/" })
+        })
+        unknownSeries = detached && !identifiers.contains { id in
+            id.flatMap(DetachedOccurrenceSpan.seriesIdentifier(of:)) != nil
+        }
+    }
+}
+
+struct BatchDeletionForecastRow: Sendable, Equatable {
+    let identity: BatchForecastIdentity
+    let read: Bool
+    let note: RulesAloneOnUndo?
+}
+
+struct BatchDeletionForecastContext: Sendable {
+    private var touched: Set<String> = []
+    private var unknownSeries = false
+    private var reads = 0
+
+    mutating func record(_ identity: BatchForecastIdentity, read: Bool) {
+        touched.formUnion(identity.keys)
+        unknownSeries = unknownSeries || identity.unknownSeries
+        if read { reads += 1 }
+    }
+
+    /// At most 16 extra captures per call, independent of the date-range deletion limit.
+    /// After any successful row of the series, the live resolution may take a different route.
+    func read(_ identity: BatchForecastIdentity, eligible: Bool,
+              capture: () -> RulesAloneOnUndo?) -> BatchDeletionForecastRow {
+        let allowed = eligible && reads < 16 && !unknownSeries && touched.isDisjoint(with: identity.keys)
+        return BatchDeletionForecastRow(identity: identity, read: allowed, note: allowed ? capture() : nil)
+    }
+}
+
 /// #416: what the `event_ids` dry run says about one row.
 enum BatchDeletionPreviewRow: Sendable, Equatable {
-    /// Use the resolved event's identifier when treating this row as gone during later previews.
-    case deletes(start: Date, end: Date, resolvedIdentifier: String? = nil)
+    case deletes(start: Date, end: Date, forecast: BatchDeletionForecastRow? = nil)
     /// #436 (PR #465 verify r2): a series row that the real call deletes from its first occurrence
     /// edited on its own, which cannot be undone; the preview says so before anything is deleted.
-    case deletesThroughFirstOccurrence(start: Date, end: Date, occurrenceID: String)
+    case deletesThroughFirstOccurrence(start: Date, end: Date, occurrenceID: String, identity: BatchForecastIdentity? = nil)
     case refused(String)
 }
 
@@ -41,20 +84,11 @@ protocol EventBatchDeletionSource: Sendable {
     /// (#427): the row would delete that occurrence alone, answering for the series.
     func deleteEventSeriesBatch(identifiers: [String]) async throws -> BatchDeleteResult
     /// One `event_ids` dry-run row. `span` as the real row takes it, `spanAll` for span `all`.
-    /// `namedInTheCall`: every id of the call. `goneInTheCall`: the rows passed so far with span
-    /// `all`, which the real call has deleted by the time it gets to this row. Throws what the real
-    /// row would fail with when the id does not resolve.
+    /// `namedInTheCall`: every id of the call. `goneInTheCall`: requested ids of earlier `all`
+    /// rows that previewed a deletion. The optional forecast keeps its own identity state.
+    /// Throws what the real row would fail with when the id does not resolve.
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
-                              goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow
-    /// #539 step 6: for a dry-run row with span `all` that deletes (`previewEventDeletion` answered
-    /// `.deletes`), the forecast the real call's record would carry (`EventKitManager.unplacedEditsAtDelete`),
-    /// nil for a one-off or when it cannot be read. Read-only: the capture and the first slot only list.
-    func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> RulesAloneOnUndo?
-}
-
-extension EventBatchDeletionSource {
-    /// A double that does not model the forecast answers nil; `EventKitManager` answers its own.
-    func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> RulesAloneOnUndo? { nil }
+                              goneInTheCall: Set<String>, forecast: BatchDeletionForecastContext?) async throws -> BatchDeletionPreviewRow
 }
 
 extension EventKitManager: EventBatchDeletionSource {
@@ -71,42 +105,44 @@ extension EventKitManager: EventBatchDeletionSource {
     /// Refreshed, like the writes the dry run describes (#326): a series whose first occurrence was
     /// deleted shows its first remaining occurrence, not the deleted one.
     func previewEventDeletion(identifier: String, span: EKSpan, spanAll: Bool, namedInTheCall: Set<String>,
-                              goneInTheCall: Set<String>) async throws -> BatchDeletionPreviewRow {
+                              goneInTheCall: Set<String>, forecast: BatchDeletionForecastContext?) async throws -> BatchDeletionPreviewRow {
         try await ensureCalendarAccess()
-        guard let event = try freshEventWithOrigin(
+        guard let resolved = try freshEventWithOrigin(
             id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: span, wholeSeries: spanAll),
-            goneInTheCall: goneInTheCall)?.event else {
+            goneInTheCall: goneInTheCall) else {
             // #436: what the real row does when the series reaches only its first occurrence.
             if spanAll, let first = try firstEditedOccurrenceID(of: identifier, excluding: goneInTheCall),
                let occurrence = try freshEvent(id: first.id) {
                 if let refusal = Self.throughFirstOccurrenceRefusal(occurrence, movedFirst: try movedFirstDeleteRefusal(occurrence, id: first.id)) {
                     return .refused(refusal)
                 }
-                return .deletesThroughFirstOccurrence(start: occurrence.startDate, end: occurrence.endDate, occurrenceID: first.id)
+                let start: Date = occurrence.startDate, end: Date = occurrence.endDate
+                let identity = forecast.map { _ in
+                    BatchForecastIdentity(requested: identifier, resolved: first.id,
+                                          external: occurrence.calendarItemExternalIdentifier)
+                }
+                return .deletesThroughFirstOccurrence(start: start, end: end, occurrenceID: first.id, identity: identity)
             }
             throw notFoundError(id: identifier)
         }
+        let event = resolved.event
         // #416: what the real call refuses is not listed as a deletion.
         if spanAll, let refusal = try seriesDeleteRefusal(event, id: identifier, namedInTheCall: namedInTheCall, batch: true) {
             return .refused(refusal)
         }
         if !spanAll, event.hasRecurrenceRules { return .refused(Self.batchOccurrenceDateRequired) }
-        return .deletes(start: event.startDate, end: event.endDate, resolvedIdentifier: event.eventIdentifier)
-    }
-
-    /// #539 step 6: resolved as `previewEventDeletion` resolves a row with span `all`, and captured as
-    /// `deleteEventSeriesBatch` captures it before its removal. PR #558 fix round 4 (verify finding C3): the
-    /// occurrences that earlier rows of the call delete are left out of the capture and of the first slot's
-    /// listing, as the real call's series row no longer sees them; round 5 (Q2): by their identity, before the
-    /// capture reduces them to slots (`captureSeriesExceptionsForDryRun`).
-    func previewUndoForecast(identifier: String, goneInTheCall: Set<String>) async -> RulesAloneOnUndo? {
-        guard (try? await ensureCalendarAccess()) != nil,
-              let resolved = try? freshEventWithOrigin(
-                id: identifier, refuseWhenEditedBefore: FirstRemainingOccurrence.refusesEditedBefore(span: .thisEvent, wholeSeries: true),
-                goneInTheCall: goneInTheCall),
-              resolved.event.hasRecurrenceRules else { return nil }
-        let series = resolved.event
-        let exceptions = captureSeriesExceptionsForDryRun(of: series, goneInTheCall: goneInTheCall)
-        return unplacedEditsAtDelete(exceptions, of: series, id: identifier, viaStandIn: resolved.viaStandIn, goneInTheCall: goneInTheCall)
+        let start: Date = event.startDate, end: Date = event.endDate
+        let estimate = forecast.map { context in
+            let identity = BatchForecastIdentity(requested: identifier, resolved: event.eventIdentifier,
+                                                 external: event.calendarItemExternalIdentifier, detached: event.isDetached)
+            let anchor = SeriesDeleteAnchor(of: event, viaStandIn: resolved.viaStandIn)
+            return context.read(identity, eligible: anchor != nil) {
+                let snapshot = EventSnapshot.recordingSeriesDelete(of: event, capture: {
+                    self.captureSeriesExceptionsForDelete(of: event, anchor: anchor)
+                })
+                return anchor?.forecast(for: snapshot)
+            }
+        }
+        return .deletes(start: start, end: end, forecast: estimate)
     }
 }

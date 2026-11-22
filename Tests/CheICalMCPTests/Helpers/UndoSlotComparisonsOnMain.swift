@@ -220,11 +220,8 @@ extension SeriesUpdateUndo {
     }
 }
 
-/// #539 fix round 1 (PR #558 verify F8): the capture of a whole-series delete's exceptions as it was
-/// on `main` at bdcb8f9e, before #539 gave an edited occurrence's `/RID=` a second reading. Copied
-/// without a change but its name (`ruleSlot(of:)` with the host zone is what `main` called). The
-/// copy is the old behaviour on purpose; `ZonedSeriesUndoOnMainTests` runs it beside the current
-/// capture over series that have a time zone.
+/// The base capture uses the same recorded slot convention as production. The copied body
+/// matches 92d9b796 and 7f75f97d after restoring its original name.
 extension SeriesExceptionsPlanner {
     static func captureOnMain(_ observed: [ObservedOccurrence], of series: UndoPostState.OccurrenceIDs,
                               windows: [DateInterval]) -> SeriesExceptions? {
