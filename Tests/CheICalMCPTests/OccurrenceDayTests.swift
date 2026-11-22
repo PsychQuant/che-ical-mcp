@@ -7,6 +7,57 @@ import XCTest
 final class OccurrenceDayTests: XCTestCase {
     private let day = "2026-12-06"
 
+    // Fixed to the 2028 Havana transition used by the #546 report and device cells.
+    func testAnOccurrenceSelectorCanUseTheFirstInstantOfItsGapDay() async throws {
+        let iso = ISO8601DateFormatter()
+        let zone = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
+        let date = try await OccurrenceDateInput.resolve("2028-03-12", iso: iso, span: "this") { zone }
+        XCTAssertEqual(date, iso.date(from: "2028-03-12T05:00:00Z"))
+    }
+
+    func testAGapDayDoesNotIncludeTheNextDaysFirstHour() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
+        let iso = ISO8601DateFormatter()
+        let requested = try XCTUnwrap(iso.date(from: "2028-03-12T05:00:00Z"))
+        let nextMidnight = try XCTUnwrap(iso.date(from: "2028-03-13T04:00:00Z"))
+        let nextHalfHour = nextMidnight.addingTimeInterval(1800)
+        let window = try XCTUnwrap(OccurrenceDay.window(containing: requested, in: zone))
+        XCTAssertEqual(window.start, requested)
+        XCTAssertEqual(window.end, nextMidnight)
+        XCTAssertFalse(OccurrenceDay.startsOnRequestedDay(occurrenceStart: nextHalfHour, isAllDay: false,
+                                                           requested: requested, in: zone))
+        for requestedZone in [zone, TimeZone(secondsFromGMT: 0)!] {
+            let candidate = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: requested, in: requestedZone, host: zone))
+            XCTAssertEqual(candidate.end, nextMidnight, requestedZone.identifier)
+        }
+
+        let losAngeles = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        let candidate = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: requested, in: zone, host: losAngeles))
+        XCTAssertEqual(candidate.end, iso.date(from: "2028-03-13T07:00:00Z"))
+        XCTAssertLessThan(nextHalfHour, candidate.end)
+    }
+
+    func testADayWithMidnightKeepsThePreviousWindowOnHistoricalTransitions() throws {
+        let iso = ISO8601DateFormatter()
+        for (identifier, timestamp) in [
+            ("Pacific/Apia", "1892-07-04T00:00:00Z"),
+            ("America/Toronto", "1919-03-30T18:00:00Z")
+        ] {
+            let zone = try XCTUnwrap(TimeZone(identifier: identifier))
+            let date = try XCTUnwrap(iso.date(from: timestamp))
+            let calendar = Calendar.gregorian(in: zone)
+            let start = calendar.startOfDay(for: date)
+            let end = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: start))
+            XCTAssertGreaterThan(end, start)
+            let window = try XCTUnwrap(OccurrenceDay.window(containing: date, in: zone))
+            XCTAssertEqual(window.start, start, identifier)
+            XCTAssertEqual(window.end, end, identifier)
+            let candidate = try XCTUnwrap(OccurrenceDay.candidateWindow(containing: date, in: zone, host: zone))
+            XCTAssertEqual(candidate.start, start, identifier)
+            XCTAssertEqual(candidate.end, end, identifier)
+        }
+    }
+
     func testTheWindowIsTheDayInTheGivenZone() throws {
         let zone = TestZones.eventZone(differingFromHostAt: TestZones.noonUTC(day))
         let start = TestZones.midnight(day, in: zone)
