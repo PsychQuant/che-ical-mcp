@@ -1355,27 +1355,31 @@ session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的
 - 五個主機時區（UTC−11 到 UTC+14）；
 - 格子表（`OccurrenceDateMatchCellTests`）：主機 × 系列 × 場次形狀 × 系列讀不讀得到，每一格都和 `main` 的檢查比對。
 
-`occurrenceDateAnswer` 讀系列物件的全天旗標，這一段只有原始碼釘選（`OccurrenceDateMatchWiringTests`）。
+`occurrenceDateAnswer` 只讀場次資料，接線由 `OccurrenceDateMatchWiringTests` 釘選。00:00 UTC 的 `/RID=` 可能是浮動日期或瞬間；
+現在的全天旗標無法確定原本的寫法。兩種讀法給出同一天才接受原日。拒絕訊息會指向場次顯示的開始日，或省略 `occurrence_date`。
 
-被拒絕的呼叫什麼都不寫。被接受的呼叫中，`update_event` 只寫 `notes`，`delete_event` 刪掉識別碼指的那一場。這些都是 stateless 的，所以用 `--cli` 做（見上表），不用 AppleScript、不用 session MCP，而且只在名稱含 `#543` 的拋棄式日曆上做。
+下列裝置格中，被拒絕的呼叫什麼都不寫。接受的 `update_event` 探測只寫 `notes`；接受的 `delete_event` 探測會刪掉識別碼指的那一場。這些都是 stateless 的，所以用 `--cli` 做（見上表），不用 AppleScript、不用 session MCP，而且只在名稱含 `#543` 的拋棄式日曆上做。
+
+準備系列時，`findOccurrence` 目前會跨日曆列舉當天的活動（#573）。重跑這些步驟需要只有測試日曆的獨立環境。
 
 **每一步的 setup 都在主機時區（Asia/Taipei）下跑**，包括建立、移動、改成全天或計時、`list_events`。只有被檢查的那次呼叫照步驟寫的 `TZ` 跑。setup 的 `start_time`／`end_time` 是在 process 時區讀的。
 
 場次自己的識別碼：移動之後，在拋棄式日曆上用 `list_events` 讀出那一場的 `id`（形如 `<series id>/RID=…`）。
 
-2026-11-22 已在 iCloud 上做過下面第 1 到 3 步，每列一次（第 4 步見該步）。用的是 branch 的 release build `d33e0988`（Developer ID 簽章），也就是 fix round 1 之前的程式。round 1 改了 `Sources`，**新的 head 沒有重跑**。依程式判斷，新的讀法在這三步的答案和 `d33e0988` 相同：
-- 第 1、2 步：浮動日期，系列與場次都是全天；
-- 第 3 步：`/RID=` 不是 00:00 UTC，照 `main` 讀。
+2026-11-22 以 Developer ID 簽章的 release build，在 iCloud 上量過第 1 到 3 步（`d33e0988`）和第 4 步（`15c6cca5`）。
+下列步驟以目前的預期結果為準。第 1、2 步的 UTC 以西原日已改成拒絕。既有量測及目前的裝置驗證範圍見 PR #565。
 
 1. 全天每週 ×3 的系列（2026-12-21 起）：
    - setup：`update_event` span `this`、`occurrence_date` 2026-12-28、`all_day: true`、`start_time`／`end_time` 2026-12-30，把那一場單獨移到 12-30。讀回的 `/RID=` 是 2026-12-28 00:00 UTC。
    - 經它自己的識別碼、span `this`、帶 `notes`：
-     - `TZ=America/Los_Angeles`：12-28、12-30 `updated`，12-27、12-29 被拒絕；
+     - `TZ=America/Los_Angeles`：12-27、12-28 都因原日無法確定而拒絕，12-29 以原本的理由拒絕，12-30 `updated`；
      - 主機時區（Asia/Taipei）：12-28 `updated`，12-27 被拒絕。
-   - 對照：沒有這個修改的 build（PR #558 的 `041a5b5f`，其中 `FirstRemainingOccurrence.swift`、`OccurrenceDay.swift`、`UndoPostStateGuard.swift` 與 `main` 相同），`TZ=America/Los_Angeles` 下 12-28 被拒絕、12-27 `updated`。
+   - 歷史對照：`d33e0988` 在洛杉磯接受 12-28；PR #558 的 `041a5b5f` 曾接受 12-27、拒絕 12-28。
+     後者的 `FirstRemainingOccurrence.swift`、`OccurrenceDay.swift`、`UndoPostStateGuard.swift` 與當時的 `main` 相同。
 2. 同樣形狀的新系列，經那一場自己的識別碼、span `this` 呼叫 `delete_event`，`TZ=America/Los_Angeles`：
-   - 12-27 被拒絕，讀回那一場還在；
-   - 12-28 `deleted`，只刪掉那一場（12-21、01-04 兩場還在）。
+   - 12-27 和 12-28 都因原日無法確定而拒絕，讀回那一場還在；
+   - 12-30 `deleted`，只刪掉那一場（12-21、01-04 兩場還在）。
+   - 歷史對照：`d33e0988` 曾在相同條件下接受 12-28，只刪掉該場次。
 3. 計時每週 ×3 的系列（07:00–08:00、`timezone` `Asia/Taipei`），同樣把 12-28 那一場以 `all_day: true` 單獨改成全天：
    - 讀回的 `/RID=` 是 2026-12-27 23:00 UTC，是瞬間，不是浮動日期。
    - 主機時區下 12-28 `updated`，12-27 被拒絕。
@@ -1383,7 +1387,7 @@ session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的
 4. 全天每週 ×3 的系列，setup 用 `update_event` span `this`、`occurrence_date` 2026-12-28、`all_day: false`、`start_time` 2026-12-30T10:00:00-08:00、`end_time` 11:00、`timezone` `America/Los_Angeles`，把那一場單獨改成計時，並用 `list_events` 讀回它的 `timezone`。之後經它自己的識別碼、span `this`、帶 `notes`：
    - 讀回的時區是 America/Los_Angeles 時，預期 `TZ=America/Los_Angeles` 與主機時區下都一樣：12-28 與 12-27 都以 round 1 的新理由被拒絕（含 `It may be its original day`），而它開始的那天 `updated`。比對是在場次的時區裡做的，所以結果不隨 process 時區改變。
    - 讀回的時區不是 America/Los_Angeles，或 setup 被拒絕時，記下讀回的值與回應，這一步不算數。
-   - 這一步驗的是：場次改成計時之後，系列與場次的全天旗標在裝置上真的不同。
+   - 這一步驗證場次改成計時且保留 00:00 UTC 尾碼後，拒絕結果依場次時區比對。
    - 2026-11-22 在 iCloud 上用 fix round 1 的 release build `15c6cca5`（Developer ID 簽章）做過一次，結果和預期相同：
      - 讀回 `/RID=` 2026-12-28 00:00 UTC，`timezone` America/Los_Angeles。
      - 開始時間是 2026-12-30 18:00 America/Los_Angeles，不是要求的 10:00，晚了 8 小時，也就是主機的 offset。這另開了 #570，不在這裡處理。
@@ -1393,16 +1397,16 @@ session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的
 
 **出版前**：用出版的 binary 重做下列各列（對照組不必重做）：
 - 第 1 步的六列：`TZ=America/Los_Angeles` 四列，主機時區兩列；
-- 第 2 步的兩列；
-- 第 3 步的兩列：主機時區下 12-28 `updated`、12-27 被拒絕。這是系列旗標接線唯一的裝置證據；
+- 第 2 步的三列；
+- 第 3 步的兩列：主機時區下 12-28 `updated`、12-27 被拒絕；
 - 第 4 步。
 
 **沒有做過、也不擋 tag 的**：
 - span `future`：兩個工具走同一個比對；
 - 系統時區本身在 UTC 以西的 Mac：`TZ` 只移動 server process；
 - iCloud 以外的來源；
-- 系列物件讀不到的情況，以及 `/RID=` 只在外部識別碼上的場次：裝置上做不出來；
+- `/RID=` 只在外部識別碼上的場次；
 - 帶時區的全天場次；
 - 場次單獨修改之後系列才在全天與計時之間轉換，以及轉換時 store 會不會重寫 `/RID=`。
 
-結束後依 id 刪掉拋棄式日曆，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#543` 的都是 0。
+結束後依 id 刪掉這次建立的拋棄式日曆，再隔一分鐘以上分兩次確認已記錄的 id 都找不到。只查這次建立的 id。

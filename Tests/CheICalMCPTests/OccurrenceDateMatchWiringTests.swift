@@ -1,7 +1,7 @@
 import XCTest
 @testable import CheICalMCP
 
-/// #543: `occurrenceDateAnswer` reads an `EKEvent` and the series object from the store, which no
+/// #543: `occurrenceDateAnswer` reads an `EKEvent`, which no
 /// unit test can run. These pins read the source; the comparison itself is `OccurrenceDateMatchTests`
 /// and `OccurrenceDateMatchCellTests`.
 final class OccurrenceDateMatchWiringTests: XCTestCase {
@@ -25,14 +25,11 @@ final class OccurrenceDateMatchWiringTests: XCTestCase {
         XCTAssertTrue(SourcePins.ranges(of: "startsOnRequestedDay(", in: check).isEmpty)
     }
 
-    // spec-example: occurrence-date-own-identifier / The series object cannot be read
-    /// The series' flag comes from the series object the identifier names, nil when that object
-    /// cannot be read (none, or the lookup throws): no fallback to the occurrence's own flag (V1).
-    func testTheSeriesFlagComesFromTheSeriesObjectWithNoFallback() throws {
+    /// Both series origins use the same matcher without reading the current series flag.
+    func testOccurrenceDateAnswerDoesNotLookUpTheSeries() throws {
         let check = try body("func occurrenceDateAnswer(")
-        XCTAssertTrue(check.contains("let seriesIsAllDay = (try? seriesObject(ofOccurrence: id))?.isAllDay\n"), check)
-        XCTAssertTrue(SourcePins.ranges(of: "?? occurrence.isAllDay", in: check).isEmpty)
-        XCTAssertTrue(check.contains("seriesIsAllDay: seriesIsAllDay"))
+        XCTAssertTrue(SourcePins.ranges(of: "seriesObject(ofOccurrence:", in: check).isEmpty)
+        XCTAssertTrue(SourcePins.ranges(of: "seriesIsAllDay", in: check).isEmpty)
     }
 
     /// `occurrenceDateMatches` is the answer `.matches`, and the refusal's reason is read from the
