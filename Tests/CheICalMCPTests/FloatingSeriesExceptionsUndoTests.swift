@@ -2,15 +2,16 @@ import EventKit
 import XCTest
 @testable import CheICalMCP
 
-/// #539: the undo of a whole-series delete, and of one occurrence's delete, on a series whose edited
+/// #539: the undo of a whole-series delete on a series whose edited
 /// occurrences carry a `/RID=` written while it had no time zone (the slot's wall-clock time as UTC),
 /// run against the in-memory store under three host zones. The shapes are the device cells of #539
-/// (F1, D2, R2, MA, DS1, the window-edge path). PR #558 fix round 4: the whole-series undo is `main`'s, so
+/// (F1, D2, R2, DS1, the window-edge path). PR #558 fix round 4: the whole-series undo is `main`'s, so
 /// each of those shapes is run through `main`'s capture and restore too (`SeriesUndoOnMain`) and must give
 /// the same answer and calendar: away from offset 0 the `/RID=` read as an instant is no slot of the
 /// recreated series, so the series comes back from its rules alone ("did not match"); at UTC the edits come
-/// back. The undo of one occurrence's delete keeps ruling F (`OccurrenceSlotGuard.answer`). Each test names
-/// its host zone; none reads the process's.
+/// back. The undo of one occurrence's delete is `main`'s too (fix round 5 removed ruling F); MA's chain, the
+/// whole-series undo and then that occurrence's, is in `WholeSeriesUndoChainOnMainTests`. Each test names its
+/// host zone; none reads the process's.
 final class FloatingSeriesExceptionsUndoTests: XCTestCase {
     private let day: TimeInterval = 86_400
     private let taipei = TimeZone(identifier: "Asia/Taipei")!
@@ -228,7 +229,7 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
             let kept = slots.filter { slot in !detached.contains { UndoPostState.sameInstant($0.slot, slot) } }
             let exceptions = SeriesExceptions(window: window, keptSlots: kept, detached: detached)
             return onMain
-                ? try SeriesExceptionsRestorer.restoreOnMain(exceptions: exceptions, seriesStart: slots[0], generated: generated, remove: { _ in },
+                ? try SeriesExceptionsRestorer.restoreAtBase(exceptions: exceptions, seriesStart: slots[0], generated: generated, remove: { _ in },
                                                               createOneOff: { _ in 0 }, removeOneOff: { _ in }, rollbackSeries: {})
                 : try SeriesExceptionsRestorer.restore(exceptions: exceptions, seriesStart: slots[0], generated: generated, remove: { _ in },
                                                        createOneOff: { _ in 0 }, removeOneOff: { _ in }, rollbackSeries: {})
@@ -271,9 +272,10 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
     /// The four shapes of the plan, at +08:00 and -08:00, each restored as on `main`. East of UTC a floating
     /// `/RID=` read as an instant is later than its slot, west of it earlier, so each shape is built at the
     /// edge where it arises. Rewritten in PR #558 round 1 and round 3, and in fix round 4 (the capture and
-    /// the restore are `main`'s: a floating edit whose true slot is inside the window and whose instant
-    /// reading is outside is not recorded, and its slot is removed with the occurrence, `main`'s own defect
-    /// that #539 keeps open).
+    /// the restore are `main`'s). This shows that each shape gives `main`'s calendar and answer, and that the
+    /// zoned edit inside the window comes back; it does not show what `main` does with a floating edit whose
+    /// true slot is inside the window and whose instant reading is outside (fix round 5, verify finding P8):
+    /// in these shapes the other floating edit already makes the check apply nothing.
     func testTheFourWindowEdgeShapesAreAsOnMain() throws {
         let hours: TimeInterval = 3600
         for zone in [taipei, losAngeles] {
@@ -289,128 +291,6 @@ final class FloatingSeriesExceptionsUndoTests: XCTestCase {
             }
             let zonedInside = try edgeCase(zone: zone, floating: false, edgeSlot: shapes[2].2)
             XCTAssertEqual(zonedInside.outcome, .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 2)), "zoned inside, \(zone.identifier)")
-        }
-    }
-
-    // MARK: - MA: the slot guard of #321 on a floating series
-
-    /// MA: the third occurrence, edited floating, is deleted through its own identifier; then the whole
-    /// series; undo of the series, then undo of the occurrence. The whole-series undo is `main`'s: away
-    /// from offset 0 the series comes back from its rules alone, with a plain occurrence at the third slot
-    /// (the wall-clock reading of the record), so the second undo is refused, writes nothing and keeps its
-    /// entry (ruling F), where `main`'s wrote a second event there (#539's report); at UTC the series is
-    /// restored with its exceptions, the third slot stays empty and the second undo writes one one-off, as on
-    /// `main`. Rewritten in rounds 3 and fix round 4.
-    // spec-example: undo-history-discard / MA writes one event
-    func testTheChainOfMAWritesNoDuplicate() throws {
-        for zone in zones {
-            let slots = weekly(from: date(2027, 2, 11, 5, in: zone), count: 6)
-            let store = FakeSeriesExceptionsStore()
-            store.zone = zone
-            let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: slots)
-            edit(occurrences[2], rid: floatingRID(slots[2], in: zone), title: "Third")
-            edit(occurrences[4], rid: floatingRID(slots[4], in: zone), title: "Fifth")
-            let third = occurrences[2]
-            let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: third.id, externalIdentifier: third.external,
-                                                           occurrenceDate: third.occurrenceDate, isAllDay: false, isDetached: true, floating: true, zone: zone))
-            store.drop(third)
-            let run = try deleteAndUndo(occurrences[0], in: store, slots: slots, now: slots[0].addingTimeInterval(-30 * day), zone: zone)
-            assertAsOnMain(run, zone.identifier)
-            let (seriesOutcome, after, calendar) = (run.outcome, run.after, run.calendar)
-            let record = UndoSnapshotFixtures.event(title: "Third", startDate: slots[2]).withOccurrenceOrigin(origin)
-            if zone == utc {
-                XCTAssertEqual(seriesOutcome, .seriesWithExceptions(.init(stayedDeleted: 1, oneOffs: 1)), zone.identifier)
-                let (_, outcome) = try SeriesExceptionsUndo.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar, in: after)
-                XCTAssertEqual(outcome, .occurrenceOneOff(notCarriedOver: []), zone.identifier)
-            } else {
-                XCTAssertEqual(seriesOutcome, notApplied, zone.identifier)
-                let count = after.events.count
-                XCTAssertThrowsError(try SeriesExceptionsUndo.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar, in: after)) { error in
-                    XCTAssertTrue(error is OccurrenceSlotWallClockRefusal, "\(error)")
-                    XCTAssertEqual(UndoFailureDisposition.of(error), .restore, "the entry is kept")
-                }
-                XCTAssertEqual(after.events.count, count, "nothing written, \(zone.identifier)")
-            }
-            XCTAssertEqual(after.events.filter { UndoPostState.sameInstant($0.start, slots[2]) }.count, 1, "one event there, \(zone.identifier)")
-            // `main`'s undo of the same record on the same calendar (`main`'s origin has the instant reading only).
-            let mainOrigin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: third.id, externalIdentifier: third.external,
-                                                               occurrenceDate: third.occurrenceDate, isAllDay: false, isDetached: true, zone: zone))
-            if zone != utc {
-                let main = try SeriesUndoOnMain.undoDeleteOccurrence(UndoSnapshotFixtures.event(title: "Third", startDate: slots[2]).withOccurrenceOrigin(mainOrigin),
-                                                                     notCarriedOver: [], calendar: calendar, in: after)
-                XCTAssertEqual(main.outcome, .occurrenceOneOff(notCarriedOver: []), "main wrote it, \(zone.identifier)")
-                XCTAssertEqual(after.events.filter { UndoPostState.sameInstant($0.start, slots[2]) }.count, 2,
-                               "main left two events there, \(zone.identifier)")
-            }
-        }
-    }
-
-    /// MA's second undo after a restore from the rules alone (no exceptions recorded): the recreated
-    /// series has a plain occurrence at the third slot, the wall-clock reading of the record's `/RID=`,
-    /// and none at its instant reading. Before #539 the undo wrote a second event there; round 0 of PR
-    /// #558 answered "already restored" and used the entry up. Round 1 (ruling F): this server cannot tell
-    /// which reading is the slot, so the undo is refused, nothing is written and the entry is kept (the
-    /// error is not an `UnrecoverableUndoError`). Rewritten in round 1.
-    // spec-example: undo-history-discard / the restored series holds the wall-clock reading
-    func testAfterARulesAloneRestoreTheFloatingOccurrenceIsRefusedAndKept() throws {
-        for zone in [taipei, losAngeles] {
-            let slots = weekly(from: date(2027, 2, 11, 5, in: zone), count: 6)
-            let (_, after, calendar) = try undo(UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 6, startDate: slots[0]),
-                                                slots: slots, zone: zone)
-            let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S" + floatingRID(slots[2], in: zone), externalIdentifier: nil,
-                                                           occurrenceDate: nil, isAllDay: false, isDetached: true, floating: true, zone: zone))
-            let record = UndoSnapshotFixtures.event(title: "Third", startDate: slots[2]).withOccurrenceOrigin(origin)
-            let before = after.events.count
-
-            XCTAssertThrowsError(try SeriesExceptionsUndo.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar, in: after)) { error in
-                XCTAssertEqual((error as? OccurrenceSlotWallClockRefusal)?.message,
-                               OccurrenceSlotWallClockRefusal(title: "Third", kind: .recreateDeletedOccurrence).message)
-                XCTAssertEqual(UndoFailureDisposition.of(error), .restore, "the entry is kept")
-            }
-            XCTAssertEqual(after.events.count, before, "nothing written, \(zone.identifier)")
-            // The rule-less record of a whole-series delete of that occurrence through its own identifier
-            // (PR #318 round 3, finding 22) is refused the same way.
-            XCTAssertThrowsError(try SeriesExceptionsUndo.undoDeleteEvent(record, calendar: calendar, in: after)) { error in
-                XCTAssertEqual((error as? OccurrenceSlotWallClockRefusal)?.message,
-                               OccurrenceSlotWallClockRefusal(title: "Third", kind: .recreateDeleted).message)
-            }
-            XCTAssertEqual(after.events.count, before)
-            // PR #558 round 2 (H19): the split move's kind, through the store-level slot check, gives the
-            // move's words (`slotCheck` passes its kind on).
-            XCTAssertThrowsError(try SeriesExceptionsUndo.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar,
-                                                                               kind: .undoMoveByCopy, in: after)) { error in
-                XCTAssertEqual((error as? OccurrenceSlotWallClockRefusal)?.message,
-                               OccurrenceSlotWallClockRefusal(title: "Third", kind: .undoMoveByCopy).message)
-            }
-            XCTAssertEqual(after.events.count, before)
-        }
-    }
-
-    /// The refusal's text, in a deletion's and a move's words (fixed words and the title only). PR #558
-    /// round 2: the move's slot is the moved occurrence's (H16), and each says what giving it up keeps (H23);
-    /// fix round 4 (C9): the move's says the copy was not looked up, not that it is kept.
-    func testTheWallClockRefusalText() {
-        XCTAssertEqual(OccurrenceSlotWallClockRefusal(title: "Third", kind: .recreateDeletedOccurrence).message,
-                       "Cannot undo the deletion of an occurrence of 'Third': its series had no time zone when it was deleted, so its recorded time can be wall-clock time or an instant, and its series holds an occurrence at the time this Mac's time zone reads it as, but none at the instant. This server cannot tell whether that occurrence is at the deleted occurrence's slot (a one-off event beside it would be a second event there), so nothing was written and this history entry was kept. Giving it up leaves the calendar as it is: this entry holds the only copy of the deleted occurrence and of any edit it had, and this server has no other way to write it back (it can be made again by hand in Calendar). To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id.")
-        XCTAssertEqual(OccurrenceSlotWallClockRefusal(title: "Third", kind: .undoMoveByCopy).message,
-                       "Cannot undo the move of an occurrence of 'Third': its series had no time zone when it was moved, so its recorded time can be wall-clock time or an instant, and its series holds an occurrence at the time this Mac's time zone reads it as, but none at the instant. This server cannot tell whether that occurrence is at the moved occurrence's original slot (a one-off event beside it would be a second event there), so nothing was written, the copy the move made was not looked up or touched, and this history entry was kept. Giving it up leaves the calendar as it is; this server did not check whether that copy is still in the calendar it was moved to or still has the occurrence's edits. To go on, ask the user whether to give up this undo; if they agree, read undo_history and call undo with discard_id set to its id.")
-        XCTAssertEqual(OccurrenceSlotWallClockRefusal(title: "", kind: .recreateDeleted).message.prefix(51),
-                       "Cannot undo the deletion of an occurrence of: its s")
-    }
-
-    /// The guard on its own (MA after a restore from the rules alone): a plain occurrence of the series
-    /// at the true slot is seen at the wall-clock reading, though the record's `/RID=` read as an instant
-    /// is hours away; the answer is the refusal (ruling F), not held. Rewritten in PR #558 round 1.
-    func testAPlainOccurrenceAtTheWallClockReadingIsSeenThere() throws {
-        for zone in [taipei, losAngeles] {
-            let slot = date(2027, 2, 25, 5, in: zone)
-            let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S" + floatingRID(slot, in: zone), externalIdentifier: nil,
-                                                           occurrenceDate: nil, isAllDay: false, isDetached: true, floating: true, zone: zone))
-            XCTAssertNotEqual(origin.slot, slot, "the instant reading is off by the host's offset")
-            let holder = OccurrenceSlotGuard.SeriesHolder(ids: .init(eventIdentifier: "S", externalIdentifier: nil), slot: slot)
-            XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: [holder]), .heldAtWallClockOnly, zone.identifier)
-            let elsewhere = OccurrenceSlotGuard.SeriesHolder(ids: .init(eventIdentifier: "S", externalIdentifier: nil), slot: slot.addingTimeInterval(7 * day))
-            XCTAssertEqual(OccurrenceSlotGuard.answer(origin, recreatedAs: [], by: [elsewhere]), .free, zone.identifier)
         }
     }
 }

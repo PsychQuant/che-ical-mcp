@@ -11,9 +11,9 @@ import Foundation
 ///   `OccurrenceSlotGuard.isHeld` (below, `isHeldOnMain`);
 /// - the planner's capture they call, `SeriesExceptionsPlanner.captureOnMain`, is bdcb8f9e's, the same as
 ///   92d9b796's;
-/// - the store-level restore they call, `SeriesExceptionsUndo.restoreOnMain`, is ba98641's, before #527
-///   replaced its scans (#538 did not change it; `UndoSlotComparisonEquivalenceTests` compares it with the
-///   current one).
+/// - the store-level restore they call, `SeriesExceptionsUndo.restoreAtBase` (below), is 92d9b796's too
+///   (PR #558 fix round 5, verify finding Q4: round 4 called ba98641's scan-based `restoreOnMain`, which
+///   stays as the older oracle of `UndoSlotComparisonEquivalenceTests`).
 /// They share with production what neither side changed: `SeriesExceptionsPlanner.deleteWindow`,
 /// `listingRanges`, `inWindows` and `ruleSlot(of:)`, `UndoPostState.seriesScanWindow`, `isOccurrence` and
 /// `sameInstant`, `SeriesExceptionsUndo.restoreFailure`, the texts, `DeleteUndoFollow.removedIdentifier` and the
@@ -95,7 +95,7 @@ enum SeriesUndoOnMain {
         }
         var outcome: SeriesExceptionsRestorer.Outcome?
         if snapshot.restoresFromRules, let exceptions = snapshot.exceptions {
-            outcome = try SeriesExceptionsUndo.restoreOnMain(exceptions, of: event, in: store)
+            outcome = try SeriesExceptionsUndo.restoreAtBase(exceptions, of: event, in: store)
         }
         let readID = store.identifiers(of: event).eventIdentifier
         let text = UndoOperation.eventRestoredMessage(snapshot: snapshot, newID: readID ?? "unknown",
@@ -138,6 +138,149 @@ extension OccurrenceSlotGuard {
         return holders.contains { holder in
             UndoPostState.sameInstant(holder.slot, origin.slot)
                 && series.contains { UndoPostState.isOccurrence(holder.ids, of: $0) }
+        }
+    }
+}
+
+/// PR #558 fix round 5 (verify finding Q4): the store-level restore of a whole-series delete's exceptions
+/// as `main` runs it at 92d9b796 (#527's lookups, `DistinctInstants`, `InstantSet`, `InstantIndex`), which
+/// `SeriesUndoOnMain.recreateDeletedEvent` calls. Copied without a change but the names (`…AtBase`) and the
+/// comments (left out): `SeriesExceptionsUndo.restore` with its rollback, `SeriesExceptionsRestorer.restore`
+/// and `SeriesExceptionsPlanner.surplusSlots`. The scan-based copies of ba98641 (`restoreOnMain`,
+/// `surplusSlotsOnMain`) stay as the older oracle of `UndoSlotComparisonEquivalenceTests`. The old behaviour
+/// on purpose: do not update these when the current functions change their answers.
+extension SeriesExceptionsUndo {
+    static func restoreAtBase<Store: SeriesExceptionsStoreSource>(_ exceptions: SeriesExceptions, of restored: Store.Event,
+                                                            in store: Store) throws -> SeriesExceptionsRestorer.Outcome {
+        let restoredIDs = store.identifiers(of: restored)
+        guard let id = restoredIDs.eventIdentifier, !id.isEmpty, store.hasCalendar(restored) else {
+            try rollbackRestoredSeriesAtBase(restored, exclusionsApplied: 0, in: store)
+            throw EventKitError.seriesExceptionsRestoreFailed(
+                reason: "Undo could not restore the exceptions of the recreated series (it has no identifier). The series was deleted again; nothing was restored. Retry undo.")
+        }
+        let seriesIDs = UndoPostState.OccurrenceIDs(eventIdentifier: id, externalIdentifier: restoredIDs.externalIdentifier)
+        var generated: [(slot: Date, occurrence: Store.Event)] = []
+        var taken = DistinctInstants()
+        for window in exceptions.windows {
+            for occurrence in store.events(in: window, inCalendarOf: restored)
+            where UndoPostState.isOccurrence(store.identifiers(of: occurrence), of: seriesIDs) {
+                let slot = store.slot(of: occurrence)
+                if taken.insert(slot) { generated.append((slot, occurrence)) }
+            }
+        }
+        do {
+            return try SeriesExceptionsRestorer.restoreAtBase(
+                exceptions: exceptions, seriesStart: store.startDate(of: restored), generated: generated,
+                remove: { try store.remove($0, span: .thisEvent) },
+                createOneOff: { detached in
+                    let oneOff = store.makeEvent()
+                    do {
+                        let calendar = try store.calendarNow(for: detached.snapshot, kind: .recreateDeleted)
+                        store.apply(detached.snapshot, to: oneOff, calendar: calendar)
+                        try store.save(oneOff)
+                        return oneOff
+                    } catch {
+                        throw SeriesExceptionsOneOffWriteFailed(possiblyWritten: oneOff, underlying: error)
+                    }
+                },
+                removeOneOff: { oneOff in
+                    guard try store.isStored(oneOff) else { return }
+                    try store.remove(oneOff, span: .thisEvent)
+                },
+                rollbackSeries: { try store.remove(restored, span: .futureEvents) })
+        } catch let error as SeriesExceptionsRestoreError {
+            store.markNeedsRefresh()
+            throw restoreFailure(error)
+        }
+    }
+
+    private static func rollbackRestoredSeriesAtBase<Store: SeriesExceptionsStoreSource>(_ restored: Store.Event, exclusionsApplied: Int,
+                                                                                  in store: Store) throws {
+        do { try store.remove(restored, span: .futureEvents); store.markNeedsRefresh() } catch {
+            throw restoreFailure(.rollbackFailed(exclusionsApplied: exclusionsApplied))
+        }
+    }
+}
+
+extension SeriesExceptionsRestorer {
+    static func restoreAtBase<Occurrence, OneOff>(
+        exceptions: SeriesExceptions,
+        seriesStart: Date,
+        generated: [(slot: Date, occurrence: Occurrence)],
+        remove: (Occurrence) throws -> Void,
+        createOneOff: (DetachedOccurrence) throws -> OneOff,
+        removeOneOff: (OneOff) throws -> Void,
+        rollbackSeries: () throws -> Void
+    ) throws -> Outcome {
+        let generatedSlots = generated.map(\.slot)
+        let generatedSet = InstantSet(generatedSlots)
+        let generatedIndex = InstantIndex(generatedSlots)
+        func isGenerated(_ slot: Date) -> Bool { generatedSet.contains(slot) }
+        let firstSlotChecked = SeriesExceptionsPlanner.inWindows(seriesStart, exceptions.windows)
+        guard !firstSlotChecked || isGenerated(seriesStart), exceptions.keptSlots.allSatisfy(isGenerated),
+              exceptions.detached.allSatisfy({ isGenerated($0.slot) }) else {
+            return Outcome(stayedDeleted: 0, oneOffs: 0, notApplied: true)
+        }
+        func isAnchor(_ slot: Date) -> Bool { UndoPostState.sameInstant(seriesStart, slot) }
+        let allSurplus = SeriesExceptionsPlanner.surplusSlotsAtBase(generated: generatedSlots, exceptions: exceptions)
+        let surplus = allSurplus.filter { !isAnchor($0) }
+        let oneOffsToCreate = exceptions.detached.filter { !isAnchor($0.slot) }
+        let firstKept = allSurplus.contains(where: isAnchor)
+            || exceptions.detached.contains { isAnchor($0.slot) }
+
+        var exclusionsApplied = 0
+        var removeError: Error?
+        do {
+            exclusionsApplied = try ExclusionExecutor.run(
+                dates: surplus,
+                resolve: { slot in generatedIndex.firstPosition(sameInstantAs: slot).map { generated[$0].occurrence } },
+                remove: { occurrence in
+                    do { try remove(occurrence) } catch { removeError = error; throw error }
+                },
+                rollback: rollbackSeries).count
+        } catch let error as ExclusionExecutionError {
+            switch error {
+            case .noOccurrence(let date): throw SeriesExceptionsRestoreError.surplusUnresolved(date)
+            case .removeFailed(let date):
+                let code = removeError.map { failureCode($0, oneOff: OneOff.self) } ?? "error_unknown"
+                throw SeriesExceptionsRestoreError.removeFailed(date, code: code)
+            case .rollbackFailed(let applied): throw SeriesExceptionsRestoreError.rollbackFailed(exclusionsApplied: applied.count)
+            }
+        }
+
+        var created: [OneOff] = []
+        for detached in oneOffsToCreate {
+            do {
+                created.append(try createOneOff(detached))
+            } catch {
+                let uncertain = (error as? SeriesExceptionsOneOffWriteFailed<OneOff>)?.possiblyWritten
+                let code = failureCode(error, oneOff: OneOff.self)
+                var confirmedCleaned = true
+                for oneOff in created {
+                    do { try removeOneOff(oneOff) } catch { confirmedCleaned = false }
+                }
+                var uncertainCleaned = true
+                if let uncertain { do { try removeOneOff(uncertain) } catch { uncertainCleaned = false } }
+                var seriesRemoved = true
+                do { try rollbackSeries() } catch { seriesRemoved = false }
+                if !seriesRemoved { throw SeriesExceptionsRestoreError.rollbackFailed(exclusionsApplied: exclusionsApplied) }
+                if !confirmedCleaned { throw SeriesExceptionsRestoreError.strayOneOffs(detached.slot, code: code) }
+                if !uncertainCleaned { throw SeriesExceptionsRestoreError.oneOffMaybeLeft(detached.slot, code: code) }
+                throw SeriesExceptionsRestoreError.oneOffFailed(detached.slot, code: code)
+            }
+        }
+
+        let detachedSet = InstantSet(exceptions.detached.map(\.slot))
+        let stayedDeleted = surplus.filter { !detachedSet.contains($0) }.count
+        return Outcome(stayedDeleted: stayedDeleted, oneOffs: created.count, firstOccurrenceKeptFromRule: firstKept)
+    }
+}
+
+extension SeriesExceptionsPlanner {
+    static func surplusSlotsAtBase(generated: [Date], exceptions: SeriesExceptions) -> [Date] {
+        let kept = InstantSet(exceptions.keptSlots)
+        return generated.filter { slot in
+            SeriesExceptionsPlanner.inWindows(slot, exceptions.windows) && !kept.contains(slot)
         }
     }
 }

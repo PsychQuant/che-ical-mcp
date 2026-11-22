@@ -26,13 +26,12 @@ extension EventKitManager {
         SeriesExceptionsUndo.capture(of: series, in: seriesExceptionsStore)
     }
 
-    /// PR #558 round 2 (ruling J): whether the series of `event` has no time zone, for an occurrence's
-    /// origin (`OccurrenceOrigin.seriesIsFloating`): through an occurrence's own identifier, the series
-    /// object stored under the part before `/RID=`; nil (one reading) when it cannot be read.
-    func seriesIsFloating(of event: EKEvent) -> Bool {
-        OccurrenceOrigin.seriesIsFloating(eventIdentifier: event.eventIdentifier, externalIdentifier: event.calendarItemExternalIdentifier,
-                                          ownFloating: OccurrenceOrigin.isFloating(event),
-                                          seriesFloating: { id in ((try? self.storedEvent(id: id)) ?? nil).map(OccurrenceOrigin.isFloating) })
+    /// PR #558 fix round 5 (verify finding Q2): the capture a `delete_events_batch` dry run forecasts from, as
+    /// the real call's series row would capture `series` after the call's earlier rows deleted the occurrences
+    /// `gone` names: the same capture, through `DryRunCaptureStore`, which leaves those occurrences out of the
+    /// listing by identity. Read-only, and never a delete's record.
+    func captureSeriesExceptionsForDryRun(of series: EKEvent, goneInTheCall gone: Set<String>) -> SeriesExceptions? {
+        SeriesExceptionsUndo.capture(of: series, in: DryRunCaptureStore(base: seriesExceptionsStore, gone: gone))
     }
 
     /// #539 step 6: the forecast of a whole-series delete, read before the removal: how many of the
@@ -44,7 +43,7 @@ extension EventKitManager {
     /// own, nil, as when the expander cannot tell. The series is listed for it only when the capture recorded
     /// an edited occurrence. `goneInTheCall` (PR #558 fix round 4, verify finding C3): a dry run's
     /// occurrences that earlier rows of the call delete, left out of the first slot's listing as the real
-    /// call no longer lists them (the capture is cut by the caller, `SeriesExceptions.excluding`).
+    /// call no longer lists them (the dry run's capture leaves them out too, `captureSeriesExceptionsForDryRun`).
     func unplacedEditsAtDelete(_ exceptions: SeriesExceptions?, of series: EKEvent, id: String, viaStandIn: Bool,
                                goneInTheCall: Set<String> = []) -> RulesAloneOnUndo? {
         guard let exceptions, !exceptions.detached.isEmpty else { return nil }
@@ -105,7 +104,7 @@ extension EventKitManager {
                                                                       on store: Store) async throws
         -> (text: String, outcome: UndoEventOutcome?, newID: String?) {
         let calendar = try await store.restoreCalendar(for: snapshot, kind: kind)
-        return try SeriesExceptionsUndo.recreateDeletedEvent(snapshot, calendar: calendar, kind: kind, in: store)
+        return try SeriesExceptionsUndo.recreateDeletedEvent(snapshot, calendar: calendar, in: store)
     }
 
     /// The occurrence's calendar is read once, before the slot check and the write (#269 verify).
@@ -113,6 +112,6 @@ extension EventKitManager {
                                                                           kind: EventRestoreKind,
                                                                           on store: Store) async throws -> (text: String, outcome: UndoEventOutcome) {
         let calendar = try await store.restoreCalendar(for: snapshot, kind: kind)
-        return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, kind: kind, in: store)
+        return try SeriesExceptionsUndo.undoDeleteOccurrence(snapshot, notCarriedOver: notCarriedOver, calendar: calendar, in: store)
     }
 }

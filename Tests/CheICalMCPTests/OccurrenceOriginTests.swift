@@ -106,40 +106,4 @@ final class OccurrenceOriginTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "S", externalIdentifier: nil, occurrenceDate: slot, isAllDay: false,
                                                         isDetached: true)).edited)
     }
-
-    /// PR #558 round 2 (ruling J, H22): the zone an origin is taken with is its series'. Through the series'
-    /// identifier the resolved event's own zone is the series'; through an occurrence's own identifier the
-    /// series object is read under the part before `/RID=`, and when it cannot be read the origin takes one
-    /// reading. The three producers hand this in (`SlotReadingsZoneWiringTests`).
-    func testAnOriginIsTakenWithItsSeriesZone() {
-        var asked: [String] = []
-        func series(_ answer: Bool?) -> (String) -> Bool? { { id in asked.append(id); return answer } }
-        // Through the series' identifier: the event's own zone, the series object not read.
-        XCTAssertTrue(OccurrenceOrigin.seriesIsFloating(eventIdentifier: "S", externalIdentifier: "X-S", ownFloating: true, seriesFloating: series(false)))
-        XCTAssertFalse(OccurrenceOrigin.seriesIsFloating(eventIdentifier: "S", externalIdentifier: "X-S", ownFloating: false, seriesFloating: series(true)))
-        XCTAssertEqual(asked, [])
-        // Through an occurrence's own identifier: the series', whatever the occurrence's own zone.
-        XCTAssertFalse(OccurrenceOrigin.seriesIsFloating(eventIdentifier: "S/RID=825458400", externalIdentifier: "X-S/RID=825458400", ownFloating: true, seriesFloating: series(false)))
-        XCTAssertTrue(OccurrenceOrigin.seriesIsFloating(eventIdentifier: "S/RID=825458400", externalIdentifier: "X-S/RID=825458400", ownFloating: false, seriesFloating: series(true)))
-        // The series cannot be read there: one reading.
-        XCTAssertFalse(OccurrenceOrigin.seriesIsFloating(eventIdentifier: "S/RID=825458400", externalIdentifier: "X-S/RID=825458400", ownFloating: true, seriesFloating: series(nil)))
-        XCTAssertEqual(asked, ["S", "S", "S"])
-        // No identifier: the event's own.
-        XCTAssertTrue(OccurrenceOrigin.seriesIsFloating(eventIdentifier: nil, externalIdentifier: nil, ownFloating: true, seriesFloating: series(false)))
-    }
-
-    /// PR #558 fix round 4 (verify finding C5, Codex): an occurrence whose `/RID=` is only in its external
-    /// identifier (an opaque event identifier) names no series object to read, so its origin takes one
-    /// reading, J's fallback, not the occurrence's own zone; and its slot check then answers as `main`'s.
-    func testAnOriginWhoseRIDIsOnlyInTheExternalIdentifierTakesOneReading() throws {
-        var asked: [String] = []
-        let floating = OccurrenceOrigin.seriesIsFloating(eventIdentifier: "OPAQUE", externalIdentifier: "X-S/RID=825458400",
-                                                         ownFloating: true, seriesFloating: { id in asked.append(id); return true })
-        XCTAssertFalse(floating)
-        XCTAssertEqual(asked, [], "no series object is read through an external identifier")
-        let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: "OPAQUE", externalIdentifier: "X-S/RID=825458400", occurrenceDate: nil,
-                                                       isAllDay: false, isDetached: true, floating: floating,
-                                                       zone: TimeZone(identifier: "Asia/Taipei")!))
-        XCTAssertNil(origin.wallClock, "one reading")
-    }
 }

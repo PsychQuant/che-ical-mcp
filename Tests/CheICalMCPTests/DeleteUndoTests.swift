@@ -91,8 +91,8 @@ final class DeleteUndoTests: XCTestCase {
     /// classification cannot be fed the wrong flag.
     func testTheFactsComeFromTheEventsBeforeTheRemoval() {
         let series = weekly(startingAt: firstStart)
-        let first = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart), seriesFloating: OccurrenceOrigin.isFloating)
-        let second = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)), seriesFloating: OccurrenceOrigin.isFloating)
+        let first = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart))
+        let second = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)))
 
         XCTAssertEqual(first.kind(span: .futureEvents, seriesResolves: { false }), .wholeEvent)
         XCTAssertEqual(second.kind(span: .futureEvents, seriesResolves: { false }), .followingOccurrences)
@@ -103,7 +103,7 @@ final class DeleteUndoTests: XCTestCase {
         oneOff.title = "Review"
         oneOff.startDate = firstStart
         oneOff.endDate = firstStart.addingTimeInterval(1800)
-        XCTAssertEqual(DeletedEventSnapshots(series: oneOff, removed: oneOff, seriesFloating: OccurrenceOrigin.isFloating).kind(span: .futureEvents, seriesResolves: { true }),
+        XCTAssertEqual(DeletedEventSnapshots(series: oneOff, removed: oneOff).kind(span: .futureEvents, seriesResolves: { true }),
                        .wholeEvent)
     }
 
@@ -115,7 +115,7 @@ final class DeleteUndoTests: XCTestCase {
     func testTheFirstSlotIsTheSeriesStartNotTheFirstRemainingOccurrence() {
         let series = weekly(startingAt: firstStart)
         let firstRemaining = weekly(startingAt: firstStart.addingTimeInterval(week))
-        XCTAssertEqual(DeletedEventSnapshots(series: series, removed: firstRemaining, seriesFloating: OccurrenceOrigin.isFloating).kind(span: .futureEvents, seriesResolves: { false }),
+        XCTAssertEqual(DeletedEventSnapshots(series: series, removed: firstRemaining).kind(span: .futureEvents, seriesResolves: { false }),
                        .followingOccurrences)
     }
 
@@ -135,7 +135,7 @@ final class DeleteUndoTests: XCTestCase {
         let series = weekly(startingAt: firstStart)
         let calls = CaptureCalls()
         let whole = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart), span: .futureEvents,
-                                          seriesExceptions: recordedExceptions(calls), seriesFloating: OccurrenceOrigin.isFloating)
+                                          seriesExceptions: recordedExceptions(calls))
         XCTAssertEqual(calls.count, 1)
         XCTAssertEqual(whole.series.exceptions?.keptSlots, [firstStart], "the record carries what the capture returned")
         guard case .deleteEvent(_, let snapshot) = whole.record(for: .wholeEvent) else { return XCTFail("whole-series record") }
@@ -146,7 +146,7 @@ final class DeleteUndoTests: XCTestCase {
         let series = weekly(startingAt: firstStart)
         let calls = CaptureCalls()
         let snapshots = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart), span: .thisEvent,
-                                              seriesExceptions: recordedExceptions(calls), seriesFloating: OccurrenceOrigin.isFloating)
+                                              seriesExceptions: recordedExceptions(calls))
         XCTAssertEqual(calls.count, 0)
         XCTAssertNil(snapshots.series.exceptions)
     }
@@ -155,7 +155,7 @@ final class DeleteUndoTests: XCTestCase {
         let series = weekly(startingAt: firstStart)
         let calls = CaptureCalls()
         let snapshots = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)),
-                                              span: .futureEvents, seriesExceptions: recordedExceptions(calls), seriesFloating: OccurrenceOrigin.isFloating)
+                                              span: .futureEvents, seriesExceptions: recordedExceptions(calls))
         XCTAssertEqual(calls.count, 0)
         XCTAssertNil(snapshots.series.exceptions)
     }
@@ -168,7 +168,7 @@ final class DeleteUndoTests: XCTestCase {
         oneOff.endDate = firstStart.addingTimeInterval(1800)
         let calls = CaptureCalls()
         let snapshots = DeletedEventSnapshots(series: oneOff, removed: oneOff, span: .futureEvents,
-                                              seriesExceptions: recordedExceptions(calls), seriesFloating: OccurrenceOrigin.isFloating)
+                                              seriesExceptions: recordedExceptions(calls))
         XCTAssertEqual(calls.count, 0)
         XCTAssertNil(snapshots.series.exceptions)
     }
@@ -178,7 +178,7 @@ final class DeleteUndoTests: XCTestCase {
     /// does not ask it.
     func testASeriesDeleteRecordListsTheExceptionsAndAOneOffDoesNot() {
         let calls = CaptureCalls()
-        let series = EventSnapshot.recordingSeriesDelete(of: weekly(startingAt: firstStart), capture: recordedExceptions(calls), seriesFloating: OccurrenceOrigin.isFloating)
+        let series = EventSnapshot.recordingSeriesDelete(of: weekly(startingAt: firstStart), capture: recordedExceptions(calls))
         XCTAssertEqual(calls.count, 1)
         XCTAssertEqual(series.exceptions?.keptSlots, [firstStart])
 
@@ -187,7 +187,7 @@ final class DeleteUndoTests: XCTestCase {
         oneOff.title = "Review"
         oneOff.startDate = firstStart
         oneOff.endDate = firstStart.addingTimeInterval(1800)
-        let single = EventSnapshot.recordingSeriesDelete(of: oneOff, capture: recordedExceptions(calls), seriesFloating: OccurrenceOrigin.isFloating)
+        let single = EventSnapshot.recordingSeriesDelete(of: oneOff, capture: recordedExceptions(calls))
         XCTAssertEqual(calls.count, 1, "a one-off does not ask")
         XCTAssertNil(single.exceptions)
     }
@@ -200,7 +200,7 @@ final class DeleteUndoTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"seriesExceptions: \{ self\.captureSeriesExceptions\(of: masterEvent\) \}"#, in: single).count, 1)
         for declaration in ["func deleteEventSeries(identifier: String)", "func deleteEventSeriesBatch(identifiers: [String])"] {
             let body = try XCTUnwrap(SourcePins.body(of: declaration, in: source), declaration)
-            XCTAssertEqual(SourcePins.ranges(ofPattern: #"EventSnapshot\.recordingSeriesDelete\(of: event, capture: \{ self\.captureSeriesExceptions\(of: event\) \},\s+seriesFloating: \{ self\.seriesIsFloating\(of: \$0\) \}\)"#, in: body).count, 1, declaration)
+            XCTAssertEqual(SourcePins.ranges(ofPattern: #"EventSnapshot\.recordingSeriesDelete\(of: event, capture: \{ self\.captureSeriesExceptions\(of: event\) \}\)"#, in: body).count, 1, declaration)
             XCTAssertEqual(SourcePins.ranges(of: "withExceptions(", in: body).count, 0, declaration)
         }
         let batch = try XCTUnwrap(SourcePins.body(of: "func deleteEventsBatch(", in: source))
@@ -217,7 +217,7 @@ final class DeleteUndoTests: XCTestCase {
     /// member; the marker never runs.
     func testEveryRemovalKindRecordsADeleteThatABatchUndoMayRunLast() {
         let series = weekly(startingAt: firstStart)
-        let snapshots = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)), seriesFloating: OccurrenceOrigin.isFloating)
+        let snapshots = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)))
         XCTAssertEqual(EventRemovalKind.allCases.count, 3)
         for kind in EventRemovalKind.allCases {
             let record = snapshots.record(for: kind)
@@ -234,7 +234,7 @@ final class DeleteUndoTests: XCTestCase {
     func testAnOccurrenceDeleteRecordsTheOccurrenceWithoutRules() throws {
         let series = weekly(startingAt: firstStart)
         let second = weekly(startingAt: firstStart.addingTimeInterval(week))
-        let record = DeletedEventSnapshots(series: series, removed: second, seriesFloating: OccurrenceOrigin.isFloating).record(for: .occurrence)
+        let record = DeletedEventSnapshots(series: series, removed: second).record(for: .occurrence)
 
         guard case .deleteOccurrence(let snapshot, let notCarriedOver) = record else { return XCTFail("\(record)") }
         XCTAssertNil(snapshot.recurrenceRules, "no second series")
@@ -262,7 +262,7 @@ final class DeleteUndoTests: XCTestCase {
         second.addAlarm(EKAlarm(absoluteDate: alarmDate))
         second.addAlarm(EKAlarm(relativeOffset: -900))
 
-        guard case .deleteOccurrence(let snapshot, let notCarriedOver) = DeletedEventSnapshots(series: series, removed: second, seriesFloating: OccurrenceOrigin.isFloating)
+        guard case .deleteOccurrence(let snapshot, let notCarriedOver) = DeletedEventSnapshots(series: series, removed: second)
             .record(for: .occurrence) else { return XCTFail() }
         XCTAssertEqual(notCarriedOver, ["absolute_alarms"])
         XCTAssertEqual(snapshot.alarms.map(\.absoluteDate), [nil, nil])
@@ -279,7 +279,7 @@ final class DeleteUndoTests: XCTestCase {
         let second = weekly(startingAt: firstStart.addingTimeInterval(week))
         second.addAlarm(EKAlarm(relativeOffset: -900))
 
-        guard case .deleteOccurrence(let snapshot, let notCarriedOver) = DeletedEventSnapshots(series: series, removed: second, seriesFloating: OccurrenceOrigin.isFloating)
+        guard case .deleteOccurrence(let snapshot, let notCarriedOver) = DeletedEventSnapshots(series: series, removed: second)
             .record(for: .occurrence) else { return XCTFail() }
         XCTAssertEqual(notCarriedOver, [])
         XCTAssertEqual(snapshot.alarms.map(\.relativeOffset), [-900])
@@ -296,7 +296,7 @@ final class DeleteUndoTests: XCTestCase {
         oneOff.endDate = firstStart.addingTimeInterval(1800)
         oneOff.addAlarm(EKAlarm(absoluteDate: alarmDate))
 
-        guard case .deleteOccurrence(let snapshot, let notCarriedOver) = DeletedEventSnapshots(series: oneOff, removed: oneOff, seriesFloating: OccurrenceOrigin.isFloating)
+        guard case .deleteOccurrence(let snapshot, let notCarriedOver) = DeletedEventSnapshots(series: oneOff, removed: oneOff)
             .record(for: .occurrence) else { return XCTFail() }
         XCTAssertEqual(notCarriedOver, [])
         XCTAssertEqual(snapshot.alarms.map(\.absoluteDate), [alarmDate])
@@ -304,7 +304,7 @@ final class DeleteUndoTests: XCTestCase {
 
     func testAWholeEventDeleteRecordsTheSeriesWithItsRules() throws {
         let series = weekly(startingAt: firstStart)
-        let record = DeletedEventSnapshots(series: series, removed: series, seriesFloating: OccurrenceOrigin.isFloating).record(for: .wholeEvent)
+        let record = DeletedEventSnapshots(series: series, removed: series).record(for: .wholeEvent)
 
         guard case .deleteEvent(_, let snapshot) = record else { return XCTFail("\(record)") }
         XCTAssertEqual(snapshot.recurrenceRules?.count, 1)
@@ -313,7 +313,7 @@ final class DeleteUndoTests: XCTestCase {
 
     func testAFollowingOccurrencesDeleteRecordsOnlyAMarker() {
         let series = weekly(startingAt: firstStart)
-        let record = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)), seriesFloating: OccurrenceOrigin.isFloating)
+        let record = DeletedEventSnapshots(series: series, removed: weekly(startingAt: firstStart.addingTimeInterval(week)))
             .record(for: .followingOccurrences)
 
         guard case .deleteFollowingOccurrences(let title) = record else { return XCTFail("\(record)") }

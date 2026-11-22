@@ -7,7 +7,9 @@ import XCTest
 /// setup, once through this server's production path (`SeriesExceptionsUndo.capture`, `undoDeleteEvent`,
 /// `undoDeleteOccurrence`, the origin as a delete through the occurrence's own identifier records it) and
 /// once through `main`'s (`SeriesUndoOnMain`), and the two must leave the same calendar with the same
-/// answers. Each test names its host zone; none reads the process's.
+/// answers, outcomes and texts (fix round 5, verify finding P4). Each test names its host zone; none reads the
+/// process's. Fix round 5 removed ruling F and J, so both paths record A's origin the same way (an instant
+/// reading); the chains show that the production capture, restore and slot check give `main`'s results.
 ///
 /// The sequences: two occurrences, A and B, are retitled while the series has a time zone, so their
 /// `/RID=` digits are instants (#311); the series is then given no time zone (`clear_timezone`) without
@@ -21,6 +23,10 @@ import XCTest
 ///   again keeps A's slot deleted and A's undo writes A once. Restored from its rules alone, A's slot came
 ///   back plain at the new time; neither reading of A's stale `/RID=` is a slot, so A's undo wrote A
 ///   beside it: two events at one start.
+/// - MA (fix round 5): A and B retitled while the series had no time zone (their `/RID=` digits are wall-clock
+///   time written as UTC, #539). Away from offset 0 `main` restores the series from its rules alone and A's undo
+///   writes A beside the plain occurrence at A's time (`main`'s own duplicate, #539's report); at UTC it applies
+///   B's record and writes A once. This server does the same.
 final class WholeSeriesUndoChainOnMainTests: XCTestCase {
     private let day: TimeInterval = 86_400
     private let hour: TimeInterval = 3_600
@@ -33,6 +39,14 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
 
     /// The suffix of an occurrence edited while its series had a time zone: the slot's instant (#311).
     private func zonedRID(_ slot: Date) -> String { "/RID=\(Int(slot.timeIntervalSinceReferenceDate))" }
+
+    /// The suffix of an occurrence edited while its timed series had no time zone: the slot's wall-clock time in
+    /// `zone` written as UTC (iCloud, #539 cells F1-F3).
+    private func floatingRID(_ slot: Date, in zone: TimeZone) -> String {
+        let digits = Calendar.gregorian(in: TimeZone(identifier: "UTC")!)
+            .date(from: Calendar.gregorian(in: zone).dateComponents([.year, .month, .day, .hour, .minute, .second], from: slot))!
+        return "/RID=\(Int(digits.timeIntervalSinceReferenceDate))"
+    }
 
     private func edit(_ occurrence: FakeSeriesExceptionsStore.Event, rid: String, title: String) {
         occurrence.id = "S" + rid
@@ -47,18 +61,18 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
     /// What one path left: the answers of the two undos and the calendar after them.
     struct Chain: Equatable {
         var series: String
+        var seriesText: String
         var occurrence: String
+        var occurrenceText: String
         var calendar: [String]
     }
 
     /// One path of the sequence. `store` holds the series as it was just before A's delete; `a` is A.
     private func run(onMain: Bool, store: FakeSeriesExceptionsStore, a: FakeSeriesExceptionsStore.Event,
                      first: FakeSeriesExceptionsStore.Event, slots: [Date], host: TimeZone) throws -> Chain {
-        // A's delete through its own identifier: its origin. In production the series' zone is read on the
-        // series object (ruling J), which has none now; `main` read none.
+        // A's delete through its own identifier: its origin, as on `main` (fix round 5 removed ruling J).
         let origin = try XCTUnwrap(OccurrenceOrigin.of(eventIdentifier: a.id, externalIdentifier: a.external,
-                                                       occurrenceDate: a.occurrenceDate, isAllDay: false, isDetached: true,
-                                                       floating: !onMain, zone: host))
+                                                       occurrenceDate: a.occurrenceDate, isAllDay: false, isDetached: true, zone: host))
         let record = UndoSnapshotFixtures.event(title: a.title, startDate: a.start).withOccurrenceOrigin(origin)
         store.drop(a)
         // The whole series' delete, thirty days before its first occurrence.
@@ -71,37 +85,42 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
         after.zone = host
         after.seriesSlots = slots
         let calendar = series.calendarIdentifier
-        let seriesOutcome = onMain ? try SeriesUndoOnMain.recreateDeletedEvent(series, calendar: calendar, in: after).outcome
-                                   : try SeriesExceptionsUndo.undoDeleteEvent(series, calendar: calendar, in: after).outcome
+        let seriesUndone = onMain ? try SeriesUndoOnMain.recreateDeletedEvent(series, calendar: calendar, in: after)
+                                  : try SeriesExceptionsUndo.recreateDeletedEvent(series, calendar: calendar, in: after)
         let occurrenceAnswer: String
+        let occurrenceText: String
         do {
-            let outcome = onMain ? try SeriesUndoOnMain.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar, in: after).outcome
-                                 : try SeriesExceptionsUndo.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar, in: after).outcome
-            occurrenceAnswer = "\(outcome)"
+            let undone = onMain ? try SeriesUndoOnMain.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar, in: after)
+                                : try SeriesExceptionsUndo.undoDeleteOccurrence(record, notCarriedOver: [], calendar: calendar, in: after)
+            occurrenceAnswer = "\(undone.outcome)"
+            occurrenceText = undone.text
         } catch {
             occurrenceAnswer = "refused \(type(of: error))"
+            occurrenceText = error.localizedDescription
         }
-        return Chain(series: "\(String(describing: seriesOutcome))", occurrence: occurrenceAnswer, calendar: after.events.map(key).sorted())
+        return Chain(series: "\(String(describing: seriesUndone.outcome))", seriesText: seriesUndone.text, occurrence: occurrenceAnswer,
+                     occurrenceText: occurrenceText, calendar: after.events.map(key).sorted())
     }
 
     /// Builds the store of a sequence and runs both paths on a copy each.
-    private func compare(_ host: TimeZone, moveBeforeB: TimeInterval, file: StaticString = #filePath, line: UInt = #line) throws
+    private func compare(_ host: TimeZone, moveBeforeB: TimeInterval, floating: Bool = false, file: StaticString = #filePath, line: UInt = #line) throws
         -> (production: Chain, main: Chain) {
+        func rid(_ slot: Date) -> String { floating ? floatingRID(slot, in: host) : zonedRID(slot) }
         func build() -> (store: FakeSeriesExceptionsStore, a: FakeSeriesExceptionsStore.Event, first: FakeSeriesExceptionsStore.Event, slots: [Date]) {
             let original = (0..<6).map { date(2027, 3, 1, 10, in: host).addingTimeInterval(Double($0) * 7 * day) }
             let store = FakeSeriesExceptionsStore()
             store.zone = host
             let occurrences = store.addSeries(id: "S", calendar: "C", title: "Standup", slots: original)
-            // A, the second occurrence, retitled while the series had its zone.
-            edit(occurrences[1], rid: zonedRID(original[1]), title: "A edited")
+            // A, the second occurrence, retitled while the series had its zone (MA: had none).
+            edit(occurrences[1], rid: rid(original[1]), title: "A edited")
             // (b): the whole zoned series moved; every occurrence moves, A keeps its `/RID=` (cell N1).
             let moved = original.map { $0.addingTimeInterval(moveBeforeB) }
             for (index, occurrence) in occurrences.enumerated() {
                 occurrence.start = moved[index]
                 if !occurrence.detached { occurrence.occurrenceDate = moved[index] }
             }
-            // B, the fourth, retitled while the series had its zone, at its time now.
-            edit(occurrences[3], rid: zonedRID(moved[3]), title: "B edited")
+            // B, the fourth, retitled while the series had its zone (MA: had none), at its time now.
+            edit(occurrences[3], rid: rid(moved[3]), title: "B edited")
             // `clear_timezone` at the same wall-clock time: the instants stay. The capture does not read the
             // series' zone (PR #558 fix round 4; at `eb568983` the fake's series was marked floating here, so
             // its capture took a second reading); A's origin takes it from the series (`run`).
@@ -132,6 +151,20 @@ final class WholeSeriesUndoChainOnMainTests: XCTestCase {
             XCTAssertEqual(production, main, "host \(host.secondsFromGMT() / 60) min")
             let starts = production.calendar.map { $0.split(separator: " ")[0] }
             XCTAssertEqual(Set(starts).count, starts.count, "two events at one start: \(production.calendar)")
+        }
+    }
+
+    /// MA (fix round 5; before, ruling F refused A's undo away from offset 0, where `main` writes A beside the
+    /// plain occurrence): both edits made while the series had no time zone. The chain is `main`'s, its texts
+    /// included; away from offset 0 that is two events at A's start, `main`'s own (#539 stays open for it), and
+    /// at UTC A is written once.
+    // spec-example: undo-history-discard / MA is as on main
+    func testMAChainIsAsOnMain() throws {
+        for host in hosts {
+            let (production, main) = try compare(host, moveBeforeB: 0, floating: true)
+            XCTAssertEqual(production, main, "host \(host.secondsFromGMT() / 60) min")
+            let atA = main.calendar.filter { $0.hasPrefix(main.calendar.first { $0.hasSuffix(" A edited") }!.split(separator: " ")[0] + " ") }
+            XCTAssertEqual(atA.count, host.secondsFromGMT() == 0 ? 1 : 2, "events at A's start on main, host \(host.secondsFromGMT() / 60) min")
         }
     }
 }

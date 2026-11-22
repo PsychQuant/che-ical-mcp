@@ -606,14 +606,20 @@ final class EventRangeQueryTests: XCTestCase {
                 }
             }
         }
+        // PR #558 fix round 5 (#539, Q2): `DryRunCaptureStore`, the store a dry run's forecast captures through,
+        // declares the requirement and passes the range it is given on to the store it wraps, unchanged.
         XCTAssertEqual(declarations.sorted(), [
+            "DryRunCaptureStore.swift: range: DateInterval,",
             "SeriesExceptionsStoreSource.swift: range: DateInterval,",
             "SeriesExceptionsStoreSource.swift: range: DateInterval,",
-        ], "the requirement and the EventKit adapter only")
+        ], "the requirement, the EventKit adapter and the dry run's wrapper only")
         XCTAssertEqual(calls.sorted(), [
+            "DryRunCaptureStore.swift: range,",
             "SeriesExceptionsUndo.swift: range,",
             "SeriesExceptionsUndo.swift: window,",
-        ], "a listing range of a recorded window, or a recorded window (PR #494 round 4: one per window)")
+        ], "a listing range of a recorded window, or a recorded window (PR #494 round 4: one per window), and the wrapper's pass-through")
+        let wrapper = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/DryRunCaptureStore.swift"), encoding: .utf8))
+        XCTAssertEqual(SourcePins.ranges(of: "base.events(in: range, inCalendarOf: event)", in: wrapper).count, 1, "the wrapper passes its range on")
         let undo = SourcePins.code(try String(contentsOf: sources.appendingPathComponent("EventKit/SeriesExceptionsUndo.swift"), encoding: .utf8))
         let capture = try XCTUnwrap(SourcePins.body(of: "static func capture<", in: undo))
         let observed = try XCTUnwrap(SourcePins.body(of: "private static func observedOccurrences<", in: undo))

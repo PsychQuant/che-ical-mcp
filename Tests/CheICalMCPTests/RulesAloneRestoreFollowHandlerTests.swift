@@ -8,20 +8,12 @@ import XCTest
 /// recorded exceptions (a recorded slot the recreated series does not generate, `main`'s only such path
 /// since fix round 4 removed round 3's two) does with older undo records of the series. It brings the series back from its
 /// rules alone, with no occurrence as a separate event, so `DeleteUndoFollow.decision` gives `follow`:
-/// the older records move to the recreated series, and none is flagged. Then the slot guard's refusal
-/// (`OccurrenceSlotWallClockRefusal`) through `handleUndo`, for an entry #538 flagged and for one it did
-/// not: the caller gets the refusal's own text, and the entry is kept.
+/// the older records move to the recreated series, and none is flagged. (Fix round 5 removed the test of the
+/// slot guard's refusal through `handleUndo`, with ruling F.)
 final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
     private final class DeniedProbe: AuthorizationStatusSource {
         func authorizationStatus(for: EKEntityType) -> EKAuthorizationStatus { .denied }
         func requestFullAccess(for: EKEntityType, isolation: isolated (any Actor)?) async throws -> Bool { false }
-    }
-
-    private actor RefusingExecutor: UndoExecutionSource {
-        let refusal: OccurrenceSlotWallClockRefusal
-        init(_ refusal: OccurrenceSlotWallClockRefusal) { self.refusal = refusal }
-        func executeUndo(_ operation: UndoOperation) async throws -> String { throw refusal }
-        func executeRedo(_ operation: UndoOperation) async throws -> String { "" }
     }
 
     private let hour: TimeInterval = 3_600
@@ -107,32 +99,5 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
     func testTheDecisionForEachNotAppliedOutcomeIsFollow() {
         XCTAssertEqual(DeleteUndoFollow.decision(removedID: "S", newID: "R", isOccurrenceRecord: false,
                                                  outcome: .seriesWithExceptions(.init(stayedDeleted: 0, oneOffs: 0, notApplied: true))), .follow("R"))
-    }
-
-    /// The refusal reaches the caller unchanged for a flagged entry (its catch is for a not-found only)
-    /// and for a plain one, and the entry stays on top.
-    func testTheGuardsRefusalReachesTheCallerForAFlaggedAndAPlainEntry() async throws {
-        let refusal = OccurrenceSlotWallClockRefusal(title: "Third", kind: .undoMoveByCopy)
-        for flag in [true, false] {
-            let history = CalendarUndoManager()
-            let original = UndoSnapshotFixtures.event(title: "Third")
-            await history.record(.moveByCopy(original: original, isSplit: true, notCarriedOver: [], copyID: "COPY", copy: original))
-            if flag {
-                let marked = await history.markSeriesNotFollowed("COPY")
-                XCTAssertEqual(marked, 1)
-            }
-            let before = await history.historySnapshot().entries.first?.id
-            let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: RefusingExecutor(refusal))
-
-            let result = await server.handleToolCallForTesting(name: "undo", arguments: [:])
-
-            XCTAssertEqual(result.isError, true)
-            let raw = try text(result)
-            XCTAssertEqual(raw.hasPrefix("Error: ") ? String(raw.dropFirst(7)) : raw, refusal.message, "flagged \(flag)")
-            let after = await history.historySnapshot().entries.first?.id
-            XCTAssertEqual(after, before, "kept on top, flagged \(flag)")
-            let kept = await history.popUndo()
-            XCTAssertEqual(kept?.seriesNotFollowed, flag)
-        }
     }
 }

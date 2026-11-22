@@ -163,7 +163,7 @@ final class ZonedSeriesUndoOnMainTests: XCTestCase {
         }
         let answer: String
         do {
-            let outcome = onMain ? try SeriesExceptionsUndo.restoreOnMain(exceptions, of: restored, in: store)
+            let outcome = onMain ? try SeriesExceptionsUndo.restoreAtBase(exceptions, of: restored, in: store)
                                  : try SeriesExceptionsUndo.restore(exceptions, of: restored, in: store)
             answer = "\(outcome)"
         } catch {

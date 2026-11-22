@@ -267,13 +267,11 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
     /// remainder), shown through `undoShownTitle`. `failedBeforeWrite`: its error is one the restore
     /// raises before it writes anything (`UndoOperation.failsBeforeAnyWrite`), so no second copy can
     /// come of it (PR #390 round 1). `failingWhen`: what tells it apart from another member of the
-    /// same title (`UndoOperation.restoredItemWhen`, #407), or nil. `refusedAtItsSlot` (PR #558 round 2,
-    /// H6, H8, H32): its error is the slot check's refusal (`OccurrenceSlotWallClockRefusal`), thrown before
-    /// anything of it is written, for its own reason, not a missing calendar or list.
+    /// same title (`UndoOperation.restoredItemWhen`, #407), or nil.
     init(remaining: [UndoOperation], restoredCount: Int, memberError: String, failing: FailingMember = .runsLast,
          restored: [UndoOperation] = [], restoredDiffering: [UndoRestoredDifference] = [],
          restoredEvents: [UndoEventOutcome] = [], restoredNotFollowed: [Int] = [],
-         failingTitle: String? = nil, failingWhen: String? = nil, failedBeforeWrite: Bool = false, refusedAtItsSlot: Bool = false) {
+         failingTitle: String? = nil, failingWhen: String? = nil, failedBeforeWrite: Bool = false) {
         self.remaining = remaining
         self.restoredCount = restoredCount
         self.restored = restored
@@ -321,9 +319,7 @@ struct UndoBatchPartiallyUndoneError: LocalizedError, Sendable {
         case .runsLast, .inRecordedOrder:
             let item = failingTitle.map { "'\(undoShownTitle($0))'" + (failingWhen.map { " (\($0))" } ?? "") }
             let written: String
-            if refusedAtItsSlot {
-                written = " \(item ?? "The item that failed") was refused before anything of it was written (this server could not tell whether its series already holds its time, as its own error says), so this attempt left no copy of it."
-            } else if failedBeforeWrite {
+            if failedBeforeWrite {
                 written = " \(item ?? "The item that failed") failed before anything of it was written (its calendar or list was not found), so running undo again does not add a copy of it."
             } else {
                 // PR #390 round 2: no cause named, so the sentence holds for every failure after the
@@ -395,15 +391,12 @@ extension UndoOperation {
             restoredItemTitles(of: members).filter { $0 == title }.count > 1 ? members[failedIndex].restoredItemWhen : nil
         }
         let failedBeforeWrite = inner == nil && failsBeforeAnyWrite(interrupted.underlying)
-        // PR #558 round 2 (H6, H8, H32): the slot check's refusal writes nothing either, for its own reason.
-        let refusedAtItsSlot = inner == nil && interrupted.underlying is OccurrenceSlotWallClockRefusal
         func partial(_ remaining: [UndoOperation], _ failing: UndoBatchPartiallyUndoneError.FailingMember,
                      _ memberError: String) -> UndoBatchPartiallyUndoneError {
             UndoBatchPartiallyUndoneError(remaining: remaining, restoredCount: restored, memberError: memberError,
                                           failing: failing, restored: restoredMembers, restoredDiffering: restoredDiffering,
                                           restoredEvents: restoredEvents, restoredNotFollowed: restoredNotFollowed,
-                                          failingTitle: failingTitle, failingWhen: failingWhen, failedBeforeWrite: failedBeforeWrite,
-                                          refusedAtItsSlot: refusedAtItsSlot)
+                                          failingTitle: failingTitle, failingWhen: failingWhen, failedBeforeWrite: failedBeforeWrite)
         }
         if inner == nil, interrupted.underlying is UnrecoverableUndoError {
             guard !unattempted.isEmpty || restored > 0 else { return interrupted.underlying }

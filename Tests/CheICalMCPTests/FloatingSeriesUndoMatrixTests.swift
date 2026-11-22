@@ -43,7 +43,17 @@ import XCTest
 /// - a cell whose edited `/RID=` reads as its slot (edited while zoned, or at offset 0), not moved, its
 ///   first occurrence plain, applies;
 /// - where the delete's forecast can be read (the series object reached, its first occurrence plain),
-///   it forecasts the rules alone exactly when the undo applies nothing.
+///   the planner's forecast (`SeriesExceptionsPlanner.unplacedEdits`, from the test's first slot in the
+///   host's zone) says the rules alone exactly when the undo applies nothing.
+///
+/// What this shows, and no more (fix round 5, verify findings Q5, P14, P20): both arms run on one resolution
+/// result and on the recreated slots the test hands the fake store (for a daily cell too, whose recorded
+/// snapshot is weekly), so a cell shows that the store-level capture and undo routines give `main`'s calendar,
+/// answer and text given the same resolution and generated slots. A cell whose resolution fails is counted as
+/// the #428 route and runs neither undo, and a cell where neither arm captures runs none. The delete's own
+/// forecast wiring (`EventKitManager.unplacedEditsAtDelete`, `wholeSeriesBaseline`, `previewUndoForecast`) is
+/// not run here: `SeriesDeleteForecastWiringTests` pins it and `SeriesDeleteForecastHandlerTests` drives the
+/// handlers with doubles. The `main` arm's restore is 92d9b796's (`SeriesExceptionsUndo.restoreAtBase`).
 final class FloatingSeriesUndoMatrixTests: XCTestCase {
     private let hour: TimeInterval = 3_600
     private let day: TimeInterval = 86_400

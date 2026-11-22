@@ -31,28 +31,6 @@ struct SeriesExceptions {
 
     /// `window` and `extraWindows`: every slot judged, kept or removed is inside one of them.
     var windows: [DateInterval] { [window] + extraWindows }
-
-    /// PR #558 fix round 4 (verify finding C3): this record as the series reads after the occurrences
-    /// `gone` names are deleted. A dry run of `delete_events_batch` captures a series before anything is
-    /// deleted, while the real call's series row captures it after the call's earlier rows deleted those
-    /// occurrences (each edited on its own and named by its own `<series id>/RID=` identifier, which
-    /// `DetachedOccurrenceSpan.occurrenceRowsFirst` runs first), so they are left out of `detached` by their
-    /// rule slot, read as the capture reads it (`UndoPostState.ruleSlot`). An identifier of another series,
-    /// or one without a `/RID=`, leaves the record as it is.
-    func excluding(_ gone: Set<String>, ofSeries seriesID: String, isAllDay: Bool, zone: TimeZone = .current) -> SeriesExceptions {
-        let slots = gone.compactMap { id -> Date? in
-            guard DetachedOccurrenceSpan.seriesIdentifier(of: id) == seriesID else { return nil }
-            return UndoPostState.ruleSlot(eventIdentifier: id, externalIdentifier: nil, occurrenceDate: nil, isAllDay: isAllDay, zone: zone)
-        }
-        guard !slots.isEmpty else { return self }
-        let set = InstantSet(slots)
-        var cut = SeriesExceptions(window: window, keptSlots: keptSlots, detached: detached.filter { !set.contains($0.slot) },
-                                   extraWindows: extraWindows)
-        cut.seriesStartsBeforeWindow = seriesStartsBeforeWindow
-        cut.seriesContinuesAfterWindow = seriesContinuesAfterWindow
-        cut.seriesMayContinueAfterWindow = seriesMayContinueAfterWindow
-        return cut
-    }
 }
 
 /// An occurrence edited on its own: undo recreates it as a one-off event (EventKit cannot put an
@@ -494,31 +472,22 @@ enum SeriesExceptionsRestorer {
 /// series' rule gave the occurrence, not its (possibly edited) title and start.
 struct OccurrenceOrigin: Equatable {
     let series: UndoPostState.OccurrenceIDs
-    /// The rule slot (`UndoPostState.ruleSlot`, a `/RID=` read as an instant): where the guard lists the
-    /// holders and what it compares, as before #539.
     let slot: Date
     /// #321 r1: the occurrence was edited on its own before its delete (detached, or a `/RID=`
     /// identifier): a series that holds its slot holds it without that edit.
     var edited: Bool = false
-    /// #539, PR #558 ruling F: the `/RID=` digits read as wall-clock time in the reader's zone
-    /// (`SlotReadings.wallClock`), taken only for an occurrence of a series that had no time zone when it
-    /// was read (ruling J); nil otherwise, for an all-day occurrence, one without a `/RID=`, and when it is
-    /// the same instant as `slot`. Only the refusal of `OccurrenceSlotGuard.answer` reads it.
-    var wallClock: Date? = nil
 
     /// From an occurrence's identifiers: the series is the part before a `/RID=` suffix
     /// (`DetachedOccurrenceSpan.seriesIdentifier`), the slot the rule slot (`UndoPostState.ruleSlot`:
     /// the RID when there is one, otherwise `occurrenceDate`). Nil without either: nothing ties the
-    /// occurrence to its series, and the guard cannot decide. `floating`: the series had no time zone
-    /// when the occurrence was read, so a timed `/RID=` is also read as wall-clock time (`SlotReadings`).
+    /// occurrence to its series, and the guard cannot decide.
     static func of(eventIdentifier: String?, externalIdentifier: String?, occurrenceDate: Date?, isAllDay: Bool,
-                   isDetached: Bool = false, floating: Bool = false, zone: TimeZone = .current) -> OccurrenceOrigin? {
+                   isDetached: Bool = false, zone: TimeZone = .current) -> OccurrenceOrigin? {
         guard let series = seriesIDs(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier),
-              let readings = SlotReadings.of(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
-                                             occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone) else { return nil }
+              let slot = UndoPostState.ruleSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
+                                                occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone) else { return nil }
         let rid = UndoPostState.originalSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier, occurrenceDate: nil)
-        return OccurrenceOrigin(series: series, slot: readings.instant, edited: isDetached || rid != nil,
-                                wallClock: floating ? readings.wallClock : nil)
+        return OccurrenceOrigin(series: series, slot: slot, edited: isDetached || rid != nil)
     }
 
     /// The identifiers of the series an occurrence belongs to: each without its `/RID=` suffix.
@@ -573,60 +542,16 @@ enum OccurrenceSlotGuard {
     /// #321: an event listed at the slot: its identifiers and the slot its rule gave it.
     struct SeriesHolder: Equatable {
         let ids: UndoPostState.OccurrenceIDs
-        /// The holder's rule slot (`UndoPostState.ruleSlot`, a `/RID=` read as an instant).
         let slot: Date
-        /// PR #558 ruling F: the holder is edited on its own (detached, or a `/RID=` identifier), so its
-        /// `slot` is read from digits that may be wall-clock time; only a holder not edited on its own,
-        /// whose slot is its `occurrenceDate`, a true instant, can make `answer` refuse.
-        var edited: Bool = false
-    }
-
-    /// PR #558 ruling F: what the guard answers.
-    enum Answer: Equatable {
-        /// No occurrence of the series is at the slot: the occurrence is written as a one-off.
-        case free
-        /// An occurrence of the series is at the slot (`isHeld`): nothing is written and the record is
-        /// used up.
-        case held
-        /// No occurrence of the series is at the slot, and one not edited on its own is at the wall-clock
-        /// reading of the origin's `/RID=` (`OccurrenceOrigin.wallClock`). Which reading is the slot cannot
-        /// be told here (#539: the digits of an occurrence edited while its series had no time zone are
-        /// wall-clock time, those of one edited while it had a zone are an instant, and a series can hold
-        /// both, cell R2), so the undo writes nothing and is refused with the record kept
-        /// (`OccurrenceSlotWallClockRefusal`).
-        case heldAtWallClockOnly
-    }
-
-    /// #321: the answer for the recorded slot among `holders`. Only an occurrence of the recorded series,
-    /// or of a series undo recreated from it (`recreated`), counts, tied by identifier
-    /// (`UndoPostState.isOccurrence`), never by title: before #321 any recurring event with the title at
-    /// that second held the slot, an unrelated series included, and an occurrence retitled or moved before
-    /// its delete was compared by its edit. A one-off at the slot does not count: it is not what the series'
-    /// restore brings back, and refusing to write beside it would hide a real second write.
-    ///
-    /// `held` is `isHeld`'s answer, unchanged: such an occurrence at the origin's slot, to the second.
-    /// PR #558 ruling F: where that answer is no, `heldAtWallClockOnly` when one not edited on its own is at
-    /// the origin's wall-clock reading. So the guard answers held only where it did before #539, and the
-    /// new answer writes nothing and keeps the record where the undo before #539 wrote a one-off: what it
-    /// writes is a part of what was written before. An edited holder is compared by its slot only (two
-    /// readings compared with two readings can meet where neither occurrence's slot is, PR #558 verify F1,
-    /// F4). Not covered: an edited holder at the origin's true slot whose `/RID=` is of the other kind does
-    /// not meet the origin's slot, so the one-off is written beside it, as before #539.
-    static func answer(_ origin: OccurrenceOrigin, recreatedAs recreated: [UndoPostState.OccurrenceIDs],
-                       by holders: [SeriesHolder]) -> Answer {
-        if isHeld(origin, recreatedAs: recreated, by: holders) { return .held }
-        let series = [origin.series] + recreated
-        if let wallClock = origin.wallClock, holders.contains(where: { holder in
-            !holder.edited && UndoPostState.sameInstant(holder.slot, wallClock)
-                && series.contains { UndoPostState.isOccurrence(holder.ids, of: $0) }
-        }) {
-            return .heldAtWallClockOnly
-        }
-        return .free
     }
 
     /// #321: true when one of `holders` is an occurrence of the recorded series, or of a series
-    /// undo recreated from it (`recreated`), at the recorded rule slot (to the second) (`answer`).
+    /// undo recreated from it (`recreated`), at the recorded rule slot (to the second). Tied by
+    /// identifier (`UndoPostState.isOccurrence`), never by title: before #321 any recurring event
+    /// with the title at that second held the slot, an unrelated series included, and an occurrence
+    /// retitled or moved before its delete was compared by its edit. A one-off at the slot does not
+    /// count: it is not what the series' restore brings back, and refusing to write beside it would
+    /// hide a real second write.
     static func isHeld(_ origin: OccurrenceOrigin, recreatedAs recreated: [UndoPostState.OccurrenceIDs],
                        by holders: [SeriesHolder]) -> Bool {
         let series = [origin.series] + recreated
@@ -662,7 +587,6 @@ enum OccurrenceSlotGuard {
         guard hasRecurrenceRules || isDetached || hasSlotSuffix else { return nil }
         return SeriesHolder(ids: .init(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier),
                      slot: UndoPostState.ruleSlot(eventIdentifier: eventIdentifier, externalIdentifier: externalIdentifier,
-                                                  occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone) ?? startDate,
-                     edited: isDetached || hasSlotSuffix)
+                                                  occurrenceDate: occurrenceDate, isAllDay: isAllDay, zone: zone) ?? startDate)
     }
 }
