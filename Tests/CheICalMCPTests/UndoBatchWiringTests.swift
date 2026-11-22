@@ -106,7 +106,10 @@ final class UndoBatchWiringTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bundoOperations\b"#, in: String(series)).count, 4)
         XCTAssertNotNil(Self.offset(of: Self.call("var undoOperations: [UndoOperation] = []"), in: series))
         // #538: the one append builds a whole-event delete record with the identifier read before the removal.
-        XCTAssertNotNil(Self.offset(of: Self.call("undoOperations.append(.deleteEvent(id: removedID, snapshot: snapshot))"), in: series))
+        let seriesRecord = try XCTUnwrap(Self.offset(
+            of: Self.call("let record = UndoOperation.deleteEvent(id: removedID, snapshot: snapshot)"), in: series))
+        let seriesAppend = try XCTUnwrap(Self.offset(of: Self.call("undoOperations.append(record)"), in: series))
+        XCTAssertLessThan(seriesRecord, seriesAppend)
         // PR #465 verify r1: a row through the first occurrence cannot be undone, so it is kept out
         // of the record and only reported: its array is not part of any record.
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bthroughFirstOccurrence\b"#, in: String(series)).count, 4,

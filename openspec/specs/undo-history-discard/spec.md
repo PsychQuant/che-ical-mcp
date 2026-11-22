@@ -372,15 +372,18 @@ code:
   - Sources/CheICalMCP/EventKit/SeriesExceptionsStoreSource.swift
   - Sources/CheICalMCP/EventKit/SeriesExceptionsUndo.swift
   - Sources/CheICalMCP/Server.swift
+  - Tests/CheICalMCPTests/DeleteUndoFollowWiringTests.swift
   - Tests/CheICalMCPTests/DetachedOccurrenceSpanTests.swift
   - Tests/CheICalMCPTests/EventRangeQueryTests.swift
   - Tests/CheICalMCPTests/FloatingSeriesUndoMatrixTests.swift
   - Tests/CheICalMCPTests/Helpers/FakeSeriesExceptionsStore.swift
   - Tests/CheICalMCPTests/Helpers/SeriesUndoOnMain.swift
   - Tests/CheICalMCPTests/ManifestParityTests.swift
+  - Tests/CheICalMCPTests/OccurrenceOriginWiringTests.swift
   - Tests/CheICalMCPTests/SeriesDeleteForecastHandlerTests.swift
   - Tests/CheICalMCPTests/SeriesDeleteForecastTests.swift
   - Tests/CheICalMCPTests/SeriesDeleteForecastWiringTests.swift
+  - Tests/CheICalMCPTests/UndoBatchWiringTests.swift
   - Tests/CheICalMCPTests/UndoForecastDocsTests.swift
   - Tests/CheICalMCPTests/WholeSeriesUndoChainOnMainTests.swift
   - Tests/CheICalMCPTests/ZonedSeriesUndoOnMainTests.swift
