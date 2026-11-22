@@ -914,6 +914,20 @@ final class ManifestParityTests: XCTestCase {
         }
     }
 
+    /// #544: both create tools say that a retry whose match is the series' edited first occurrence is
+    /// checked against the series, and that the answers give the series' identifier.
+    func testTheCreateToolsSayAnEditedFirstOccurrenceRetryIsCheckedAgainstItsSeries() throws {
+        let phrase = "When the series' first occurrence was edited on its own, the retry is checked against the series named before /RID=, and the answers give the series' identifier (#544)."
+        let tools = CheICalMCPServer.defineTools()
+        for name in ["create_event", "create_events_batch"] {
+            let schema = try XCTUnwrap(tools.first { $0.name == name }?.inputSchema, name)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .withoutEscapingSlashes
+            let raw = String(decoding: try encoder.encode(schema), as: UTF8.self)
+            XCTAssertEqual(raw.components(separatedBy: phrase).count, 2, name)
+        }
+    }
+
     /// PR #415 verify round 2: update_reminder says when `alarms_note` appears, in its description,
     /// in its `alarms_minutes_offsets` parameter and in the manifest summary.
     func testUpdateReminderDescribesTheLeftoverAlarmsNote() throws {
