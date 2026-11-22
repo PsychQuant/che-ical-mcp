@@ -1507,7 +1507,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
 
     func testDeleteEventChecksTheOccurrenceDateBeforeItRemoves() throws {
         let head = try collapsed("func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil)", upTo: "eventStore.remove(", in: "EventKit/EventKitManager.swift")
-        XCTAssertTrue(head.contains("if DetachedOccurrenceSpan.refusesOccurrenceDate( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: false, hasOccurrenceDate: occurrenceDate != nil, matches: occurrenceDateMatches(occurrenceDate, occurrence: masterEvent, id: identifier)) { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.occurrenceDateReason) }"), head)
+        XCTAssertTrue(head.contains("if DetachedOccurrenceSpan.refusesOccurrenceDate( identifier: identifier, isDetached: masterEvent.isDetached, wholeSeries: false, hasOccurrenceDate: occurrenceDate != nil, matches: occurrenceDateMatches(occurrenceDate, occurrence: masterEvent, id: identifier)) { throw EventKitError.occurrenceAddressRefused(reason: occurrenceDateRefusal(occurrenceDate, occurrence: masterEvent, id: identifier)) }"), head)
     }
 
     /// The slot and the completeness that `neighbours` judges come from the scan's own bounds.
@@ -1531,7 +1531,12 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
         let manager = try updateBody()
         XCTAssertTrue(manager.contains("if occurrenceDate != nil, !applyToAll, DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: masterEvent.isDetached) { matchedOccurrence = MatchedOccurrence(start: masterEvent.startDate, zone: Self.occurrenceZone(of: masterEvent)) }"), manager)
         let source = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/FirstRemainingOccurrence.swift")))
-        XCTAssertTrue(source.contains("return [occurrence.startDate, slot].contains {"), "the shown day or the original one")
+        // #543: the shown day or the original one, compared in `OccurrenceDateMatch.answer`, which
+        // `occurrenceDateAnswer` calls with the occurrence's start.
+        XCTAssertTrue(source.contains("return OccurrenceDateMatch.answer( requested: date, start: occurrence.startDate,"), "the shown day or the original one")
+        let match = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try SourcePins.source("EventKit/OccurrenceDateMatch.swift")))
+        XCTAssertTrue(match.contains("if onRequestedDay(start) { return .matches }"), "the shown day")
+        XCTAssertTrue(match.contains("let asInstant = onRequestedDay(rid ?? occurrenceDate)"), "or the original one")
         XCTAssertTrue(source.contains("neighbours: try occurrenceNeighbours(of: event, id: id, namedInTheCall: namedInTheCall))"))
         XCTAssertTrue(source.contains("namedInTheCall: namedInTheCall)"))
     }
