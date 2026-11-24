@@ -40,13 +40,19 @@ enum CreateRetryIdentity {
 
     /// For a recurring request whose title lookup found nothing: the first candidate of the same kind
     /// (timed or all-day) that `resolve` takes as its series' first occurrence edited in place, of a
-    /// series with the requested title. Its own title is not read: it differs, or the title lookup
-    /// would have found it.
+    /// series with the requested title and of the request's kind too (PR #588 verify round 1: a timed
+    /// series whose 00:00 first occurrence was turned all-day would otherwise be taken for an all-day
+    /// request). Its own title is not read: it differs, or the title lookup would have found it.
+    /// The series' rules are not compared with the request's: a new series of another rule with the
+    /// same title and first start is refused too, writing nothing.
     static func retitledFirstOccurrence(recurring: Bool, candidates: [Candidate], isAllDay: Bool, request: ExclusionRetryTarget.Request,
                                         series: (String) throws -> ExclusionRetryTarget.SeriesFacts?) -> Retitled? {
         guard recurring else { return nil }
         for candidate in candidates where candidate.isAllDay == isAllDay {
-            guard case .series(let id, _)? = try? ExclusionRetryTarget.resolve(match: candidate.match, request: request, series: series),
+            let sameKind: (String) throws -> ExclusionRetryTarget.SeriesFacts? = { id in
+                try series(id).flatMap { $0.isAllDay == isAllDay ? $0 : nil }
+            }
+            guard case .series(let id, _)? = try? ExclusionRetryTarget.resolve(match: candidate.match, request: request, series: sameKind),
                   id != candidate.match.identifier else { continue }
             return Retitled(occurrenceID: candidate.match.identifier, seriesID: id)
         }

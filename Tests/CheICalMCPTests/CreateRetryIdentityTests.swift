@@ -84,6 +84,26 @@ final class CreateRetryIdentityTests: XCTestCase {
         XCTAssertNil(find(candidate(firstID)) { _ in throw Raised() })
     }
 
+    /// PR #588 verify round 1: the series' kind must be the request's too. An all-day request at local
+    /// midnight over a timed series whose 00:00 first occurrence was turned all-day and retitled: the
+    /// slot and start match, the series is timed, so nothing is taken (`main` creates). The same shape
+    /// on an all-day series (its `/RID=` a floating date) is taken.
+    func testTheSeriesKindMustBeTheRequests() {
+        let taipei = TimeZone(identifier: "Asia/Taipei")!
+        let midnight = Date(timeIntervalSinceReferenceDate: 818_265_600) // 2026-12-07 00:00 +08:00
+        let allDayRequest = ExclusionRetryTarget.Request(title: title, start: midnight, host: taipei)
+        func series(allDay: Bool) -> (String) throws -> ExclusionRetryTarget.SeriesFacts? {
+            { _ in ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: true, timeZone: nil, title: self.title, isAllDay: allDay, firstStart: midnight) }
+        }
+        let timedSlot = CreateRetryIdentity.Candidate(match: match("S/RID=818265600", start: midnight), isAllDay: true)
+        XCTAssertNil(CreateRetryIdentity.retitledFirstOccurrence(recurring: true, candidates: [timedSlot], isAllDay: true,
+                                                                 request: allDayRequest, series: series(allDay: false)))
+        let floatingSlot = CreateRetryIdentity.Candidate(match: match("S/RID=818294400", start: midnight), isAllDay: true)
+        XCTAssertEqual(CreateRetryIdentity.retitledFirstOccurrence(recurring: true, candidates: [floatingSlot], isAllDay: true,
+                                                                   request: allDayRequest, series: series(allDay: true)),
+                       CreateRetryIdentity.Retitled(occurrenceID: "S/RID=818294400", seriesID: "S"))
+    }
+
     /// The text names both identifiers only in the echoed shape, says nothing was written, and
     /// carries no `<`, `>` or `&` (#166).
     func testTheRetitledText() {
