@@ -399,9 +399,10 @@ enum DeletedOccurrenceCheck {
             if slot >= until { return false }
             if let end = rule.endDate, slot > end { return false }
             slots.append(slot)
-            if rule.occurrenceCount > 0, slots.count >= rule.occurrenceCount { return false }
-            // Verify r2 (LOW 1): too many only when a slot past `maxSlots` exists in range.
+            // Verify r2 (LOW 1): too many only when a slot past `maxSlots` exists in range. #576: before
+            // the count's end, so a count whose last slot is the 20,001st is capped as an open rule is.
             if slots.count > maxSlots { capped = true; return false }
+            if rule.occurrenceCount > 0, slots.count >= rule.occurrenceCount { return false }
             return true
         }
         func past(_ date: Date) -> Bool { date >= until || (rule.endDate.map { date > $0 } ?? false) }
