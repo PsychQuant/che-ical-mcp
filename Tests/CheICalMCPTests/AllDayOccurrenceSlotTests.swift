@@ -96,25 +96,35 @@ final class AllDayOccurrenceSlotTests: XCTestCase {
         XCTAssertTrue(counted(start: utcMidnight("2027-01-12"), slot: utcMidnight("2027-01-11"), zone: utc))
     }
 
-    /// A zone whose midnight is skipped on the slot's day: the occurrence starts at the day's first
-    /// instant, which is what the host's midnight means there (PR #571).
+    /// Zones whose midnight is skipped on the slot's day: the occurrence starts at the day's first
+    /// instant, which is what the host's midnight means there (PR #571). Havana is west of UTC, so the
+    /// two readings name different days and it is counted; Beirut (east of UTC) skips 2027-03-28 00:00
+    /// and starts that day at 01:00, so it is not.
     func testOnADayWithoutMidnightTheDaysFirstInstantIsTheSlot() {
         let havana = zone("America/Havana")
-        let firstInstant = Calendar.gregorian(in: havana).startOfDay(for: utcMidnight("2028-03-12").addingTimeInterval(12 * 3600))
-        XCTAssertTrue(counted(start: firstInstant, slot: utcMidnight("2028-03-12"), zone: havana),
+        let havanaFirst = Calendar.gregorian(in: havana).startOfDay(for: utcMidnight("2028-03-12").addingTimeInterval(12 * 3600))
+        XCTAssertTrue(counted(start: havanaFirst, slot: utcMidnight("2028-03-12"), zone: havana),
                       "Havana is west of UTC: the two readings name different days")
-        let east = TimeZone(secondsFromGMT: 3 * 3600)!
-        XCTAssertFalse(counted(start: midnight("2028-03-12", in: east), slot: utcMidnight("2028-03-12"), zone: east))
+        let beirut = zone("Asia/Beirut")
+        let beirutFirst = Calendar.gregorian(in: beirut).startOfDay(for: utcMidnight("2027-03-28"))
+        XCTAssertEqual(beirutFirst, utcMidnight("2027-03-27").addingTimeInterval(22 * 3600),
+                       "precondition: Beirut's 2027-03-28 starts at 01:00 (22:00 UTC the day before)")
+        XCTAssertEqual(text(beirutFirst, beirut, "HH:mm"), "01:00", "precondition: that midnight is skipped")
+        XCTAssertFalse(counted(start: beirutFirst, slot: utcMidnight("2027-03-28"), zone: beirut))
+        XCTAssertTrue(counted(start: beirutFirst.addingTimeInterval(-3600), slot: utcMidnight("2027-03-28"), zone: beirut),
+                      "an hour before the day's first instant is the day before")
     }
 
     /// Against `main`'s comparison (the start equals the slot as an instant), over zones from −12 to
-    /// +14 hours and named zones, starts around three slots, every flag: nothing `main` accepts is
-    /// counted, and every newly accepted cell is of the one kind the change accepts, checked by
-    /// formatting the dates as text rather than through the code under test.
+    /// +14 hours and named zones, starts around three slots, every flag: a cell is not counted exactly
+    /// when `main` accepts it or it is of the one kind the change accepts, the kind checked by
+    /// formatting the dates as text rather than through the code under test (the start is the day's
+    /// first instant when the second before it is on another date).
     func testNothingIsAcceptedBeyondMainExceptWhereBothReadingsNameOneDay() {
         var zones = (-12...14).compactMap { TimeZone(secondsFromGMT: $0 * 3600) }
-        zones += ["America/Los_Angeles", "Asia/Taipei", "Asia/Kolkata", "America/St_Johns", "Pacific/Chatham", "America/Havana"].map(zone)
-        let slots = ["2027-01-11", "2027-03-14", "2027-07-04"].flatMap { day in
+        zones += ["America/Los_Angeles", "Asia/Taipei", "Asia/Kolkata", "America/St_Johns", "Pacific/Chatham", "America/Havana",
+                  "Asia/Beirut"].map(zone)
+        let slots = ["2027-01-11", "2027-03-14", "2027-07-04", "2027-03-28"].flatMap { day in
             [utcMidnight(day), utcMidnight(day).addingTimeInterval(8 * 3600), utcMidnight(day).addingTimeInterval(-3600)]
         }
         var newlyAccepted = 0
@@ -129,18 +139,15 @@ final class AllDayOccurrenceSlotTests: XCTestCase {
                         let isCounted = counted(start: start, slot: slot, fromRID: fromRID, occurrenceAllDay: occurrenceAllDay,
                                                 seriesAllDay: seriesAllDay, zone: host)
                         let label = "\(host.identifier) slot \(slot) start \(start) flags \(flags)"
-                        if UndoPostState.sameInstant(start, slot) {
-                            XCTAssertFalse(isCounted, "main's slot pass kept: " + label)
-                            continue
-                        }
-                        guard !isCounted else { continue }
-                        newlyAccepted += 1
                         let utcDay = text(slot, utc, "yyyy-MM-dd")
-                        XCTAssertTrue(fromRID && occurrenceAllDay && seriesAllDay, label)
-                        XCTAssertEqual(text(slot, utc, "HH:mm:ss"), "00:00:00", label)
-                        XCTAssertEqual(text(slot, host, "yyyy-MM-dd"), utcDay, "both readings name one day: " + label)
-                        XCTAssertEqual(text(start, host, "yyyy-MM-dd"), utcDay, label)
-                        XCTAssertEqual(start, calendar.startOfDay(for: start), label)
+                        let intended = fromRID && occurrenceAllDay && seriesAllDay
+                            && text(slot, utc, "HH:mm:ss") == "00:00:00"
+                            && text(slot, host, "yyyy-MM-dd") == utcDay
+                            && text(start, host, "yyyy-MM-dd") == utcDay
+                            && text(start.addingTimeInterval(-1), host, "yyyy-MM-dd") != utcDay
+                        let onMain = UndoPostState.sameInstant(start, slot)
+                        XCTAssertEqual(!isCounted, onMain || intended, label)
+                        if !onMain && intended { newlyAccepted += 1 }
                     }
                 }
             }

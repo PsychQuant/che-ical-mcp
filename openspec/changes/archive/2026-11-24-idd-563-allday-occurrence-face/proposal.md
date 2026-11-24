@@ -12,7 +12,7 @@ Keep `main`'s instant comparison and add one pass: when the occurrence and the s
 
 ## Non-Goals
 
-Hosts west of UTC (the issue's "on any host") stay as on `main`; nothing readable tells the two encodings apart. All-day occurrences with an explicit time zone, and the conversions tracked in #564 and #570, are compared as on `main`.
+Hosts west of UTC (the issue's "on any host") stay as on `main`; nothing readable tells the two encodings apart. The conversions tracked in #564 and #570 are not addressed. An all-day occurrence with an explicit time zone is not excluded: it goes through the same check and passes only if its start is the host zone's midnight of that date, which was not measured.
 
 ## Impact
 

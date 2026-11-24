@@ -1534,9 +1534,11 @@ iCloud 以外的來源、長駐 process（session MCP）上讀到過期的系列
 
 #563 讓 create-undo 的 `modified_occurrences` 檢查（`UndoPostState.onItsSlot`）在主機位於 UTC 或其以東時，把全天系列中單獨改過、
 又改回系列值的場次當成仍在原時段：`/RID=` 剛好是 00:00 UTC、這個時刻在主機時區也是同一天、場次開始於那天的第一個時刻。只有純函式
-測試（`AllDayOccurrenceSlotTests`，含對 instant 比較的 33 個時區格點）與原始碼釘選；裝置上沒有量過。create-undo 有狀態，`--cli`
-走不到；用 `--cli` 準備單獨改過的場次會經過 `findOccurrence`，它的查找會跨日曆列舉（#573，未解），所以這一步在 #573 解決前只在
-重啟後的 session MCP 上做（行為探測確認是新 binary 之後），只用名稱含 `#563` 的拋棄式日曆，主機時區照實記下：
+測試（`AllDayOccurrenceSlotTests`，含對 instant 比較的 33 個時區格點）與原始碼釘選；裝置上沒有量過。要在 session MCP 上做，是因為
+create-undo 有狀態（undo stack 在長駐 process 裡），`--cli` 走不到。下面第 1、2 步用系列 ID、span `this` 加 `occurrence_date` 的
+`update_event`，不論在 session MCP 還是 `--cli`，都經過 `findOccurrence`，它的查找會跨日曆列舉、讀到真實行事曆（#573，PR #589）。
+所以：**等 #573 合併後才做**；只由維護者本人在重啟後的 session MCP 上做（行為探測確認是新 binary 之後），任何 lane 或 agent 都不做；
+只用名稱含 `#563` 的拋棄式日曆，主機時區照實記下：
 
 1. session：`create_event` 建全天、每週、5 次的系列 → session：`update_event` 用系列 ID、span `this`、`occurrence_date` 為第 3 場，改
    `notes` → 同樣再把 `notes` 改回空的（場次仍是 detached，欄位等於系列）→ `undo` 兩次（兩筆 update-undo：拒絕並丟棄，或照訊息處理）→
