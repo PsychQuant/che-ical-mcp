@@ -33,9 +33,19 @@ final class NoUnrequestedAllCalendarQueryWiringTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(of: "calendars:", in: body).count, 1, "one query, of that calendar")
     }
 
+    /// The adapter the batch handler calls: the saved event's calendar is recorded, and the
+    /// identifier the handler passes is the one the search reads (an in-memory store has no saved
+    /// event to show either, so they are pinned here).
+    func testTheAdapterRecordsTheSavedCalendarAndForwardsIt() throws {
+        let adapter = SourceScan.collapsingWhitespace(try code(try SourceScan.sourcesDirectory().appendingPathComponent("EventWriteSource.swift")))
+        XCTAssertEqual(SourcePins.ranges(of: "seriesIdentifier: seriesIdentifier, calendarIdentifier: event.calendar?.calendarIdentifier)", in: adapter).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "try await findSimilarEvents(title: title, calendarIdentifier: calendarIdentifier, limit: limit)", in: adapter).count, 1)
+    }
+
     /// #591: `enumerateDayWindow` queries the store with whatever calendars it is handed; it has
     /// exactly two callers, `findOccurrence` and `dayReadings`, which hand it the series' calendar
-    /// (`OccurrenceLookupWiringTests`). A third caller would pass this pin unnoticed otherwise.
+    /// (`OccurrenceLookupWiringTests`). Without this count, a third caller handing it some other range or
+    /// calendars would go unnoticed.
     func testTheDayWindowHasExactlyItsTwoCallers() throws {
         var named: [String: Int] = [:]
         for file in try SourceScan.swiftFiles() {
