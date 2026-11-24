@@ -951,7 +951,7 @@ final class ManifestParityTests: XCTestCase {
         // answer gives no series' identifier, and a retitled first occurrence is not matched.
         let phrases = ["When the series' first occurrence was edited on its own in place, keeping its title and start, the retry is checked against the series named before /RID=, and its skipped answer and conflicts give the series' identifier (#544).",
                        "Any other match that is an occurrence edited on its own, or one whose series does not read as a recurring series with that title, is not checked: the call fails without checking the dates and writes nothing.",
-                       "A first occurrence whose title was changed is not matched at all, and the retry creates a second series (#578)."]
+                       "A first occurrence whose title was changed is not matched by title; a recurring retry over it fails without creating anything (#578)."]
         let tools = CheICalMCPServer.defineTools()
         for name in ["create_event", "create_events_batch"] {
             let schema = try XCTUnwrap(tools.first { $0.name == name }?.inputSchema, name)

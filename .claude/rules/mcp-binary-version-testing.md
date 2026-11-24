@@ -1529,3 +1529,32 @@ G6 的批次建立會跨行事曆搜尋相似事件。G11 與 G12 的場次查�
 第 8 到 12 列在 2026-11-24 用第二輪修正後的版本、第一輪修正後的版本與 `main` 做過。都是 iCloud、Developer ID 簽章的 release build，結果記在 #544 與 PR #582。
 沒量過：系列物件讀不出規則或讀出另一個標題的第一場、回報自己有規則的 detached 場次、被來源回報成 detached 的一次性事件（它會拿到「沒有檢查」的錯誤，那句話講的是被單獨修改過的場次，套在它身上不對；兩邊都拒絕、都不寫入）、
 iCloud 以外的來源、長駐 process（session MCP）上讀到過期的系列物件。結束後依 id 刪掉日曆，隔一分鐘以上用名稱過濾的列表數兩次，名稱含 `#544` 的都是 0。
+
+## Release gate：重複系列的重試與被單獨修改過的第一個場次（#578）
+
+#578 的兩個決定（`CreateRetryIdentity.answeredSeries`、`retitledFirstOccurrence`）是純函式，都建立在 #544 的 `ExclusionRetryTarget.resolve` 上，`createEvent` 的接線由 `CreateRetryIdentityWiringTests` 釘住。
+重試什麼都不寫，是 stateless 的，所以用 `--cli` 做（見上表），不用 AppleScript、不用 session MCP，只在名稱含 `#578` 的拋棄式日曆上做，每種形狀一個日曆。
+**不要用 `create_events_batch` 做裝置格**：它的 similar-events 查詢會讀所有行事曆（`findSimilarEvents` 以 `calendars: nil` 列出）。
+
+**出 #578 的版本打 tag 之前**，用出版的 binary 重做下面幾列。每一列都是同標題、同開始時間的 `create_event`，前後各 `list_events` 一次（只列那個拋棄式日曆）。
+
+形狀 N：每週一次、共六場、時區 Asia/Taipei 的系列，用 span `this` 只改第一場的 `notes`。
+
+1. 重複規則、不帶排除日：`skipped`，`id` 是系列的識別碼（`main` 是第一場的識別碼）。
+2. 同上，`excluded_occurrence_dates: []`：同第 1 列。
+3. 一次性事件（不帶 `recurrence`）：`skipped`，`id` 是第一場的識別碼（與 `main` 相同）。
+
+形狀 D：同形狀 N 但為全天系列。
+
+4. 重複規則、不帶排除日：`skipped`，`id` 是系列的識別碼。
+
+形狀 T、X：同形狀 N 的系列，用 span `this` 把第一場的標題改掉。
+
+5. 重複規則、原標題、不帶排除日（T）與帶排除日（X）：失敗，訊息說無法判斷是不是那個系列的重試，什麼都沒建（`main` 建出第二個系列）。先跑出版的 binary，再跑 `main`。
+
+形狀 M、R、F、L（#544 gate 的第 6 到 9 列的系列，不帶排除日）：
+
+6. 四種都回 `skipped`，`id` 是比對到的場次的識別碼，與 `main` 相同。
+
+2026-11-24 在 iCloud 用這個 PR 的 Developer ID 簽章 release build 與 `main`（`88e5158a`）做過，結果記在 #578 與它的 PR。沒量過：長駐 process 上讀到過期的系列物件、iCloud 以外的來源。
+結束後依 id 刪掉日曆，隔一分鐘以上用名稱過濾的列表數兩次，名稱含 `#578` 的都是 0。
