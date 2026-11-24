@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TBD - created by archiving change 'idd-563-allday-occurrence-face'. Update Purpose after archive.
+When the create-undo scan of a series counts an occurrence edited on its own as moved off its slot, for an occurrence of an all-day series whose `/RID=` digits may be a floating date (#563).
 
 ## Requirements
 
