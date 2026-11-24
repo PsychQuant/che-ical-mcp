@@ -740,19 +740,30 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         isAllDay: Bool,
         calendar: EKCalendar
     ) -> EKEvent? {
-        // Search within a 1-minute window around the start date
-        let searchStart = startDate.addingTimeInterval(-30)
-        let searchEnd = startDate.addingTimeInterval(30)
-        let predicate = eventStore.predicateForEvents(
-            withStart: searchStart,
-            end: searchEnd,
-            calendars: [calendar]
-        )
-        let events = eventStore.events(matching: predicate)
-        return events.first {
+        startWindowEvents(startDate: startDate, calendar: calendar).first {
             Self.isCreateDuplicate(title: title, start: startDate, isAllDay: isAllDay,
                                    candidateTitle: $0.title, candidateStart: $0.startDate,
                                    candidateAllDay: $0.isAllDay)
+        }
+    }
+
+    /// The events of `calendar` in the 1-minute window around `startDate`, the window the duplicate
+    /// lookup reads (#578 reads it again only after that lookup missed).
+    private func startWindowEvents(startDate: Date, calendar: EKCalendar) -> [EKEvent] {
+        let predicate = eventStore.predicateForEvents(
+            withStart: startDate.addingTimeInterval(-30),
+            end: startDate.addingTimeInterval(30),
+            calendars: [calendar]
+        )
+        return eventStore.events(matching: predicate)
+    }
+
+    /// #544, #578: what a create retry reads of the series object named before an occurrence's
+    /// `/RID=`, without a refresh (#326). Throws when the lookup raised (#288).
+    private func retrySeriesFacts(id: String) throws -> ExclusionRetryTarget.SeriesFacts? {
+        try storedEvent(id: id).map {
+            ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: $0.hasRecurrenceRules, timeZone: $0.timeZone,
+                                             title: $0.title, isAllDay: $0.isAllDay, firstStart: $0.occurrenceDate ?? $0.startDate)
         }
     }
 
@@ -860,7 +871,19 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let calendar = try findCalendar(name: name, source: calendarSource, entityType: .event)
 
         // Idempotency: check for existing event with same title + start time on same calendar
-        if let existing = findDuplicateEvent(title: title, startDate: startDate, isAllDay: isAllDay, calendar: calendar) {
+        let retryRequest = ExclusionRetryTarget.Request(title: title, start: startDate, host: .current)
+        let duplicate = findDuplicateEvent(title: title, startDate: startDate, isAllDay: isAllDay, calendar: calendar)
+        // #578: the series' first occurrence was retitled on its own, so the title lookup missed; the
+        // window still holds it, of a series with the requested title and first slot. Refused, writing
+        // nothing: this server cannot tell whether the request is a retry of that series.
+        if duplicate == nil,
+           let retitled = CreateRetryIdentity.retitledFirstOccurrence(
+               recurring: recurrenceRule != nil,
+               candidates: recurrenceRule == nil ? [] : startWindowEvents(startDate: startDate, calendar: calendar).compactMap(CreateRetryIdentity.Candidate.init),
+               isAllDay: isAllDay, request: retryRequest, series: retrySeriesFacts) {
+            throw EventKitError.createRetryRetitledFirstOccurrence(seriesId: retitled.seriesID, occurrenceId: retitled.occurrenceID)
+        }
+        if let existing = duplicate {
             // #182 — idempotency with exclusions: identical retry (every requested
             // date already absent from the existing series) → skipped; any requested
             // date still present → conflict (differing exclusion set). Extra
@@ -878,12 +901,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     match: ExclusionRetryTarget.Match(identifier: existingId, isDetached: existing.isDetached,
                                                       hasRecurrenceRules: existing.hasRecurrenceRules, timeZone: existing.timeZone,
                                                       start: existing.startDate),
-                    request: ExclusionRetryTarget.Request(title: title, start: startDate, host: .current)) { id in
-                    try storedEvent(id: id).map {
-                        ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: $0.hasRecurrenceRules, timeZone: $0.timeZone,
-                                                         title: $0.title, isAllDay: $0.isAllDay, firstStart: $0.occurrenceDate ?? $0.startDate)
-                    }
-                }
+                    request: retryRequest, series: retrySeriesFacts)
                 let seriesID: String
                 let seriesZone: TimeZone?
                 switch target {
@@ -923,7 +941,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 }
                 return CreateEventResult(event: existing, isDuplicate: true, seriesIdentifier: seriesID == existingId ? nil : seriesID)
             }
-            return CreateEventResult(event: existing, isDuplicate: true)
+            // #578: no exclusions to check (none, or an empty list). A recurring retry over the series'
+            // first occurrence edited in place answers the series' identifier; anything else answers
+            // the matched event's, as on `main`.
+            let answeredSeries = existing.eventIdentifier.flatMap { id in
+                CreateRetryIdentity.answeredSeries(
+                    recurring: recurrenceRule != nil,
+                    match: ExclusionRetryTarget.Match(identifier: id, isDetached: existing.isDetached,
+                                                      hasRecurrenceRules: existing.hasRecurrenceRules, timeZone: existing.timeZone,
+                                                      start: existing.startDate),
+                    request: retryRequest, series: retrySeriesFacts)
+            }
+            return CreateEventResult(event: existing, isDuplicate: true, seriesIdentifier: answeredSeries)
         }
 
         let event = EKEvent(eventStore: eventStore)
@@ -4017,6 +4046,9 @@ enum EventKitError: LocalizedError {
     /// series' first occurrence edited in place (`ExclusionRetryTarget.Target.notChecked`); the
     /// excluded dates were not checked.
     case exclusionRetryNotChecked(occurrenceId: String)
+    /// #578: a recurring retry whose title lookup missed, over the series' first occurrence edited on
+    /// its own and retitled (`CreateRetryIdentity.Retitled`); nothing was created.
+    case createRetryRetitledFirstOccurrence(seriesId: String, occurrenceId: String)
     /// #190 — all-day events are floating calendar days; a timezone would strip
     /// the all-day flag and shift occurrence days (defense-in-depth behind the
     /// handler-level guard).
@@ -4320,6 +4352,8 @@ enum EventKitError: LocalizedError {
             return EditedOccurrenceAddress.exclusionReason(existingId: existingId, date: date)
         case .exclusionRetryNotChecked(let occurrenceId):
             return ExclusionRetryTarget.notCheckedReason(occurrenceID: occurrenceId)
+        case .createRetryRetitledFirstOccurrence(let seriesId, let occurrenceId):
+            return CreateRetryIdentity.retitledReason(seriesID: seriesId, occurrenceID: occurrenceId)
         }
     }
 }
