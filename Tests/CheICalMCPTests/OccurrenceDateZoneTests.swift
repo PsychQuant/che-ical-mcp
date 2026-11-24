@@ -85,10 +85,10 @@ final class OccurrenceDateZoneTests: XCTestCase {
         let delegation = try call(in: "func eventTimeZone(identifier: String) async throws -> TimeZone? {", file: "EventCopySource.swift")
         XCTAssertEqual(delegation.trimmingCharacters(in: .whitespaces), "try await occurrenceDateTimeZone(identifier: identifier)")
         let delete = try call(in: "func deleteEvent(identifier: String, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil) async throws -> RulesAloneOnUndo? {", file: manager)
-        XCTAssertEqual(SourcePins.ranges(of: "findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent))", in: delete).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent), calendar: masterEvent.calendar)", in: delete).count, 1)
         XCTAssertEqual(delete.components(separatedBy: "findOccurrence(").count - 1, 1)
         let move = try call(in: "func moveEvent( identifier: String, occurrenceDate: Date?, span: EventMovePolicy.Span, toCalendarName: String, toCalendarSource: String? ) async throws -> (result: EventMoveResult, title: String?) {", file: manager)
-        XCTAssertEqual(SourcePins.ranges(of: "findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: master))", in: move).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: master), calendar: master.calendar)", in: move).count, 1)
         XCTAssertEqual(move.components(separatedBy: "findOccurrence(").count - 1, 1)
     }
 
@@ -105,7 +105,7 @@ final class OccurrenceDateZoneTests: XCTestCase {
         XCTAssertFalse(body.contains(#"arguments["occurrence_date"]?.stringValue.map"#), "the old host-zone parse")
         let manager = "EventKit/EventKitManager.swift"
         let update = try call(in: "func updateEvent( identifier: String, fields: Set<String>, title: String? = nil, startDate: Date? = nil, endDate: Date? = nil, notes: String? = nil, location: String? = nil, url: String? = nil, calendarName: String? = nil, calendarSource: String? = nil, isAllDay: Bool? = nil, alarmOffsets: [Int]? = nil, recurrenceRule: RecurrenceRuleInput? = nil, clearRecurrence: Bool = false, structuredLocation: StructuredLocationInput? = nil, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil, applyToAll: Bool = false, timezone: TimeZone? = nil, clearTimezone: Bool = false, skippedMidnightEndpoint: String? = nil ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?, deletionsChecked: DeletionCheckHorizon?) {", file: manager)
-        XCTAssertEqual(SourcePins.ranges(of: "findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent))", in: update).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent), calendar: masterEvent.calendar)", in: update).count, 1)
         XCTAssertEqual(update.components(separatedBy: "findOccurrence(").count - 1, 1)
         let conformance = try call(in: "extension EventKitManager: EventWriteSource {", file: "EventWriteSource.swift")
         XCTAssertFalse(conformance.contains("func occurrenceDateTimeZone("), "the write seam uses the shared method itself")
