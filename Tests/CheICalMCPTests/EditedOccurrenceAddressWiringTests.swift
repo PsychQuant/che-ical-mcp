@@ -166,7 +166,8 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
     /// one of its own for an occurrence edited on its own.
     func testTheExclusionCheckCountsAnEditedOccurrenceOnTheDay() throws {
         let create = try body(of: "func createEvent(")
-        let check = "for date in excluded { switch EditedOccurrenceAddress.presence( lookupHit: findOccurrence(identifier: existingId, on: date, in: tz) != nil, onDay: dayReadings(containing: date, in: tz), seriesID: existingId, requested: date, zone: tz) { case .absent: continue case .resolved: throw EventKitError.exclusionConflict( existingId: existingId, date: Self.formatExclusionDay(date, timezone: tz)) case .editedOccurrenceStarts: throw EventKitError.exclusionEditedOccurrence( existingId: existingId, date: Self.formatExclusionDay(date, timezone: tz)) } }"
+        // #544: the series the retry is checked against (`ExclusionRetryTarget`), the match's own on `main`.
+        let check = "for date in excluded { switch EditedOccurrenceAddress.presence( lookupHit: findOccurrence(identifier: seriesID, on: date, in: tz) != nil, onDay: dayReadings(containing: date, in: tz), seriesID: seriesID, requested: date, zone: tz) { case .absent: continue case .resolved: throw EventKitError.exclusionConflict( existingId: seriesID, date: Self.formatExclusionDay(date, timezone: tz)) case .editedOccurrenceStarts: throw EventKitError.exclusionEditedOccurrence( existingId: seriesID, date: Self.formatExclusionDay(date, timezone: tz)) } }"
         assertOnce(check, in: create)
         assertOnce("findOccurrence(", in: create)
         assertOnce("EditedOccurrenceAddress.presence(", in: create)

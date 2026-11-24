@@ -80,6 +80,8 @@ When the existing duplicate heuristic (±30 s start + title match + the same kin
 
 A requested date SHALL count as still present when the occurrence lookup by the existing series' identifier resolves an occurrence on it, or when an event that starts on that date has an identifier that is the existing series' identifier followed by `/RID=`, the identifier of an occurrence edited on its own (as on iCloud), whether it was edited in place or moved onto that date (#534). The lookup by the series' identifier does not resolve such an occurrence. This SHALL hold for `create_event` and for each `create_events_batch` item. Only the requested date SHALL be read for this; the series SHALL NOT be listed and no slot SHALL be read. The answer for that case SHALL be a conflict error of its own that names the existing event ID and the date and says that an occurrence edited on its own starts on a date the request excludes, which is true in both cases; the answer for a date the lookup resolves SHALL keep its text.
 
+The existing series SHALL be found from the event the duplicate heuristic matched (#544). When that event addresses one occurrence (it reports itself detached, or its identifier carries `/RID=`), whether or not it reports rules of its own, the existing series SHALL be the series object named by the part of its identifier before `/RID=`, read without a refresh, and only when all of these hold: that object reads with recurrence rules; its title equals the requested title; and the matched occurrence is the series' first occurrence edited in place, that is, its original slot (read from `/RID=`, an all-day series' floating date taken on this Mac's day), its start, and the series object's own first slot (`occurrenceDate`, else `startDate`) all equal the requested start within one second. The dates SHALL then be checked against that series' identifier, in the request's time zone or else the series' zone, and both conflict errors SHALL name that identifier. A `skipped` answer for such a match SHALL give the series' identifier as `id` (`event_id` for a `create_events_batch` item). When any of those conditions fails, or the identifier has no `/RID=` part, the call SHALL fail with an error of its own that says the excluded dates were not checked and when a retry is checked against the series of an occurrence edited on its own, naming the matched occurrence's identifier only in the shape the edited-occurrence refusals echo, and writing nothing. A lookup that raises SHALL fail the call as a failed lookup. A matched event that addresses no occurrence SHALL be the series when it has rules, and SHALL keep the conflict naming the first requested date when it has none. A first occurrence whose title was changed is not matched by the heuristic, and the retry creates a second series (#578).
+
 Three cases are not detected, and the result stays `skipped`: an occurrence that was edited on its own and moved off a requested date (nothing of the series starts on that date); an edited occurrence whose identifier has another shape than the series' identifier followed by `/RID=` (a source that gives it an unrelated identifier; none was measured); and the extra exclusions named above. They SHALL be documented as limitations.
 
 #### Scenario: Identical retry is idempotent
@@ -135,6 +137,29 @@ Three cases are not detected, and the result stays `skipped`: an occurrence that
 - **GIVEN** the existing event ID `S` and the date `2026-09-21`
 - **WHEN** the two conflict errors are described
 - **THEN** the one for an edited occurrence reads `An existing series (event ID S) matches this event, and an occurrence of it that was edited on its own starts on 2026-09-21, a date this request excludes. Not modifying the existing series; adjust it explicitly or change the request.`, and the one for a resolved occurrence keeps `still has an occurrence on 2026-09-21`
+
+#### Scenario: A retry whose match is the series' edited first occurrence is checked against the series
+
+- **GIVEN** an existing series `S` whose first occurrence was edited on its own (its identifier `S/RID=818301600`, no rules of its own) and whose occurrence of 2027-01-04 was deleted
+- **WHEN** a request with exclusions `["2027-01-04"]` matches the duplicate heuristic
+- **THEN** the response reports `skipped` with `id` `S`, and a request with exclusions `["2027-01-04", "2026-12-21"]`, whose 2026-12-21 occurrence is unedited, fails with the conflict naming `S` and 2026-12-21
+
+##### Example: target of the check
+
+Requested title `T`, requested start 2026-12-07 10:00 +08:00 (`/RID=818301600`).
+
+| Matched event | Series object read | Checked against |
+|---|---|---|
+| `S`, rules, not detached | not read | `S` |
+| `S/RID=818301600`, starts at the requested start, no rules | `S`, rules, title `T` | `S` |
+| `S/RID=818301600`, starts at the requested start, reports rules | `S`, rules, title `T` | `S` |
+| `S/RID=818301600`, starts at the requested start | `S`, rules, title `Other` (an occurrence retitled to `T`) | not checked |
+| `S/RID=818128800` (two days earlier), moved to the requested start | `S`, rules, title `T` | not checked |
+| `S/RID=818301600`, starts 20 s later | `S`, rules, title `T` | not checked |
+| `S/RID=818301600`, starts at the requested start | `S`, rules, title `T`, first slot a week earlier (a later occurrence) | not checked |
+| `S/RID=818301600` | none, or no rules | not checked |
+| detached `OTHER-1` | not read | not checked |
+| `ONE`, no rules, not detached | not read | the conflict naming the first requested date |
 
 ---
 ### Requirement: Response contract

@@ -52,6 +52,12 @@ struct EventCreateRequest: Sendable {
 struct EventCreateValue: Sendable, Equatable {
     let event: EventWriteValue
     let isDuplicate: Bool
+    /// #544: the series a skipped retry with exclusions was checked against, when the match was an
+    /// occurrence edited on its own (`CreateEventResult.seriesIdentifier`); nil otherwise.
+    var existingSeriesIdentifier: String? = nil
+
+    /// The identifier the create handlers answer: the series' for such a retry, else the event's.
+    var answeredIdentifier: String? { existingSeriesIdentifier ?? event.eventIdentifier }
 }
 
 /// The saved event, as the write handlers read it for their response.
@@ -155,7 +161,7 @@ extension EventKitManager: EventWriteSource {
             isAllDay: request.isAllDay, alarmOffsets: request.alarmOffsets,
             recurrenceRule: request.recurrenceRule, structuredLocation: request.structuredLocation,
             timezone: request.timezone)
-        return EventCreateValue(event: EventWriteValue(result.event), isDuplicate: result.isDuplicate)
+        return EventCreateValue(event: EventWriteValue(result.event), isDuplicate: result.isDuplicate, existingSeriesIdentifier: result.seriesIdentifier)
     }
 
     func similarEventValues(title: String, limit: Int) async throws -> [SimilarEventValue] {
