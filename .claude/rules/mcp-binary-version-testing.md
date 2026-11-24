@@ -1534,9 +1534,12 @@ iCloud 以外的來源、長駐 process（session MCP）上讀到過期的系列
 
 #573 讓 `findOccurrence` 與 `dayReadings` 只查系列物件的日曆（`OccurrenceLookup`），證據是記錄每次查詢點名哪些日曆的假 store，以及每個呼叫端傳哪個物件的日曆的原始碼釘選；沒有在裝置上跑過。改動之前的 binary 會列出每個日曆的那一天，所以**不要**拿 `main` 的 binary 在裝置上做對照。
 
-依賴而沒量過的前提：來源回報一個場次時，它的日曆就是系列的日曆。iCloud 上把新日曆給一個場次會搬走整個系列（#426，量過）；Google、Exchange 沒有量過。**不擋 tag**；有 Google 或 Exchange 帳號時，在該來源名稱含 `#573` 的拋棄式日曆上，用剛 build 的 binary 的 `--cli`：
+依賴而沒量過的前提：來源回報一個場次時，它的日曆就是系列的日曆。iCloud 上把新日曆給一個場次會搬走整個系列（#426，量過）；Google、Exchange 沒有量過。前提不成立時，查不到的場次在 `update_event`、`delete_event`、`delete_events_batch`、`move_events_batch` 回拒絕或該列失敗，什麼都沒寫；但相同的 exclusion retry 會把那天當成已排除而回 `skipped`，`main` 則回 conflict（#182、#534 防的就是這種假 `skipped`）。
 
-1. 建每週 3 次的系列 → `delete_event` 用系列 id、span `this`、`occurrence_date` 為第二場：要成功刪掉那一場（只讀該日曆）。
-2. 另建一個系列 → `update_event` 用系列 id、span `this`、`occurrence_date` 為第二場、只改 `title`：要成功，只有第二場的標題變了（用 `list_events` 帶 `calendar_name` 只列這個拋棄式日曆讀回）。
+**不擋 tag**；有 Google 或 Exchange 帳號時，在該來源名稱含 `#573` 的拋棄式日曆上，用剛 build 的 binary 的 `--cli`。系列一律用 `create_event` 建（不要用 `create_events_batch`：它的 `similar_events` 會讀每個日曆）；每次讀回都用 `list_events` 帶 `calendar_name` 只列這個拋棄式日曆：
 
-任一步回「not found」或「No occurrence of this event falls on occurrence_date」，就是該來源把場次回報在別的日曆，回報到 #573。結束後依 id 刪掉日曆，隔一分鐘以上用名稱過濾的列表數兩次，名稱含 `#573` 的都是 0。
+1. `create_event` 建每週 3 次的系列 → `delete_event` 用系列 id、span `this`、`occurrence_date` 為第二場：要成功；`list_events`（`calendar_name`）讀回只剩第一、三場。
+2. `create_event` 另建一個系列 → `update_event` 用系列 id、span `this`、`occurrence_date` 為第二場、只改 `title`：要成功；`list_events`（`calendar_name`）讀回只有第二場的標題變了。
+3. `create_event` 帶 `recurrence.excluded_occurrence_dates`（第二場）建系列 → 用同樣的參數再呼叫一次：要回 `skipped`；再用排除日為第三場的參數呼叫：要回 conflict。回 `skipped` 就是該來源把第三場回報在別的日曆。
+
+任一步回「not found」或「No occurrence of this event falls on occurrence_date」，或第 3 步第二次回 `skipped`，就是該來源把場次回報在別的日曆，回報到 #573。結束後依 id 刪掉日曆；隔一分鐘以上數兩次殘留，每次都是 `list_calendars` 的結果在本機依名稱過濾後只留下數目（`list_calendars` 本身列出所有日曆的名稱，不留存），名稱含 `#573` 的都是 0。

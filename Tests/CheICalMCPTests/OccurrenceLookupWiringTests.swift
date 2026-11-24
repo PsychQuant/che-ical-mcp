@@ -49,9 +49,17 @@ final class OccurrenceLookupWiringTests: XCTestCase {
     /// bound once in `createEvent` before the lookup.
     func testTheRetryCalendarIsTheOneTheDuplicateLookupSearched() throws {
         let code = try manager()
-        let create = try XCTUnwrap(code.range(of: "let calendar = try findCalendar(name: name, source: calendarSource, entityType: .event) if let existing = findDuplicateEvent(title: title, startDate: startDate, isAllDay: isAllDay, calendar: calendar) {"))
+        // PR #589 round 1: anchored on the two statements, not on how the duplicate's result is bound
+        // (#578 binds it to a constant before the `if let`), so the pin holds in both shapes.
+        let bound = "let calendar = try findCalendar(name: name, source: calendarSource, entityType: .event)"
+        let searched = "findDuplicateEvent(title: title, startDate: startDate, isAllDay: isAllDay, calendar: calendar)"
+        assertOnce(bound, in: code)
+        assertOnce(searched, in: code)
+        let create = try XCTUnwrap(code.range(of: bound))
+        let duplicate = try XCTUnwrap(code.range(of: searched))
         let lookup = try XCTUnwrap(code.range(of: "lookupHit: findOccurrence(identifier: seriesID, on: date, in: tz, calendar: calendar)"))
-        XCTAssertLessThan(create.lowerBound, lookup.lowerBound)
+        XCTAssertLessThan(create.lowerBound, duplicate.lowerBound)
+        XCTAssertLessThan(duplicate.lowerBound, lookup.lowerBound)
         let between = String(code[create.upperBound..<lookup.lowerBound])
         XCTAssertFalse(between.contains("let calendar"), "no other calendar is bound in between")
         XCTAssertFalse(between.contains("calendar ="), "no other calendar is bound in between")
