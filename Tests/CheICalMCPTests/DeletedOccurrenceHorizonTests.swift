@@ -378,6 +378,62 @@ final class DeletedOccurrenceHorizonTests: XCTestCase {
         XCTAssertEqual(DeletedOccurrenceCheck.expansion(of: daily, firstStart: first, until: oneMore, calendar: calendar), .tooMany)
     }
 
+    /// #576: the cap does not depend on whether the 20,001st slot is also the last slot of a counted
+    /// rule. On `main` a count of 20,001 returned its 20,001 slots (the count exit came before the
+    /// cap), while an open rule and a count of 20,002 reaching the same slot answered too many.
+    func testACountOfMoreThanTheCapIsTooManyLikeAnOpenRule() throws {
+        let first = at("1970-01-05T10:00:00")
+        func daily(count: Int) -> DeletedOccurrenceCheck.Rule {
+            DeletedOccurrenceCheck.Rule(frequency: .daily, interval: 1, daysOfWeek: [], daysOfMonth: [], endDate: nil,
+                                        occurrenceCount: count, hasOtherParts: false)
+        }
+        let pastEverySlot = try XCTUnwrap(calendar.date(byAdding: .day, value: DeletedOccurrenceCheck.maxSlots + 10, to: first))
+        for count in [19_999, 20_000] {
+            guard case .slots(let slots) = DeletedOccurrenceCheck.expansion(of: daily(count: count), firstStart: first,
+                                                                            until: pastEverySlot, calendar: calendar) else {
+                XCTFail("count \(count) must expand"); continue
+            }
+            XCTAssertEqual(slots.count, count, "count \(count)")
+        }
+        func shape(_ expansion: DeletedOccurrenceCheck.Expansion) -> String {
+            switch expansion {
+            case .slots(let slots): return "slots(\(slots.count))"
+            case .notFollowed: return "notFollowed"
+            case .tooMany: return "tooMany"
+            }
+        }
+        for count in [20_001, 20_002, 0] {
+            XCTAssertEqual(shape(DeletedOccurrenceCheck.expansion(of: daily(count: count), firstStart: first, until: pastEverySlot,
+                                                                  calendar: calendar)),
+                           "tooMany", "count \(count)")
+        }
+        // A count past the cap whose 20,001st slot is not in range is not too many: the cap counts only
+        // a slot it would take.
+        let justTheCap = try XCTUnwrap(calendar.date(byAdding: .day, value: DeletedOccurrenceCheck.maxSlots - 1, to: first)).addingTimeInterval(1)
+        guard case .slots(let slots) = DeletedOccurrenceCheck.expansion(of: daily(count: 20_001), firstStart: first,
+                                                                        until: justTheCap, calendar: calendar) else {
+            return XCTFail("a count of 20,001 cut at 20,000 slots must expand")
+        }
+        XCTAssertEqual(slots.count, DeletedOccurrenceCheck.maxSlots)
+
+        // The #503 verdict over that count, every slot listed and unedited, refuses instead of comparing
+        // a slot past the cap.
+        let all = (0..<20_001).compactMap { calendar.date(byAdding: .day, value: $0, to: first) }
+        XCTAssertEqual(all.count, 20_001)
+        let result = DeletedOccurrenceCheck.verdict(rules: [daily(count: 20_001)], firstStart: first, observedSlots: all,
+                                                    uneditedSlots: all, slotsTrusted: true, changesAllDay: false,
+                                                    reachedFrom: first, scannedTo: pastEverySlot, coversWholeSeries: true,
+                                                    calendar: calendar)
+        XCTAssertEqual(result, .unknown(.tooManySlots))
+        // A count of exactly the cap is still compared.
+        let capped = Array(all.prefix(DeletedOccurrenceCheck.maxSlots))
+        XCTAssertEqual(DeletedOccurrenceCheck.verdict(rules: [daily(count: 20_000)], firstStart: first, observedSlots: capped,
+                                                      uneditedSlots: capped, slotsTrusted: true, changesAllDay: false,
+                                                      reachedFrom: first, scannedTo: pastEverySlot, coversWholeSeries: true,
+                                                      calendar: calendar),
+                       .none)
+    }
+
     /// A daily series old enough to pass 20,000 slots before the end of the listing is unknown with a
     /// cause of its own, never `noneThrough` over occurrences it did not expand.
     func testASeriesPastTheExpansionCapIsUnknown() {
