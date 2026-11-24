@@ -1488,8 +1488,9 @@ G6 的批次建立會跨行事曆搜尋相似事件。G11 與 G12 的場次查�
 （`/RID=` 讀出的原時段、它的開始時間，以及系列物件自己的第一個時段（`occurrenceDate`，沒有就用 `startDate`）都等於請求的開始時間，差一秒以內），而且 `/RID=` 前面那段識別碼讀到的系列物件（`storedEvent`，不 refresh）有重複規則、標題等於請求的標題時，
 才對那個系列檢查；其他被單獨修改過的場次一律回「沒有檢查」的錯誤、什麼都不寫（PR #582 verify 第一、二輪）。依賴只在裝置上量過的事：第一個場次被單獨修改過之後，那個系列物件仍回報重複規則與標題。
 重試什麼都不寫，是 stateless 的，所以用 `--cli` 做（見上表），不用 AppleScript、不用 session MCP，只在名稱含 `#544` 的拋棄式日曆上做，每種形狀一個日曆。
+這一節的 setup（`update_event` 帶 `occurrence_date`、帶排除日的 `create_event`）與帶排除日的重試，都經 `findOccurrence`／`dayReadings` 讀當天所有行事曆（#573）；依 lane brief 2026-11-24 的規則，#573 讓它們只讀目標日曆之前，這些列不在裝置上重跑。
 
-**出 #544 的版本打 tag 之前**，用出版的 binary 重做下面十二列。每一列都是一次 `create_event` 重試（第 5 列是 `create_events_batch` 的一列），前後各 `list_events` 一次，兩次要相同。
+**出 #544 的版本打 tag 之前**，用出版的 binary 重做下面十一列（第 5 列已移除）。每一列都是一次 `create_event` 重試，前後各 `list_events` 一次，兩次要相同。
 
 形狀 A（第 1 到 5 列）：每週一次、共六場、時區 Asia/Taipei 的系列，建立時排除第五場。
 
@@ -1498,7 +1499,7 @@ G6 的批次建立會跨行事曆搜尋相似事件。G11 與 G12 的場次查�
    （`main` 回衝突，指名第一場的識別碼與第五場的日期）。
 3. 排除第五場與第三場（沒改過、還在）：衝突，指名系列的識別碼與第三場的日期。
 4. 排除第四場（被單獨改過）：#534 的那句，指名系列的識別碼與第四場的日期。
-5. `create_events_batch` 一列，排除第五場：該列 `skipped`，`event_id` 是系列的識別碼。
+5. （已移除：`create_events_batch` 的這一列不再在裝置上跑，因為 batch 的路徑會讀其他行事曆；batch 由 handler 測試與 wiring pin 涵蓋。）
 
 形狀 M（第 6 列）：同標題、每週六 10:00、共六場的舊系列，用 span `this` 把第二場移到下一個週一 10:00。
 
@@ -1534,7 +1535,8 @@ iCloud 以外的來源、長駐 process（session MCP）上讀到過期的系列
 
 #578 的兩個決定（`CreateRetryIdentity.answeredSeries`、`retitledFirstOccurrence`）是純函式，都建立在 #544 的 `ExclusionRetryTarget.resolve` 上，`createEvent` 的接線由 `CreateRetryIdentityWiringTests` 釘住。
 重試什麼都不寫，是 stateless 的，所以用 `--cli` 做（見上表），不用 AppleScript、不用 session MCP，只在名稱含 `#578` 的拋棄式日曆上做，每種形狀一個日曆。
-**不要用 `create_events_batch` 做裝置格**：它的 similar-events 查詢會讀所有行事曆（`findSimilarEvents` 以 `calendars: nil` 列出）。
+**不要用 `create_events_batch` 做裝置格**：batch 的路徑會讀其他行事曆。batch 由 handler 測試與 wiring pin 涵蓋。
+**下面的 setup 與重試會經過跨行事曆的讀取**：`update_event` 帶 `occurrence_date`、帶排除日的 `create_event`，以及帶排除日的重試，都經 `findOccurrence`／`dayReadings` 讀當天所有行事曆（#573）。依 lane brief 2026-11-24 的規則，#573 讓它們只讀目標日曆之前，這些列不在裝置上重跑。
 
 **出 #578 的版本打 tag 之前**，用出版的 binary 重做下面幾列。每一列都是同標題、同開始時間的 `create_event`，前後各 `list_events` 一次（只列那個拋棄式日曆）。
 
