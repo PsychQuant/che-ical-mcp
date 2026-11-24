@@ -20,10 +20,10 @@ final class ExclusionRetryTargetWiringTests: XCTestCase {
     /// and the guard on the match's own rules is gone.
     func testTheTargetIsResolvedFromTheMatch() throws {
         let body = try create()
-        assertOnce("let target = try ExclusionRetryTarget.resolve( matchID: existingId, matchIsDetached: existing.isDetached, matchHasRules: existing.hasRecurrenceRules, matchZone: existing.timeZone) { id in try storedEvent(id: id).map { ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: $0.hasRecurrenceRules, timeZone: $0.timeZone) } }", in: body)
+        assertOnce("let target = try ExclusionRetryTarget.resolve( match: ExclusionRetryTarget.Match(identifier: existingId, isDetached: existing.isDetached, hasRecurrenceRules: existing.hasRecurrenceRules, timeZone: existing.timeZone, start: existing.startDate), request: ExclusionRetryTarget.Request(title: title, start: startDate, host: .current)) { id in try storedEvent(id: id).map { ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: $0.hasRecurrenceRules, timeZone: $0.timeZone, title: $0.title, isAllDay: $0.isAllDay) } }", in: body)
         XCTAssertFalse(body.contains("guard existing.hasRecurrenceRules"), body)
         assertOnce("case .notRecurring(let id): throw EventKitError.exclusionConflict(existingId: id, date: Self.formatExclusionDay(excluded[0], timezone: timezone))", in: body)
-        assertOnce("case .seriesUnread(let occurrenceID): throw EventKitError.exclusionSeriesUnread(occurrenceId: occurrenceID)", in: body)
+        assertOnce("case .notChecked(let occurrenceID): throw EventKitError.exclusionRetryNotChecked(occurrenceId: occurrenceID)", in: body)
         assertOnce("case .series(let id, let zone): (seriesID, seriesZone) = (id, zone)", in: body)
         assertOnce("let tz = timezone ?? seriesZone", in: body)
     }
@@ -49,6 +49,28 @@ final class ExclusionRetryTargetWiringTests: XCTestCase {
         assertOnce("return CreateEventResult(event: existing, isDuplicate: true)", in: body)
         let write = SourceScan.collapsingWhitespace(try SourcePins.source("EventWriteSource.swift"))
         assertOnce("isDuplicate: result.isDuplicate, existingSeriesIdentifier: result.seriesIdentifier)", in: write)
+    }
+
+    /// X5 (verify round 1): the duplicate branch returns before the new event is built and saved,
+    /// so a retry writes nothing; the store is not reachable from a test (no seam), so this is the
+    /// structural check, next to the device rows.
+    func testTheDuplicateBranchReturnsBeforeAnyWrite() throws {
+        let body = try create()
+        let branch = try XCTUnwrap(body.range(of: "if let existing = findDuplicateEvent("))
+        let returns = try XCTUnwrap(body.range(of: "return CreateEventResult(event: existing, isDuplicate: true)"))
+        let skippedSeries = try XCTUnwrap(body.range(of: "return CreateEventResult(event: existing, isDuplicate: true, seriesIdentifier:"))
+        let build = try XCTUnwrap(body.range(of: "let event = EKEvent(eventStore: eventStore)"))
+        for write in ["eventStore.save(", "applyExclusions(", "CalendarUndoManager.shared.record("] {
+            let at = try XCTUnwrap(body.range(of: write), write)
+            XCTAssertLessThan(returns.lowerBound, at.lowerBound, write)
+            XCTAssertLessThan(skippedSeries.lowerBound, at.lowerBound, write)
+        }
+        XCTAssertLessThan(branch.lowerBound, skippedSeries.lowerBound)
+        XCTAssertLessThan(returns.lowerBound, build.lowerBound)
+        let duplicateBranch = String(body[branch.lowerBound..<build.lowerBound])
+        for write in ["save(", "remove(", "record(", "commit("] {
+            XCTAssertFalse(duplicateBranch.contains(write), write)
+        }
     }
 
     /// Both create handlers answer the identifier through `answeredIdentifier`.

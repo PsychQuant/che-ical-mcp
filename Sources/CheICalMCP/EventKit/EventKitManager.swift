@@ -871,21 +871,26 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 // event trivially has no occurrence on any future date, which would
                 // read as "already excluded". Require a recurring existing series
                 // before the absence check can mean anything.
-                // #544: a match that is an occurrence edited on its own (the series' first one,
-                // when it was edited) has no rules of its own; the check runs against the series
-                // named before its `/RID=`, read without a refresh (#326), and the answers name it.
+                // #544: a match that is the series' first occurrence edited in place has no rules of
+                // its own; the check runs against the series named before its `/RID=`, read without a
+                // refresh (#326), and the answers name it. Other occurrences are not checked.
                 let target = try ExclusionRetryTarget.resolve(
-                    matchID: existingId, matchIsDetached: existing.isDetached, matchHasRules: existing.hasRecurrenceRules,
-                    matchZone: existing.timeZone) { id in
-                    try storedEvent(id: id).map { ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: $0.hasRecurrenceRules, timeZone: $0.timeZone) }
+                    match: ExclusionRetryTarget.Match(identifier: existingId, isDetached: existing.isDetached,
+                                                      hasRecurrenceRules: existing.hasRecurrenceRules, timeZone: existing.timeZone,
+                                                      start: existing.startDate),
+                    request: ExclusionRetryTarget.Request(title: title, start: startDate, host: .current)) { id in
+                    try storedEvent(id: id).map {
+                        ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: $0.hasRecurrenceRules, timeZone: $0.timeZone,
+                                                         title: $0.title, isAllDay: $0.isAllDay)
+                    }
                 }
                 let seriesID: String
                 let seriesZone: TimeZone?
                 switch target {
                 case .notRecurring(let id):
                     throw EventKitError.exclusionConflict(existingId: id, date: Self.formatExclusionDay(excluded[0], timezone: timezone))
-                case .seriesUnread(let occurrenceID):
-                    throw EventKitError.exclusionSeriesUnread(occurrenceId: occurrenceID)
+                case .notChecked(let occurrenceID):
+                    throw EventKitError.exclusionRetryNotChecked(occurrenceId: occurrenceID)
                 case .series(let id, let zone):
                     (seriesID, seriesZone) = (id, zone)
                 }
@@ -4008,9 +4013,10 @@ enum EventKitError: LocalizedError {
     /// #534: a requested excluded date on which an occurrence of the existing series that was
     /// edited on its own starts (`EditedOccurrenceAddress.Presence.editedOccurrenceStarts`).
     case exclusionEditedOccurrence(existingId: String, date: String)
-    /// #544: the retry's match is an occurrence edited on its own, and its series could not be read as
-    /// a recurring series (`ExclusionRetryTarget.Target.seriesUnread`); the excluded dates were not checked.
-    case exclusionSeriesUnread(occurrenceId: String)
+    /// #544: the retry's match is an occurrence edited on its own that was not shown to be its
+    /// series' first occurrence edited in place (`ExclusionRetryTarget.Target.notChecked`); the
+    /// excluded dates were not checked.
+    case exclusionRetryNotChecked(occurrenceId: String)
     /// #190 — all-day events are floating calendar days; a timezone would strip
     /// the all-day flag and shift occurrence days (defense-in-depth behind the
     /// handler-level guard).
@@ -4312,8 +4318,8 @@ enum EventKitError: LocalizedError {
             return "An existing series (event ID \(existingId)) matches this event but still has an occurrence on \(date) — its exclusion set differs from the request. Not modifying the existing series; adjust it explicitly or change the request."
         case .exclusionEditedOccurrence(let existingId, let date):
             return EditedOccurrenceAddress.exclusionReason(existingId: existingId, date: date)
-        case .exclusionSeriesUnread(let occurrenceId):
-            return ExclusionRetryTarget.seriesUnreadReason(occurrenceID: occurrenceId)
+        case .exclusionRetryNotChecked(let occurrenceId):
+            return ExclusionRetryTarget.notCheckedReason(occurrenceID: occurrenceId)
         }
     }
 }
