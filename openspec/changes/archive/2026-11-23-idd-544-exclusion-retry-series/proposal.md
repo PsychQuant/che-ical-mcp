@@ -35,3 +35,11 @@ The duplicate lookup (`findDuplicateEvent`, title and start) returns the edited 
 
 - Affected specs: `recurrence-excluded-dates`
 - Affected code: `Sources/CheICalMCP/EventKit/ExclusionRetryTarget.swift` (new), `Sources/CheICalMCP/EventKit/EventKitManager.swift` (`createEvent`, `CreateEventResult`, `EventKitError`), `Sources/CheICalMCP/EventWriteSource.swift`, `Sources/CheICalMCP/Server.swift`, tests, `CHANGELOG.md`, README files
+
+## Correction (PR #582 verify rounds 1 and 2)
+
+This proposal was written for the first version of the change. Verify narrowed the rule; the spec delta in this folder states the rule as merged, and this note supersedes the paragraphs above where they differ:
+
+- The series named before `/RID=` is taken only when the match is that series' first occurrence edited in place: the match's original slot (from `/RID=`, an all-day series' read on this Mac's day) and its start, and the series object's own first slot (`occurrenceDate`, else `startDate`), all equal the requested start within one second, and the series object reads with rules and the requested title. A match that addresses one occurrence is tested this way even when it reports rules of its own.
+- Every other match that addresses one occurrence gets `exclusionRetryNotChecked` (named "series-unread" above, renamed in round 1): the dates are not checked and nothing is written. The Non-Goal "any occurrence of a series at the requested start selects that series" no longer holds: an occurrence of another series retitled to the requested title, one moved onto the requested start, a later occurrence of another same-titled series edited in place there, and a first occurrence moved within the lookup's window are all refused.
+- The pure API became `resolve(match:request:series:)` with `Match`, `Request` and `SeriesFacts` (title, all-day flag, first slot), and `notCheckedReason(occurrenceID:)`.

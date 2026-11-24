@@ -19,3 +19,5 @@ Tests first; every new branch has a mutant seen red (PR body).
 
 - [x] 4.1 Full `swift test` in the host zone, `TZ=UTC`, `TZ=America/Los_Angeles`; removed-test check by (file, name) against `origin/main`; mutation table (one mutant per branch and text, each seen red).
 - [x] 4.2 Device cells (`--cli`, signed release build of the head and of `main`, iCloud, a `#544` calendar): rows 1 to 5 of the PR body; calendar deleted by id; `probecount.py` twice a minute apart.
+
+<!-- Correction (PR #582 verify rounds 1 and 2): 1.1 now reads `resolve(match:request:series:)` and `notCheckedReason(occurrenceID:)` with the `exclusionRetryNotChecked` error; 2.1's series is taken only for its first occurrence edited in place with the requested title (see the proposal's Correction); the device cells grew to twelve rows; the round-0 first run's two counts were 54 s apart, later runs' a minute or more. -->
