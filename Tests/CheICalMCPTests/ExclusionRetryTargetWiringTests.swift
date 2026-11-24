@@ -20,7 +20,11 @@ final class ExclusionRetryTargetWiringTests: XCTestCase {
     /// and the guard on the match's own rules is gone.
     func testTheTargetIsResolvedFromTheMatch() throws {
         let body = try create()
-        assertOnce("let target = try ExclusionRetryTarget.resolve( match: ExclusionRetryTarget.Match(identifier: existingId, isDetached: existing.isDetached, hasRecurrenceRules: existing.hasRecurrenceRules, timeZone: existing.timeZone, start: existing.startDate), request: ExclusionRetryTarget.Request(title: title, start: startDate, host: .current)) { id in try storedEvent(id: id).map { ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: $0.hasRecurrenceRules, timeZone: $0.timeZone, title: $0.title, isAllDay: $0.isAllDay, firstStart: $0.occurrenceDate ?? $0.startDate) } }", in: body)
+        // #578: the request and the series read are shared with the paths without exclusions.
+        assertOnce("let target = try ExclusionRetryTarget.resolve( match: ExclusionRetryTarget.Match(identifier: existingId, isDetached: existing.isDetached, hasRecurrenceRules: existing.hasRecurrenceRules, timeZone: existing.timeZone, start: existing.startDate), request: retryRequest, series: retrySeriesFacts)", in: body)
+        assertOnce("let retryRequest = ExclusionRetryTarget.Request(title: title, start: startDate, host: .current)", in: body)
+        let facts = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "private func retrySeriesFacts(", in: try SourcePins.source("EventKit/EventKitManager.swift"))))
+        assertOnce("try storedEvent(id: id).map { ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: $0.hasRecurrenceRules, timeZone: $0.timeZone, title: $0.title, isAllDay: $0.isAllDay, firstStart: $0.occurrenceDate ?? $0.startDate) }", in: facts)
         XCTAssertFalse(body.contains("guard existing.hasRecurrenceRules"), body)
         assertOnce("case .notRecurring(let id): throw EventKitError.exclusionConflict(existingId: id, date: Self.formatExclusionDay(excluded[0], timezone: timezone))", in: body)
         assertOnce("case .notChecked(let occurrenceID): throw EventKitError.exclusionRetryNotChecked(occurrenceId: occurrenceID)", in: body)
@@ -42,11 +46,12 @@ final class ExclusionRetryTargetWiringTests: XCTestCase {
     }
 
     /// The skipped answer on the exclusion path carries the series' identifier when it differs from
-    /// the match's; the other duplicate return is as it was (#578).
+    /// the match's; the other duplicate return carries #578's (`CreateRetryIdentityWiringTests`).
     func testTheSkippedResultCarriesTheSeriesIdentifier() throws {
         let body = try create()
         assertOnce("return CreateEventResult(event: existing, isDuplicate: true, seriesIdentifier: seriesID == existingId ? nil : seriesID)", in: body)
-        assertOnce("return CreateEventResult(event: existing, isDuplicate: true)", in: body)
+        assertOnce("return CreateEventResult(event: existing, isDuplicate: true, seriesIdentifier: answeredSeries)", in: body)
+        XCTAssertFalse(body.contains("return CreateEventResult(event: existing, isDuplicate: true) "), body)
         let write = SourceScan.collapsingWhitespace(try SourcePins.source("EventWriteSource.swift"))
         assertOnce("isDuplicate: result.isDuplicate, existingSeriesIdentifier: result.seriesIdentifier)", in: write)
     }
@@ -56,8 +61,8 @@ final class ExclusionRetryTargetWiringTests: XCTestCase {
     /// structural check, next to the device rows.
     func testTheDuplicateBranchReturnsBeforeAnyWrite() throws {
         let body = try create()
-        let branch = try XCTUnwrap(body.range(of: "if let existing = findDuplicateEvent("))
-        let returns = try XCTUnwrap(body.range(of: "return CreateEventResult(event: existing, isDuplicate: true)"))
+        let branch = try XCTUnwrap(body.range(of: "let duplicate = findDuplicateEvent("))
+        let returns = try XCTUnwrap(body.range(of: "return CreateEventResult(event: existing, isDuplicate: true, seriesIdentifier: answeredSeries)"))
         let skippedSeries = try XCTUnwrap(body.range(of: "return CreateEventResult(event: existing, isDuplicate: true, seriesIdentifier:"))
         let build = try XCTUnwrap(body.range(of: "let event = EKEvent(eventStore: eventStore)"))
         for write in ["eventStore.save(", "applyExclusions(", "CalendarUndoManager.shared.record("] {

@@ -947,11 +947,13 @@ final class ManifestParityTests: XCTestCase {
     /// #544: both create tools say that a retry whose match is the series' edited first occurrence is
     /// checked against the series, and that the answers give the series' identifier.
     func testTheCreateToolsSayAnEditedFirstOccurrenceRetryIsCheckedAgainstItsSeries() throws {
-        // Verify round 1 (X7, X11): only the first occurrence edited in place is taken, the other
-        // answer gives no series' identifier, and a retitled first occurrence is not matched.
+        // PR #582 verify round 1 (X7, X11): only the first occurrence edited in place is taken, and the
+        // other answer gives no series' identifier. #578 (PR #588 verify round 1): a retitled first
+        // occurrence, in place and of the same kind, of a series read with the requested title and
+        // first slot, is refused, creating nothing.
         let phrases = ["When the series' first occurrence was edited on its own in place, keeping its title and start, the retry is checked against the series named before /RID=, and its skipped answer and conflicts give the series' identifier (#544).",
                        "Any other match that is an occurrence edited on its own, or one whose series does not read as a recurring series with that title, is not checked: the call fails without checking the dates and writes nothing.",
-                       "A first occurrence whose title was changed is not matched at all, and the retry creates a second series (#578)."]
+                       "When the series' first occurrence was retitled on its own in place (same start and kind) and the series reads with the requested title and first slot, a recurring retry over it fails without creating anything (#578)."]
         let tools = CheICalMCPServer.defineTools()
         for name in ["create_event", "create_events_batch"] {
             let schema = try XCTUnwrap(tools.first { $0.name == name }?.inputSchema, name)
