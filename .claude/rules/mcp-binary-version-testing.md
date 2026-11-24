@@ -1536,9 +1536,9 @@ iCloud 以外的來源、長駐 process（session MCP）上讀到過期的系列
 #578 的兩個決定（`CreateRetryIdentity.answeredSeries`、`retitledFirstOccurrence`）是純函式，都建立在 #544 的 `ExclusionRetryTarget.resolve` 上，`createEvent` 的接線由 `CreateRetryIdentityWiringTests` 釘住。
 重試什麼都不寫，是 stateless 的，所以用 `--cli` 做（見上表），不用 AppleScript、不用 session MCP，只在名稱含 `#578` 的拋棄式日曆上做，每種形狀一個日曆。
 **不要用 `create_events_batch` 做裝置格**：batch 的路徑會讀其他行事曆。batch 由 handler 測試與 wiring pin 涵蓋。
-**下面每一列的 setup 都經過跨行事曆的讀取**：`update_event` 帶 `occurrence_date`（每個形狀改第一場或某一場都用它），以及第 5 列 X 的帶排除日的 `create_event` 與重試，都經 `findOccurrence`／`dayReadings` 讀當天所有行事曆（#573）。依 lane brief 2026-11-24 的規則，這些列在 #573 的修正（PR #589，讓這兩個查詢只讀目標日曆）合併之前不在裝置上跑。
+**每一列的 setup 與第 5 列 X 在 #573 之前會讀其他行事曆**：`update_event` 帶 `occurrence_date`（每個形狀改第一場或某一場都用它），以及第 5 列 X 的帶排除日的 `create_event` 與重試，經 `findOccurrence`／`dayReadings` 查當天。PR #589（#573）已合併，這兩個查詢現在只讀系列物件的日曆（`OccurrenceLookup`），所以用含 #589 的 binary 時，第 1 到 6 列都只讀拋棄式日曆，可以在裝置上跑；含 #589 之前的 binary（例如 `main` 的 `88e5158a`）會讀當天所有行事曆，**不要**拿它在裝置上對照。#573 的前提（來源回報的場次在系列的日曆裡）只在 iCloud 量過，見下一節。
 
-**PR #589 合併之後、出 #578 的版本打 tag 之前**，用出版的 binary 重做下面全部的列（第 1 到 6 列；那時 setup 與第 5 列 X 都只讀拋棄式日曆）。PR #589 沒有合併就要打 tag 時，這些列記成沒有重做，不在裝置上跑。每一列都是同標題、同開始時間的 `create_event`，前後各 `list_events` 一次（只列那個拋棄式日曆）。
+**出 #578 的版本打 tag 之前**，用出版的 binary 重做下面全部的列（第 1 到 6 列）。第 5 列不再拿 #578 之前的 binary 對照：那些 binary 都在 #589 之前，會讀其他行事曆；它們的結果已在 2026-11-24 記在 #578。每一列都是同標題、同開始時間的 `create_event`，前後各 `list_events` 一次（只列那個拋棄式日曆）。
 
 形狀 N：每週一次、共六場、時區 Asia/Taipei 的系列，用 span `this` 只改第一場的 `notes`。
 
@@ -1552,7 +1552,7 @@ iCloud 以外的來源、長駐 process（session MCP）上讀到過期的系列
 
 形狀 T、X：同形狀 N 的系列，用 span `this` 把第一場的標題改掉。
 
-5. 重複規則、原標題、不帶排除日（T）與帶排除日（X）：失敗，訊息說無法判斷是不是那個系列的重試，什麼都沒建（`main` 建出第二個系列）。先跑出版的 binary，再跑 `main`。
+5. 重複規則、原標題、不帶排除日（T）與帶排除日（X）：失敗，訊息說無法判斷是不是那個系列的重試，什麼都沒建（#578 之前的 `main` 建出第二個系列，2026-11-24 量過）。
 
 形狀 M、R、F、L（#544 gate 的第 6 到 9 列的系列，不帶排除日）：
 
@@ -1560,3 +1560,35 @@ iCloud 以外的來源、長駐 process（session MCP）上讀到過期的系列
 
 2026-11-24 在 iCloud 用這個 PR 的 Developer ID 簽章 release build 與 `main`（`88e5158a`）做過，結果記在 #578 與它的 PR。沒量過：長駐 process 上讀到過期的系列物件、iCloud 以外的來源。
 結束後依 id 刪掉日曆，隔一分鐘以上用名稱過濾的列表數兩次，名稱含 `#578` 的都是 0。
+
+## Release gate：場次查詢只讀系列的日曆（#573）
+
+#573 讓 `findOccurrence` 與 `dayReadings` 只查系列物件的日曆（`OccurrenceLookup`），證據是記錄每次查詢點名哪些日曆的假 store，以及每個呼叫端傳哪個物件的日曆的原始碼釘選；沒有在裝置上跑過。改動之前的 binary 會列出每個日曆的那一天，所以**不要**拿 `main` 的 binary 在裝置上做對照。
+
+依賴而沒量過的前提：來源回報一個場次時，它的日曆就是系列的日曆。iCloud 上把新日曆給一個場次會搬走整個系列（#426，量過）；Google、Exchange 沒有量過。前提不成立時，查不到的場次在 `update_event`、`delete_event`、`delete_events_batch`、`move_events_batch` 回拒絕或該列失敗，什麼都沒寫；但相同的 exclusion retry 會把那天當成已排除而回 `skipped`，`main` 則回 conflict（#182、#534 防的就是這種假 `skipped`）。
+
+**不擋 tag**；有 Google 或 Exchange 帳號時，在該來源名稱含 `#573` 的拋棄式日曆上，用剛 build 的 binary 的 `--cli`。系列一律用 `create_event` 建（不要用 `create_events_batch`：它的 `similar_events` 會讀每個日曆）；每次讀回都用 `list_events` 帶 `calendar_name` 只列這個拋棄式日曆：
+
+1. `create_event` 建每週 3 次的系列 → `delete_event` 用系列 id、span `this`、`occurrence_date` 為第二場：要成功；`list_events`（`calendar_name`）讀回只剩第一、三場。
+2. `create_event` 另建一個系列 → `update_event` 用系列 id、span `this`、`occurrence_date` 為第二場、只改 `title`：要成功；`list_events`（`calendar_name`）讀回只有第二場的標題變了。
+3. `create_event` 帶 `recurrence.excluded_occurrence_dates`（第二場）建系列 → 用同樣的參數再呼叫一次：要回 `skipped`；再用排除日為第三場的參數呼叫：要回 conflict。回 `skipped` 就是該來源把第三場回報在別的日曆。
+
+任一步回「not found」或「No occurrence of this event falls on occurrence_date」，或第 3 步第二次回 `skipped`，就是該來源把場次回報在別的日曆，回報到 #573。結束後依 id 刪掉日曆；隔一分鐘以上數兩次殘留，每次都是 `list_calendars` 的結果在本機依名稱過濾後只留下數目（`list_calendars` 本身列出所有日曆的名稱，不留存），名稱含 `#573` 的都是 0。
+
+## Release gate：全天系列的 create-undo 與單獨改回的場次（#563）
+
+#563 讓 create-undo 的 `modified_occurrences` 檢查（`UndoPostState.onItsSlot`）在主機位於 UTC 或其以東時，把全天系列中單獨改過、
+又改回系列值的場次當成仍在原時段：`/RID=` 剛好是 00:00 UTC、這個時刻在主機時區也是同一天、場次開始於那天的第一個時刻。只有純函式
+測試（`AllDayOccurrenceSlotTests`，含對 instant 比較的 33 個時區格點）與原始碼釘選；裝置上沒有量過。要在 session MCP 上做，是因為
+create-undo 有狀態（undo stack 在長駐 process 裡），`--cli` 走不到。下面第 1 到 3 步（第 3 步重做第 1 步）用系列 ID、span `this` 加 `occurrence_date` 的
+`update_event`，不論在 session MCP 還是 `--cli`，都經過 `findOccurrence`，它的查找會跨日曆列舉、讀到真實行事曆（#573，PR #589）。
+所以：**等 #573 合併後才做**；只由維護者本人在重啟後的 session MCP 上做（行為探測確認是新 binary 之後），任何 lane 或 agent 都不做；
+只用名稱含 `#563` 的拋棄式日曆，主機時區照實記下：
+
+1. session：`create_event` 建全天、每週、5 次的系列 → session：`update_event` 用系列 ID、span `this`、`occurrence_date` 為第 3 場，改
+   `notes` → 同樣再把 `notes` 改回空的（場次仍是 detached，欄位等於系列）→ `undo` 兩次（兩筆 update-undo：拒絕並丟棄，或照訊息處理）→
+   最後一筆 create-undo：主機在 UTC 或其以東時要刪掉整個系列；記下回應。
+2. 同上，但第 3 場用 `update_event` 帶 `start_time` 移到隔天（全天）→ create-undo 要以 `modified_occurrences` 拒絕，什麼都沒寫。
+3. 主機時區在 UTC 以西時（`TZ` 只改 server process，系統時區沒有量過），第 1 步預期仍以 `modified_occurrences` 拒絕；記下結果。
+
+任何一步與預期不同就回報到 #563。結果記在 #563。結束後刪掉拋棄式日曆，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#563` 的都是 0。

@@ -147,11 +147,16 @@ final class FutureDeletionCoverageTests: XCTestCase {
         let record = try XCTUnwrap(body.range(of: "sequence.deletedOccurrence("))
         XCTAssertLessThan(remove.lowerBound, record.lowerBound)
         // Verify round 6: with a slot, the occurrence is located exactly, never another one of that day.
-        XCTAssertTrue(body.contains("findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone, slot: slot)"))
+        XCTAssertTrue(SourceScan.collapsingWhitespace(body).contains("findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone, slot: slot, calendar: masterEvent.calendar)"))
         // ...through the tested predicate (round 7: the filter itself was not pinned).
+        // #573: `findOccurrence` hands the lookup to `OccurrenceLookup.find`, which holds the filter.
         let lookup0 = try XCTUnwrap(source.range(of: "func findOccurrence(identifier: String, on date: Date"))
-        let lookupEnd = try XCTUnwrap(source.range(of: "return target", range: lookup0.upperBound..<source.endIndex))
-        XCTAssertTrue(source[lookup0.lowerBound..<lookupEnd.lowerBound].contains("FutureDeletionCoverage.isRequested("))
+        let lookupEnd = try XCTUnwrap(source.range(of: "func dayReadings(", range: lookup0.upperBound..<source.endIndex))
+        XCTAssertTrue(source[lookup0.lowerBound..<lookupEnd.lowerBound].contains("OccurrenceLookup.find("))
+        let pure = try SourcePins.source("EventKit/OccurrenceLookup.swift")
+        let find0 = try XCTUnwrap(pure.range(of: "static func find<"))
+        let findEnd = try XCTUnwrap(pure.range(of: "return target", range: find0.upperBound..<pure.endIndex))
+        XCTAssertTrue(pure[find0.lowerBound..<findEnd.lowerBound].contains("FutureDeletionCoverage.isRequested("))
         // ...and a removal of an occurrence edited on its own is recorded too (it has no rules).
         let whole = try XCTUnwrap(body.range(of: "sequence.deletedWhole("))
         let removeWhole = try XCTUnwrap(body.range(of: "try eventStore.remove(masterEvent, span: span)"))

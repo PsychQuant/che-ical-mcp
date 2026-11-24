@@ -77,16 +77,17 @@ final class OccurrenceDayTests: XCTestCase {
     }
 
     func testFindOccurrenceSearchesTheWindow() throws {
-        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
+        // #573: the window and the selection moved unchanged into `OccurrenceLookup.find`.
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/OccurrenceLookup.swift")
         let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
-        let body = try XCTUnwrap(SourceScan.body(of: "func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil, slot: Date? = nil) -> EKEvent? {", in: code))
+        let body = try XCTUnwrap(SourceScan.body(of: "static func find<Event, Calendar>(identifier: String, on date: Date, in timeZone: TimeZone?, slot: Date?, seriesCalendar: Calendar?, host: TimeZone = .current, enumerate: Enumerate<Event, Calendar>, read: (Event) -> Candidate) -> Event? {", in: code))
         // PR #394 verify round 1: the predicate covers the candidate window (search day and host day).
-        XCTAssertEqual(SourcePins.ranges(of: "guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone) else { return nil } let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil)", in: body).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone, host: host) else { return nil } var target: Event? withoutActuallyEscaping(read) { read in enumerate(window.start, window.end, scope(seriesCalendar: seriesCalendar)) { event in", in: body).count, 1)
         XCTAssertFalse(body.contains("startOfDay"), "the window is computed in one place")
         // Final review: a line inserted above the pinned text (shadowing `date` or `timeZone`)
         // survived a substring pin. The body must open with the window and never rebind either.
         let trimmed = body.trimmingCharacters(in: .whitespaces).drop(while: { $0 == "{" || $0 == " " })
-        XCTAssertTrue(trimmed.hasPrefix("guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone)"), String(trimmed.prefix(160)))
+        XCTAssertTrue(trimmed.hasPrefix("guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone, host: host)"), String(trimmed.prefix(160)))
         for rebinding in ["let date", "var date", "let timeZone", "var timeZone", "date =", "timeZone ="] {
             XCTAssertFalse(body.contains(rebinding), "findOccurrence rebinds an input: \(rebinding)")
         }
@@ -198,10 +199,11 @@ final class OccurrenceDayStartRuleTests: XCTestCase {
     /// `findOccurrence` matches through this rule, with the enumerated event's own start and
     /// all-day flag and the requested date and zone it was called with.
     func testFindOccurrenceMatchesByTheStartRule() throws {
-        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/EventKitManager.swift")
+        // #573: the window and the selection moved unchanged into `OccurrenceLookup.find`.
+        let file = try SourceScan.sourcesDirectory().appendingPathComponent("EventKit/OccurrenceLookup.swift")
         let code = SourceScan.collapsingWhitespace(SourceScan.strippingComments(try String(contentsOf: file, encoding: .utf8)))
-        let body = try XCTUnwrap(SourceScan.body(of: "func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil, slot: Date? = nil) -> EKEvent? {", in: code))
-        XCTAssertEqual(SourcePins.ranges(of: "OccurrenceDay.startsOnRequestedDay(occurrenceStart: event.startDate, isAllDay: event.isAllDay, requested: date, in: timeZone)", in: body).count, 1)
+        let body = try XCTUnwrap(SourceScan.body(of: "static func find<Event, Calendar>(identifier: String, on date: Date, in timeZone: TimeZone?, slot: Date?, seriesCalendar: Calendar?, host: TimeZone = .current, enumerate: Enumerate<Event, Calendar>, read: (Event) -> Candidate) -> Event? {", in: code))
+        XCTAssertEqual(SourcePins.ranges(of: "OccurrenceDay.startsOnRequestedDay(occurrenceStart: facts.startDate, isAllDay: facts.isAllDay, requested: date, in: timeZone, host: host)", in: body).count, 1)
         let rule = try XCTUnwrap(body.range(of: "OccurrenceDay.startsOnRequestedDay("))
         let pick = try XCTUnwrap(body.range(of: "target = event"))
         XCTAssertLessThan(rule.lowerBound, pick.lowerBound, "the rule gates the pick")

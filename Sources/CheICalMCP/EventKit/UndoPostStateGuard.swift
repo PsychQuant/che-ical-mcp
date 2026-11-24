@@ -218,13 +218,17 @@ enum UndoPostState {
     /// What the scan compares a detached occurrence by (PR #259 round 3 finding 7, round 4
     /// decision): its slot, and the occurrence as an `EventSnapshot` without rules.
     struct OccurrenceFace {
-        /// `occurrenceDate`: the start the rule gives this occurrence.
+        /// The start the rule gives this occurrence: its `/RID=`, else `occurrenceDate` (#311).
         let slot: Date?
         let event: EventSnapshot
+        /// #563: the slot came from `/RID=` digits (not `occurrenceDate`), so for an occurrence of an
+        /// all-day series it may be a floating date (`onItsSlot`).
+        var slotFromRID: Bool = false
     }
 
     /// A detached occurrence is an edit when it differs from the series' first occurrence in any
-    /// field the guard compares: moved off the start its rule gives it (its slot), or a different
+    /// field the guard compares: moved off the start its rule gives it (its slot, `onItsSlot`; read in
+    /// `zone`, the host's, for an all-day occurrence, #563), or a different
     /// title, notes, location, URL, all-day flag, duration, alarms, time zone, place or
     /// availability (#245; not when either side reports none). The
     /// guard's tolerances apply: an alarm sound, and coordinates added to a place the series has
@@ -235,9 +239,11 @@ enum UndoPostState {
     /// only refuse more. An occurrence back at the series' values stays detached (EventKit cannot
     /// re-attach it) and is not an edit. No slot to compare with counts as moved, the side that
     /// refuses.
-    static func differsFromSeries(_ occurrence: OccurrenceFace, series: OccurrenceFace) -> Bool {
+    static func differsFromSeries(_ occurrence: OccurrenceFace, series: OccurrenceFace, zone: TimeZone = .current) -> Bool {
         let (one, all) = (occurrence.event, series.event)
-        guard let slot = occurrence.slot, sameInstant(one.startDate, slot) else { return true }
+        guard let slot = occurrence.slot,
+              onItsSlot(start: one.startDate, slot: slot, slotFromRID: occurrence.slotFromRID,
+                        allDay: one.isAllDay && all.isAllDay, zone: zone) else { return true }
         func text(_ value: String?) -> String { value ?? "" }
         func duration(_ event: EventSnapshot) -> TimeInterval { event.endDate.timeIntervalSince(event.startDate) }
 
@@ -251,6 +257,26 @@ enum UndoPostState {
             || !sameTimeZone(one.timeZone, all.timeZone, at: one.startDate)
             || !EventSnapshot.samePlace(recorded: all, current: one)
             || !sameOccurrenceAvailability(one.availability, all.availability)
+    }
+
+    /// #563: whether an occurrence starting at `start` is on `slot`. The instant comparison, as
+    /// before #563, and one more case. The `/RID=` digits of an occurrence edited on its own while its
+    /// series was all-day are a floating date, the day at 00:00 read as UTC (device, 2026-10-14), and
+    /// its start is midnight of that day in the host `zone`. Digits at exactly 00:00 UTC can also be
+    /// the instant of a timed slot of a series later made all-day, and which one they are cannot be
+    /// read later (#543, PR #565). So the floating reading is taken only where the two readings name
+    /// one day in `zone`: occurrence and series all-day (`allDay`), digits from `/RID=` at exactly
+    /// 00:00 UTC, their instant on that same date in `zone` (hosts at or east of UTC), and the start
+    /// at the first instant of that date there. West of UTC the readings name different days, and an
+    /// occurrence there is compared by the instant alone, as before.
+    static func onItsSlot(start: Date, slot: Date, slotFromRID: Bool, allDay: Bool, zone: TimeZone) -> Bool {
+        if sameInstant(start, slot) { return true }
+        guard allDay, slotFromRID, let utc = TimeZone(identifier: "UTC") else { return false }
+        let utcCalendar = Calendar.gregorian(in: utc), host = Calendar.gregorian(in: zone)
+        guard utcCalendar.startOfDay(for: slot) == slot else { return false }
+        let day: Set<Calendar.Component> = [.year, .month, .day]
+        guard host.dateComponents(day, from: slot) == utcCalendar.dateComponents(day, from: slot) else { return false }
+        return sameInstant(start, host.startOfDay(for: slot))
     }
 
     /// #416: what `occurrence` holds of its own that a new series started from it would carry.
@@ -345,11 +371,14 @@ enum UndoPostState {
 }
 
 extension UndoPostState.OccurrenceFace {
+    /// The slot is `originalSlot`'s (`/RID=`, else `occurrenceDate`); #563 records which one it was.
     init(_ event: EKEvent) {
-        self.init(slot: UndoPostState.originalSlot(eventIdentifier: event.eventIdentifier,
-                                                   externalIdentifier: event.calendarItemExternalIdentifier,
-                                                   occurrenceDate: event.occurrenceDate),
-                  event: EventSnapshot(from: event, includeRecurrence: false))
+        let fromRID = UndoPostState.originalSlot(eventIdentifier: event.eventIdentifier,
+                                                 externalIdentifier: event.calendarItemExternalIdentifier,
+                                                 occurrenceDate: nil)
+        self.init(slot: fromRID ?? event.occurrenceDate,
+                  event: EventSnapshot(from: event, includeRecurrence: false),
+                  slotFromRID: fromRID != nil)
     }
 }
 

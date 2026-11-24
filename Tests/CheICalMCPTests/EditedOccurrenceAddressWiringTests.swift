@@ -12,6 +12,11 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
         SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: declaration, in: try manager()), declaration))
     }
 
+    /// #573: one function of `OccurrenceLookup`, where the lookup's window and selection now live.
+    private func lookupBody(of declaration: String) throws -> String {
+        SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: declaration, in: try SourcePins.source("EventKit/OccurrenceLookup.swift")), declaration))
+    }
+
     private func repoFile(_ relative: String) throws -> String {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -52,7 +57,8 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
             XCTAssertEqual(count("findOccurrence(", in: code), 1, site.declaration)
             XCTAssertEqual(count("occurrenceMissError(", in: code), 1, site.declaration)
             // The lookup keeps its form (`OccurrenceDateZoneTests` pins the zone it searches in).
-            let lookup = "guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: \(site.series))) else {"
+            // #573: with the series' calendar (`OccurrenceLookupWiringTests`).
+            let lookup = "guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: \(site.series)), calendar: \(site.series).calendar) else {"
             let miss = "\(lookup) throw occurrenceMissError(series: \(site.series), id: identifier, on: date, call: \(site.call)) }"
             let at = try XCTUnwrap(code.range(of: miss), "\(site.declaration): \(miss)")
             let before = String(code[..<at.lowerBound])
@@ -71,7 +77,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
         // in as it is: a default in its place would read the day of a series with no time zone in
         // another zone than the lookup's and hide its #549 text (PR #545 verify).
         let asked = "let request = EditedOccurrenceAddress.Request(seriesID: id, seriesIsAllDay: series.isAllDay, seriesZone: Self.occurrenceZone(of: series), requested: date)"
-        let decide = "switch EditedOccurrenceAddress.miss(for: call, matches: editedOccurrences(for: request), request: request) {"
+        let decide = "switch EditedOccurrenceAddress.miss(for: call, matches: editedOccurrences(for: request, calendar: series.calendar), request: request) {"
         assertOnce(asked, in: miss)
         assertOnce(decide, in: miss)
         let notFound = ".eventNotFound(identifier: detail)"
@@ -86,7 +92,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
         // Only the day's events are read, in the series' zone as it is; the series is not listed
         // (PR #545 narrowing round).
         let edited = try body(of: "func editedOccurrences(")
-        assertOnce("func editedOccurrences(for request: EditedOccurrenceAddress.Request) -> [EditedOccurrenceAddress.Match] { EditedOccurrenceAddress.matches(onDay: dayReadings(containing: request.requested, in: request.seriesZone), for: request) }", in: edited)
+        assertOnce("func editedOccurrences(for request: EditedOccurrenceAddress.Request, calendar: EKCalendar?) -> [EditedOccurrenceAddress.Match] { EditedOccurrenceAddress.matches(onDay: dayReadings(containing: request.requested, in: request.seriesZone, calendar: calendar), for: request) }", in: edited)
         assertOnce("dayReadings(", in: edited)
         assertOnce("EditedOccurrenceAddress.matches(", in: edited)
         for listing in ["seriesOccurrences(", "seriesReadings(", "listingRange", "predicateForEvents(", "enumerateEvents("] {
@@ -94,27 +100,33 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
             XCTAssertFalse(miss.contains(listing), "occurrenceMissError lists: \(listing)")
         }
 
-        // The day's events: the window and the predicate of the lookup (`OccurrenceDayTests` pins the
-        // same two statements in `findOccurrence`), opening the body, with neither input rebound.
+        // The day's events: since #573 `dayReadings` hands the day to `OccurrenceLookup.dayReadings`,
+        // which opens with the window of the lookup (`OccurrenceDayTests` pins the same statement in
+        // `OccurrenceLookup.find`) and enumerates it through `enumerateDayWindow`, the one predicate.
         let day = try body(of: "func dayReadings(")
-        let window = "guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone) else { return [] } let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil)"
-        assertOnce(window, in: day)
-        let opens = try XCTUnwrap(day.range(of: "func dayReadings(containing date: Date, in timeZone: TimeZone?) -> [EditedOccurrenceAddress.Reading] { "), day)
-        XCTAssertTrue(day[opens.upperBound...].hasPrefix(window), String(day.prefix(300)))
-        assertOnce("predicateForEvents(", in: day)
-        assertOnce("eventStore.enumerateEvents(matching: predicate)", in: day)
+        assertOnce("OccurrenceLookup.dayReadings(containing: date, in: timeZone, seriesCalendar: calendar, enumerate: enumerateDayWindow, read: EditedOccurrenceAddress.Reading.init)", in: day)
+        let pure = try lookupBody(of: "static func dayReadings<")
+        let window = "guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone, host: host) else { return [] }"
+        let opens = try XCTUnwrap(pure.range(of: "-> [EditedOccurrenceAddress.Reading] { "), pure)
+        XCTAssertTrue(pure[opens.upperBound...].hasPrefix(window), String(pure.prefix(300)))
+        assertOnce("enumerate(window.start, window.end, scope(seriesCalendar: seriesCalendar))", in: pure)
+        let store = try body(of: "private func enumerateDayWindow(")
+        assertOnce("predicateForEvents(", in: store)
+        assertOnce("eventStore.enumerateEvents(matching: predicate)", in: store)
         for rebinding in ["let date", "var date", "let timeZone", "var timeZone", "date =", "timeZone ="] {
             XCTAssertFalse(day.contains(rebinding), "dayReadings rebinds an input: \(rebinding)")
+            XCTAssertFalse(pure.contains(rebinding), "OccurrenceLookup.dayReadings rebinds an input: \(rebinding)")
         }
 
         // No default zone at any of the sites that hand a zone to the search.
-        for code in [miss, edited, day] {
+        for code in [miss, edited, day, pure] {
             XCTAssertFalse(code.contains("?? .current"), code)
             XCTAssertFalse(code.contains("TimeZone.current"), code)
         }
 
         // Nothing the search runs writes, records history or logs: its three functions.
-        for (name, code) in [("occurrenceMissError", miss), ("editedOccurrences", edited), ("dayReadings", day)] {
+        for (name, code) in [("occurrenceMissError", miss), ("editedOccurrences", edited), ("dayReadings", day),
+                             ("OccurrenceLookup.dayReadings", pure), ("enumerateDayWindow", store)] {
             for write in writes {
                 XCTAssertFalse(code.contains(write), "\(name): \(write)")
             }
@@ -133,11 +145,16 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
     /// window, the predicate and the enumeration; without this one a slot read added inside the loop
     /// (`occurrenceDate`, the external identifier, `isDetached`) would pass them all.
     func testEachReadingOfTheDayIsBuiltFromTheEventAlone() throws {
+        // #573: the reading is handed in as `EditedOccurrenceAddress.Reading.init` and the loop of
+        // `OccurrenceLookup.dayReadings` only appends what it returns.
         let day = try body(of: "func dayReadings(")
-        let whole = "func dayReadings(containing date: Date, in timeZone: TimeZone?) -> [EditedOccurrenceAddress.Reading] { guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone) else { return [] } let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil) var readings: [EditedOccurrenceAddress.Reading] = [] eventStore.enumerateEvents(matching: predicate) { event, _ in readings.append(EditedOccurrenceAddress.Reading(event)) } return readings }"
+        let whole = "func dayReadings(containing date: Date, in timeZone: TimeZone?, calendar: EKCalendar?) -> [EditedOccurrenceAddress.Reading] { OccurrenceLookup.dayReadings(containing: date, in: timeZone, seriesCalendar: calendar, enumerate: enumerateDayWindow, read: EditedOccurrenceAddress.Reading.init) }"
         XCTAssertEqual(day, whole)
+        let pure = try lookupBody(of: "static func dayReadings<")
+        assertOnce("enumerate(window.start, window.end, scope(seriesCalendar: seriesCalendar)) { event in readings.append(read(event)) return false }", in: pure)
         for slot in ["occurrenceDate", "calendarItemExternalIdentifier", "isDetached", "/RID="] {
             XCTAssertFalse(day.contains(slot), "dayReadings reads \(slot)")
+            XCTAssertFalse(pure.contains(slot), "OccurrenceLookup.dayReadings reads \(slot)")
         }
         // PR #562 verify r1 (K8): the initializer the loop calls reads the four fields and nothing
         // else, the start from `startDate`, not a slot. The body is pinned exactly, where the
@@ -150,9 +167,13 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
 
     /// The lookup itself is as it was: by the exact identifier, for an occurrence starting on the day.
     func testTheLookupStillTestsTheExactIdentifier() throws {
-        let find = try body(of: "func findOccurrence(")
-        assertOnce("FutureDeletionCoverage.isRequested(eventIdentifier: event.eventIdentifier, occurrenceDate: event.occurrenceDate, identifier: identifier, slot: slot)", in: find)
-        assertOnce("OccurrenceDay.startsOnRequestedDay(occurrenceStart: event.startDate, isAllDay: event.isAllDay, requested: date, in: timeZone)", in: find)
+        // #573: the selection moved unchanged into `OccurrenceLookup.find`, which reads the event
+        // through `OccurrenceLookup.Candidate(_:)`.
+        let find = try lookupBody(of: "static func find<")
+        assertOnce("FutureDeletionCoverage.isRequested(eventIdentifier: facts.eventIdentifier, occurrenceDate: facts.occurrenceDate, identifier: identifier, slot: slot)", in: find)
+        assertOnce("OccurrenceDay.startsOnRequestedDay(occurrenceStart: facts.startDate, isAllDay: facts.isAllDay, requested: date, in: timeZone, host: host)", in: find)
+        let candidate = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "init(_ event: EKEvent)", in: try SourcePins.source("EventKit/OccurrenceLookup.swift"))))
+        XCTAssertEqual(candidate, "init(_ event: EKEvent) { self.init(eventIdentifier: event.eventIdentifier, occurrenceDate: event.occurrenceDate, startDate: event.startDate, isAllDay: event.isAllDay) }")
         assertOnce("FutureDeletionCoverage.isRequested(", in: find)
         assertOnce("OccurrenceDay.startsOnRequestedDay(", in: find)
         XCTAssertFalse(find.contains("EditedOccurrenceAddress"), find)
@@ -167,7 +188,7 @@ final class EditedOccurrenceAddressWiringTests: XCTestCase {
     func testTheExclusionCheckCountsAnEditedOccurrenceOnTheDay() throws {
         let create = try body(of: "func createEvent(")
         // #544: the series the retry is checked against (`ExclusionRetryTarget`), the match's own on `main`.
-        let check = "for date in excluded { switch EditedOccurrenceAddress.presence( lookupHit: findOccurrence(identifier: seriesID, on: date, in: tz) != nil, onDay: dayReadings(containing: date, in: tz), seriesID: seriesID, requested: date, zone: tz) { case .absent: continue case .resolved: throw EventKitError.exclusionConflict( existingId: seriesID, date: Self.formatExclusionDay(date, timezone: tz)) case .editedOccurrenceStarts: throw EventKitError.exclusionEditedOccurrence( existingId: seriesID, date: Self.formatExclusionDay(date, timezone: tz)) } }"
+        let check = "for date in excluded { switch EditedOccurrenceAddress.presence( lookupHit: findOccurrence(identifier: seriesID, on: date, in: tz, calendar: calendar) != nil, onDay: dayReadings(containing: date, in: tz, calendar: calendar), seriesID: seriesID, requested: date, zone: tz) { case .absent: continue case .resolved: throw EventKitError.exclusionConflict( existingId: seriesID, date: Self.formatExclusionDay(date, timezone: tz)) case .editedOccurrenceStarts: throw EventKitError.exclusionEditedOccurrence( existingId: seriesID, date: Self.formatExclusionDay(date, timezone: tz)) } }"
         assertOnce(check, in: create)
         assertOnce("findOccurrence(", in: create)
         assertOnce("EditedOccurrenceAddress.presence(", in: create)

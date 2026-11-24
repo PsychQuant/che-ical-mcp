@@ -536,7 +536,10 @@ final class EventRangeQueryTests: XCTestCase {
             // #532: `dayReadings` reads the one-day window `findOccurrence` enumerates, after it missed.
             // #578: the duplicate lookup's 1-minute window moved from `findDuplicateEvent` into
             // `startWindowEvents`, which the lookup and the retitled read share.
-            "EventKit/EventKitManager.swift": ["startWindowEvents", "findOccurrence", "dayReadings"],
+            // #573: `findOccurrence` and `dayReadings` now query through `enumerateDayWindow`, with the
+            // window `OccurrenceLookup` computes and the series' calendar (`OccurrenceLookupWiringTests`
+            // pins its two callers).
+            "EventKit/EventKitManager.swift": ["startWindowEvents", "enumerateDayWindow"],
             // #322: the delete-undo exceptions layer's two EventKit queries, moved here from
             // EventKitManager+SeriesExceptions.swift. `slotHolders` builds its range from one
             // occurrence; `events(in:inCalendarOf:)` takes one, and
