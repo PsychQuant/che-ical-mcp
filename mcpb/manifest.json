@@ -97,7 +97,7 @@
     },
     {
       "name": "create_events_batch",
-      "description": "Create multiple events at once (each result reports all-day dates whose offset moves the day in warnings); unknown recurrence keys fail that item. Each all-day item's date-only endpoints can use the first instant of a day whose midnight the server process time zone skips. Similar-event hints show stored dates."
+      "description": "Create multiple events at once (each result reports all-day dates whose offset moves the day in warnings); unknown recurrence keys fail that item. Each all-day item's date-only endpoints can use the first instant of a day whose midnight the server process time zone skips. Similar-event hints show stored dates. They come only from the calendar each written row went to (#590)."
     },
     {
       "name": "check_conflicts",

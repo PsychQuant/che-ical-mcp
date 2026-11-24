@@ -878,7 +878,7 @@ class CheICalMCPServer {
             // Feature 4: Batch Create Events
             Tool(
                 name: "create_events_batch",
-                description: "PREFERRED: Create multiple events in a single call. Use this instead of calling create_event multiple times - it's faster and more reliable. Returns detailed results for each event. Also returns similar_events hints showing existing events with similar titles, so you can reuse the correct calendar name and avoid duplicates. Each all-day item's date-only endpoints can use the first instant of a day whose midnight the server process time zone skips. Similar-event hints show stored dates.",
+                description: "PREFERRED: Create multiple events in a single call. Use this instead of calling create_event multiple times - it's faster and more reliable. Returns detailed results for each event. Also returns similar_events hints: existing events with similar titles in the calendar each written row went to, searched once per title and calendar; no other calendar is read and a failed row gets no hint (#590). Each all-day item's date-only endpoints can use the first instant of a day whose midnight the server process time zone skips. Similar-event hints show stored dates.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -2763,12 +2763,20 @@ class CheICalMCPServer {
     }
 
     /// Feature 4: Create multiple events at once
+    /// #590: a title and the calendar a batch row was written to, searched once for similar events.
+    private struct SimilarSearch: Equatable {
+        let title: String
+        let calendarIdentifier: String
+    }
+
     private func handleCreateEventsBatch(arguments: [String: Value]) async throws -> String {
         guard let eventsArray = arguments["events"]?.arrayValue else {
             throw ToolError.invalidParameter("events array is required")
         }
 
         var results: [[String: Any]] = []
+        // #590: one similar-events search per distinct title and calendar of the rows written, in order.
+        var similarSearches: [SimilarSearch] = []
 
         for (index, eventValue) in eventsArray.enumerated() {
             guard let eventDict = eventValue.objectValue else {
@@ -2906,6 +2914,11 @@ class CheICalMCPServer {
                         hostZone: host.timeZone, skipped: result.isDuplicate)) { $1 }
                 }
                 results.append(entry)
+                // #590: the similar-events search reads only this row's calendar.
+                if let calendar = result.event.calendarIdentifier, !calendar.isEmpty {
+                    let search = SimilarSearch(title: title, calendarIdentifier: calendar)
+                    if !similarSearches.contains(search) { similarSearches.append(search) }
+                }
             } catch {
                 results.append([
                     "index": index,
@@ -2932,17 +2945,18 @@ class CheICalMCPServer {
             response["skipped"] = skippedCount
         }
 
-        // Collect unique titles from the batch to find similar existing events.
+        // Find similar existing events for the rows written, each in its own calendar only (#590: the
+        // search read every calendar). A row that failed has no calendar and is not searched.
         // Failures here are advisory-only — they don't affect batch success —
         // but must be visible so callers know the hint is incomplete rather
         // than treating an error as "no similar events exist".
-        let batchTitles = Set(eventsArray.compactMap { $0.objectValue?["title"]?.stringValue })
         var similarHints: [[String: Any]] = []
         var similarLookupErrors: [String: String] = [:]
         let createdIds = Set(results.compactMap { $0["event_id"] as? String })
-        for title in batchTitles {
+        for search in similarSearches {
+            let title = search.title
             do {
-                let similar = try await eventWriteSource.similarEventValues(title: title, limit: 3)
+                let similar = try await eventWriteSource.similarEventValues(title: title, calendarIdentifier: search.calendarIdentifier, limit: 3)
                 for event in similar {
                     if let eid = event.eventIdentifier, createdIds.contains(eid) { continue }
                     similarHints.append([

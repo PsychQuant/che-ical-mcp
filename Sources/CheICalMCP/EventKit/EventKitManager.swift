@@ -2315,12 +2315,18 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     ///   - title: The title to match against
     ///   - limit: Maximum number of results (default 5)
     /// - Returns: Array of matching events, sorted by start date descending (most recent first)
-    func findSimilarEvents(title: String, limit: Int = 5) async throws -> [EKEvent] {
+    /// The events of the calendar `calendarIdentifier` whose title shares a word with `title`, within
+    /// the default search range. #590: only that calendar is read (the batch row's own); the search
+    /// read every calendar before. An identifier that names no calendar throws `calendarNotFound`.
+    func findSimilarEvents(title: String, calendarIdentifier: String, limit: Int = 5) async throws -> [EKEvent] {
         try await ensureCalendarAccess()
         refreshIfNeeded()
 
+        guard let calendar = eventStore.calendar(withIdentifier: calendarIdentifier) else {
+            throw EventKitError.calendarNotFound(identifier: calendarIdentifier)
+        }
         let searched = EventRangeQuery.defaultSearchRange(now: Date())
-        let allEvents = try events(from: searched.start, to: searched.end, calendars: nil)
+        let allEvents = try events(from: searched.start, to: searched.end, calendars: [calendar])
 
         let lowercasedTitle = title.lowercased()
         // Split title into words for flexible matching

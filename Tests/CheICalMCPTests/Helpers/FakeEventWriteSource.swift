@@ -87,7 +87,13 @@ actor FakeEventWriteSource: EventWriteSource {
             isDuplicate: isDuplicate)
     }
 
-    func similarEventValues(title: String, limit: Int) async throws -> [SimilarEventValue] { [] }
+    /// #590: how many similar-event searches the batch handler asked for (its saved events carry no
+    /// calendar identifier, so none is expected).
+    private(set) var similarSearches = 0
+    func similarEventValues(title: String, calendarIdentifier: String, limit: Int) async throws -> [SimilarEventValue] {
+        similarSearches += 1
+        return []
+    }
 
     /// `<day>T<time>` written with an offset one hour behind this Mac's offset on that day, so a
     /// time after 23:00 falls on the next day in the host zone.

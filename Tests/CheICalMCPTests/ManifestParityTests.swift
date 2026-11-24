@@ -1073,6 +1073,17 @@ final class ManifestParityTests: XCTestCase {
         assertOnce("the undo of an in-place move or of a calendar update of a one-off event left one-off can give the event a new identifier (measured within a Google account; for a calendar update also between iCloud and Google), named at the end of the answer, and older entries of the event follow it", in: undo.summary, "manifest undo")
     }
 
+    /// #590: the `create_events_batch` description and its manifest summary say the similar-events
+    /// search reads only the calendar each written row went to, each once.
+    func testTheBatchTextsSayTheSimilarEventsSearchReadsOnlyTheRowsCalendar() throws {
+        let batch = try descriptions(of: "create_events_batch")
+        let declared = "similar_events hints: existing events with similar titles in the calendar each written row went to, searched once per title and calendar; no other calendar is read and a failed row gets no hint (#590)"
+        let summary = "They come only from the calendar each written row went to (#590)."
+        XCTAssertEqual(batch.declared.components(separatedBy: declared).count - 1, 1, batch.declared)
+        XCTAssertEqual(batch.summary.components(separatedBy: summary).count - 1, 1, batch.summary)
+        XCTAssertFalse(batch.declared.contains("so you can reuse the correct calendar name"), "the cross-calendar purpose is gone")
+    }
+
     /// #538: the `undo` description and its manifest summary say that older entries follow an item
     /// the undo of its delete recreated, and the one exception, each in its own words, once.
     func testTheUndoTextsSayOlderEntriesFollowARecreatedItem() throws {

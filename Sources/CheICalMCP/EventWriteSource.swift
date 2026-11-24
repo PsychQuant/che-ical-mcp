@@ -77,6 +77,9 @@ struct EventWriteValue: Sendable, Equatable {
     /// #506: set only by `update_event` when #503's check went up to a horizon on a series it could
     /// not list whole: the end of what it compared, and the zone to show it in.
     var deletionsChecked: DeletionCheckHorizon? = nil
+    /// #590: the calendar the event was saved in (or, for a skipped create, the calendar the
+    /// existing duplicate is in); the only calendar `create_events_batch` searches for similar events.
+    var calendarIdentifier: String? = nil
 }
 
 /// #506: what #503's deleted-occurrence check compared, on a series it could not list whole: every
@@ -112,7 +115,7 @@ protocol EventWriteSource: Sendable {
     func createEventValue(_ request: EventCreateRequest) async throws -> EventCreateValue
     /// `create_events_batch`'s advisory lookup of existing events with a similar title (kept on the
     /// seam so a handler test does not read the host's calendars).
-    func similarEventValues(title: String, limit: Int) async throws -> [SimilarEventValue]
+    func similarEventValues(title: String, calendarIdentifier: String, limit: Int) async throws -> [SimilarEventValue]
     /// #383: the zone `update_event` reads an offset-less `occurrence_date` in, the zone its search
     /// takes the day boundary in (`EventKitManager.occurrenceDateTimeZone`, shared with
     /// `delete_event` and `move_events_batch` since #270).
@@ -130,7 +133,8 @@ struct SimilarEventValue: Sendable, Equatable {
 extension EventWriteValue {
     init(_ event: EKEvent, seriesIdentifier: String? = nil) {
         self.init(eventIdentifier: event.eventIdentifier, title: event.title, isAllDay: event.isAllDay,
-                  startDate: event.startDate, endDate: event.endDate, seriesIdentifier: seriesIdentifier)
+                  startDate: event.startDate, endDate: event.endDate, seriesIdentifier: seriesIdentifier,
+                  calendarIdentifier: event.calendar?.calendarIdentifier)
     }
 }
 
@@ -164,8 +168,8 @@ extension EventKitManager: EventWriteSource {
         return EventCreateValue(event: EventWriteValue(result.event), isDuplicate: result.isDuplicate, existingSeriesIdentifier: result.seriesIdentifier)
     }
 
-    func similarEventValues(title: String, limit: Int) async throws -> [SimilarEventValue] {
-        try await findSimilarEvents(title: title, limit: limit).map {
+    func similarEventValues(title: String, calendarIdentifier: String, limit: Int) async throws -> [SimilarEventValue] {
+        try await findSimilarEvents(title: title, calendarIdentifier: calendarIdentifier, limit: limit).map {
             SimilarEventValue(eventIdentifier: $0.eventIdentifier, title: $0.title,
                               calendarTitle: $0.calendar.title, startDate: $0.startDate)
         }
