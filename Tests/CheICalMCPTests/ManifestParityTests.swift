@@ -605,8 +605,10 @@ final class ManifestParityTests: XCTestCase {
         // Round 7, findings 4, 8, 12, 13: after the five-entry cap no text may say a batch undo names
         // "each" such reminder.
         XCTAssertFalse(declared.contains("names each") || summary.contains("names each"), declared + summary)
-        // Round 5, finding 17: no batch member's write throws a permanent error today, so the
-        // client-facing text does not describe a member being dropped.
+        // Round 5, finding 17: the client-facing text does not describe a member being dropped. One
+        // member's write can throw a permanent error, a series whose exceptions restore failed and
+        // whose compensating delete failed too (`SeriesExceptionsUndo.restoreFailure`; spec scenario
+        // "Batch undo fails part-way", #542); the tool text does not say "no retry can restore".
         XCTAssertFalse(declared.contains("no retry can restore") || summary.contains("no retry can restore"), declared + summary)
         for clause in clauses {
             XCTAssertTrue(declared.contains(clause.declared), "defineTools() undo lost \(clause.what): \(declared)")

@@ -126,15 +126,25 @@ struct UndoTargetChangedError: LocalizedError, Sendable {
             : "ask the user whether to give up this redo; any new change clears the redo history"
         let derived: Situation = changedFields.contains("modified_occurrences") ? .editedOccurrences
             : changedFields.contains("unchecked_occurrences") ? .uncheckedOccurrences : .revertable
-        // #274: a failed write of a reminder can land with a later save, whichever call made it, so the
-        // change found here can be this server's own. Only reminders do this.
-        let changedBy = kind == .reminder ? "in another app, by the calendar server, or by a failed write of this server that landed later" : "in another app or by the calendar server"
+        // #540: the check compares the item with the recorded state and does not know who changed it.
+        // An undo names every source it cannot tell apart, this server's own write among them: a later
+        // operation whose entry is no longer between the two (given up with discard_id, or refused and
+        // discarded by an undo). #274: a failed write of a reminder can land with a later save,
+        // whichever call made it; only reminders do that. A redo (it writes only completions) names no
+        // source: whether this server can change a completion between an undo and its redo was neither
+        // shown nor ruled out. Verify round 1 (E1, E3, E9): a change made back through this server is
+        // recorded, so for an undo it sits above the refused entry and the next undo takes it first,
+        // and for a redo it clears the redo history; each text says what works instead.
+        let ownLater = "by a later operation of this server that has no entry in the undo history now (for example one whose entry was given up with discard_id)"
+        let changedBy = kind == .reminder
+            ? "in another app, by the calendar server, \(ownLater), or by a failed write of this server that landed later"
+            : "in another app, by the calendar server, or \(ownLater)"
         switch situation ?? derived {
         case .revertable where verb == .undo:
-            message = "Cannot undo: the \(item) was changed after this operation, \(changedBy) (\(fields)). Undoing now would overwrite or delete that change, so nothing was written and \(kept). Whoever made the change should decide: ask the user whether to change it back and run undo again, or to give up this undo; if they agree to give it up, read undo_history and call undo with discard_id set to its id."
+            message = "Cannot undo: the \(item) was changed after this operation (\(fields)), \(changedBy). Undoing now would overwrite or delete that change, so nothing was written and \(kept); ask the user whether to change it back and run undo again, or to give up this undo; if they agree to give it up, read undo_history and call undo with discard_id set to its id. A change made back through this server is recorded as an entry of its own above this one, and the next undo takes that entry first: give it up with discard_id, then run undo again; a change made back in another app records nothing here."
                 + (updateNote.map { " " + $0 } ?? "")
         case .revertable:
-            message = "Cannot redo: the \(item) was changed after the undo, \(changedBy) (\(fields)). Redoing now would overwrite that change, so nothing was written and \(kept). Whoever made the change should decide: ask the user whether to change it back and run redo again; any new change clears the redo history."
+            message = "Cannot redo: the \(item) was changed after the undo (\(fields)). Redoing now would overwrite that change, so nothing was written and \(kept); ask the user whether to change it back in another app and run redo again. A change recorded through this server, complete_reminder included, clears the redo history and this entry with it; to set the completion through this server, call complete_reminder instead of redo."
         case .editedOccurrences:
             message = "Cannot \(verb.rawValue): occurrences of the \(item) were edited on their own after it was created (\(fields)). Undoing would delete those edits with the series, and an edited occurrence cannot be put back into its series, so nothing was written and \(kept). To go on, \(giveUp); the series can then be deleted by hand if it should still go."
         case .uncheckedOccurrences:
