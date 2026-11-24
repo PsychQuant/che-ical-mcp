@@ -20,7 +20,7 @@ final class ExclusionRetryTargetWiringTests: XCTestCase {
     /// and the guard on the match's own rules is gone.
     func testTheTargetIsResolvedFromTheMatch() throws {
         let body = try create()
-        assertOnce("let target = try ExclusionRetryTarget.resolve( match: ExclusionRetryTarget.Match(identifier: existingId, isDetached: existing.isDetached, hasRecurrenceRules: existing.hasRecurrenceRules, timeZone: existing.timeZone, start: existing.startDate), request: ExclusionRetryTarget.Request(title: title, start: startDate, host: .current)) { id in try storedEvent(id: id).map { ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: $0.hasRecurrenceRules, timeZone: $0.timeZone, title: $0.title, isAllDay: $0.isAllDay) } }", in: body)
+        assertOnce("let target = try ExclusionRetryTarget.resolve( match: ExclusionRetryTarget.Match(identifier: existingId, isDetached: existing.isDetached, hasRecurrenceRules: existing.hasRecurrenceRules, timeZone: existing.timeZone, start: existing.startDate), request: ExclusionRetryTarget.Request(title: title, start: startDate, host: .current)) { id in try storedEvent(id: id).map { ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: $0.hasRecurrenceRules, timeZone: $0.timeZone, title: $0.title, isAllDay: $0.isAllDay, firstStart: $0.occurrenceDate ?? $0.startDate) } }", in: body)
         XCTAssertFalse(body.contains("guard existing.hasRecurrenceRules"), body)
         assertOnce("case .notRecurring(let id): throw EventKitError.exclusionConflict(existingId: id, date: Self.formatExclusionDay(excluded[0], timezone: timezone))", in: body)
         assertOnce("case .notChecked(let occurrenceID): throw EventKitError.exclusionRetryNotChecked(occurrenceId: occurrenceID)", in: body)

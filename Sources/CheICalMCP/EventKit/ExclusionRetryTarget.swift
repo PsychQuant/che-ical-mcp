@@ -19,9 +19,11 @@ import Foundation
 /// writes nothing: an occurrence of another series retitled on its own, one moved onto the start
 /// from another slot, or one moved within the lookup's window (PR #582 verify round 1, X1 and X3,
 /// where `main` answered the conflict and a wider rule answered `skipped` for an unrelated series).
-/// That a slot equal to the requested start is the series' first one is not read: a same-titled
-/// series with an occurrence edited in place at that start is taken, as an unedited occurrence of
-/// it there is on `main`.
+/// The series' own first slot, as its object reads it (`occurrenceDate`, else `startDate`), must
+/// be the requested start too (verify round 2, Y1): a later occurrence of another same-titled series
+/// edited in place at that start is not checked. In the #544 shape the occurrence was edited in
+/// place, so whichever of the master or the edited first occurrence the object is, its first slot
+/// is the requested start.
 ///
 /// A match that addresses one occurrence goes through its series even when it reports rules of its
 /// own (X4; no store was measured to do so; checked under its own identifier its dates would all
@@ -54,6 +56,8 @@ enum ExclusionRetryTarget {
         let timeZone: TimeZone?
         let title: String?
         let isAllDay: Bool
+        /// The series' first slot as its object reads it (`occurrenceDate`, else `startDate`).
+        var firstStart: Date? = nil
     }
 
     enum Target: Equatable {
@@ -70,6 +74,7 @@ enum ExclusionRetryTarget {
         if DetachedOccurrenceSpan.addressesOneOccurrence(identifier: match.identifier, isDetached: match.isDetached) {
             guard let seriesID = DetachedOccurrenceSpan.seriesIdentifier(of: match.identifier),
                   let facts = try series(seriesID), facts.hasRecurrenceRules, facts.title == request.title,
+                  facts.firstStart != nil, UndoPostState.sameInstant(facts.firstStart, request.start),
                   firstEditedInPlace(match: match, request: request, seriesIsAllDay: facts.isAllDay) else {
                 return .notChecked(occurrenceID: match.identifier)
             }

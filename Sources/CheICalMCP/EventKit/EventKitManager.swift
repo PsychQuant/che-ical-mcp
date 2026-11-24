@@ -881,7 +881,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                     request: ExclusionRetryTarget.Request(title: title, start: startDate, host: .current)) { id in
                     try storedEvent(id: id).map {
                         ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: $0.hasRecurrenceRules, timeZone: $0.timeZone,
-                                                         title: $0.title, isAllDay: $0.isAllDay)
+                                                         title: $0.title, isAllDay: $0.isAllDay, firstStart: $0.occurrenceDate ?? $0.startDate)
                     }
                 }
                 let seriesID: String

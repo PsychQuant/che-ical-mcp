@@ -21,8 +21,10 @@ final class ExclusionRetryTargetTests: XCTestCase {
         func read(_ id: String) -> ExclusionRetryTarget.SeriesFacts? { asked.append(id); return answer }
     }
 
-    private func facts(title: String? = "#544 weekly", rules: Bool = true, zone: TimeZone? = nil, allDay: Bool = false) -> ExclusionRetryTarget.SeriesFacts {
-        ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: rules, timeZone: zone, title: title, isAllDay: allDay)
+    private func facts(title: String? = "#544 weekly", rules: Bool = true, zone: TimeZone? = nil, allDay: Bool = false,
+                       firstStart: Date? = nil) -> ExclusionRetryTarget.SeriesFacts {
+        ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: rules, timeZone: zone, title: title, isAllDay: allDay,
+                                         firstStart: firstStart ?? requested)
     }
 
     private func match(_ id: String, detached: Bool = true, rules: Bool = false, zone: TimeZone? = nil, start: Date? = nil) -> ExclusionRetryTarget.Match {
@@ -61,6 +63,23 @@ final class ExclusionRetryTargetTests: XCTestCase {
         XCTAssertEqual(lookup.asked, ["S"])
     }
 
+    /// Y1 (verify round 2): a later occurrence of another same-titled series, edited in place at the
+    /// requested start. Its slot and start are the requested start, but the series' first slot is a
+    /// week earlier: not the series' first occurrence, not checked. A series object that reads no
+    /// first slot is not checked either.
+    func testALaterOccurrenceEditedInPlaceIsNotChecked() {
+        let weekEarlier = requested.addingTimeInterval(-7 * 86_400)
+        XCTAssertEqual(ExclusionRetryTarget.resolve(match: match(firstID), request: request(),
+                                                    series: Lookup(facts(firstStart: weekEarlier)).read),
+                       .notChecked(occurrenceID: firstID))
+        let noFirst = ExclusionRetryTarget.SeriesFacts(hasRecurrenceRules: true, timeZone: nil, title: title, isAllDay: false, firstStart: nil)
+        XCTAssertEqual(ExclusionRetryTarget.resolve(match: match(firstID), request: request(), series: Lookup(noFirst).read),
+                       .notChecked(occurrenceID: firstID))
+        XCTAssertEqual(ExclusionRetryTarget.resolve(match: match(firstID), request: request(),
+                                                    series: Lookup(facts(firstStart: requested.addingTimeInterval(0.5))).read),
+                       .series(id: "S", zone: nil))
+    }
+
     /// X1 (b): an occurrence of an older series with the same title, moved on its own onto the
     /// requested start (a Saturday occurrence moved to the Monday of the request). Its slot, read
     /// from `/RID=`, is not the requested start.
@@ -93,11 +112,11 @@ final class ExclusionRetryTargetTests: XCTestCase {
             var day = Calendar(identifier: .gregorian); day.timeZone = host
             let start = day.date(from: DateComponents(year: 2026, month: 12, day: 7))!
             XCTAssertEqual(ExclusionRetryTarget.resolve(match: match(id, start: start), request: request(start: start, host: host),
-                                                        series: Lookup(facts(allDay: true)).read),
+                                                        series: Lookup(facts(allDay: true, firstStart: start)).read),
                            .series(id: "S", zone: nil), host.identifier)
             // The raw instant would be the evening before west of UTC; read as a timed slot it does not match.
             XCTAssertEqual(ExclusionRetryTarget.resolve(match: match(id, start: start), request: request(start: start, host: host),
-                                                        series: Lookup(facts(allDay: false)).read) == .series(id: "S", zone: nil),
+                                                        series: Lookup(facts(allDay: false, firstStart: start)).read) == .series(id: "S", zone: nil),
                            host.secondsFromGMT() == 0, host.identifier)
         }
     }
