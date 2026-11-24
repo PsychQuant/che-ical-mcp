@@ -905,8 +905,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 // spec's limits).
                 for date in excluded {
                     switch EditedOccurrenceAddress.presence(
-                        lookupHit: findOccurrence(identifier: seriesID, on: date, in: tz) != nil,
-                        onDay: dayReadings(containing: date, in: tz), seriesID: seriesID, requested: date, zone: tz) {
+                        lookupHit: findOccurrence(identifier: seriesID, on: date, in: tz, calendar: calendar) != nil,
+                        onDay: dayReadings(containing: date, in: tz, calendar: calendar), seriesID: seriesID, requested: date, zone: tz) {
                     case .absent:
                         continue
                     case .resolved:
@@ -1076,7 +1076,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         do {
             _ = try ExclusionExecutor.run(
                 dates: dates,
-                resolve: { self.findOccurrence(identifier: masterId, on: $0, in: timezone) },
+                resolve: { self.findOccurrence(identifier: masterId, on: $0, in: timezone, calendar: event.calendar) },
                 remove: { try self.eventStore.remove($0, span: .thisEvent) },
                 rollback: {
                     try self.eventStore.remove(event, span: .futureEvents)
@@ -1312,7 +1312,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             // "all" = modify entire series via master event + .futureEvents
             event = masterEvent
         } else if let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent)) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent),
+                                                  calendar: masterEvent.calendar) else {
                 // #532: an occurrence edited on its own is not under the series' identifier; the
                 // answer gives its identifier, or not found with the day as a date (#535).
                 throw occurrenceMissError(series: masterEvent, id: identifier, on: date, call: .update(futureSpan: span == .futureEvents))
@@ -1947,43 +1948,40 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// day in `timeZone` (#391, `OccurrenceDay.startsOnRequestedDay`), not one that only overlaps it.
     /// Returns the occurrence EKEvent (not the master event). With `slot`, only the occurrence
     /// whose `occurrenceDate` is that slot (#325 verify round 6): a day can hold two occurrences of
-    /// one series, and the first enumerated one is not necessarily the one asked for.
-    func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil, slot: Date? = nil) -> EKEvent? {
-        // PR #394 verify round 1: the search day and the host day, so an all-day occurrence (a host day) is enumerated.
-        guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone) else { return nil }
-        let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil)
-
-        var target: EKEvent?
-        eventStore.enumerateEvents(matching: predicate) { event, stop in
-            // #391: the occurrence must start on the requested day, not only overlap it.
-            if FutureDeletionCoverage.isRequested(eventIdentifier: event.eventIdentifier, occurrenceDate: event.occurrenceDate,
-                                                  identifier: identifier, slot: slot),
-               OccurrenceDay.startsOnRequestedDay(occurrenceStart: event.startDate, isAllDay: event.isAllDay, requested: date, in: timeZone) {
-                target = event
-                stop.pointee = true
-            }
-        }
-        return target
+    /// one series, and the first enumerated one is not necessarily the one asked for. #573: only
+    /// `calendar` is queried, the series' calendar, and every calendar only when it is nil
+    /// (`OccurrenceLookup`); it has no default, so a new caller names the object it read.
+    func findOccurrence(identifier: String, on date: Date, in timeZone: TimeZone? = nil, slot: Date? = nil,
+                        calendar: EKCalendar?) -> EKEvent? {
+        OccurrenceLookup.find(identifier: identifier, on: date, in: timeZone, slot: slot, seriesCalendar: calendar,
+                              enumerate: enumerateDayWindow, read: OccurrenceLookup.Candidate.init)
     }
 
     /// #532: what `EditedOccurrenceAddress` reads of every event the requested day's window holds
-    /// (the window `findOccurrence` enumerates), of any series and calendar. Reads only.
-    func dayReadings(containing date: Date, in timeZone: TimeZone?) -> [EditedOccurrenceAddress.Reading] {
-        guard let window = OccurrenceDay.candidateWindow(containing: date, in: timeZone) else { return [] }
-        let predicate = eventStore.predicateForEvents(withStart: window.start, end: window.end, calendars: nil)
-        var readings: [EditedOccurrenceAddress.Reading] = []
-        eventStore.enumerateEvents(matching: predicate) { event, _ in
-            readings.append(EditedOccurrenceAddress.Reading(event))
+    /// (the window `findOccurrence` enumerates) in `calendar`, the series' calendar (#573; every
+    /// calendar only when it is nil). Reads only.
+    func dayReadings(containing date: Date, in timeZone: TimeZone?, calendar: EKCalendar?) -> [EditedOccurrenceAddress.Reading] {
+        OccurrenceLookup.dayReadings(containing: date, in: timeZone, seriesCalendar: calendar,
+                                     enumerate: enumerateDayWindow, read: EditedOccurrenceAddress.Reading.init)
+    }
+
+    /// #573: the store query of `OccurrenceLookup`: the events from `start` to `end` in `calendars`
+    /// (nil: every calendar), until `body` answers true.
+    private func enumerateDayWindow(_ start: Date, _ end: Date, _ calendars: [EKCalendar]?, _ body: (EKEvent) -> Bool) {
+        let predicate = eventStore.predicateForEvents(withStart: start, end: end, calendars: calendars)
+        withoutActuallyEscaping(body) { body in
+            eventStore.enumerateEvents(matching: predicate) { event, stop in
+                if body(event) { stop.pointee = true }
+            }
         }
-        return readings
     }
 
     /// #532: the occurrences of the series that were edited on their own and start on the requested
-    /// day, from the day's events only (`dayReadings`). The series is not listed and no slot is read.
-    /// Called only after `findOccurrence` missed, so a call that resolves an occurrence costs what it
-    /// did; a miss costs one more enumeration of the day, and writes nothing.
-    func editedOccurrences(for request: EditedOccurrenceAddress.Request) -> [EditedOccurrenceAddress.Match] {
-        EditedOccurrenceAddress.matches(onDay: dayReadings(containing: request.requested, in: request.seriesZone), for: request)
+    /// day, from the day's events in the series' calendar only (`dayReadings`). The series is not
+    /// listed and no slot is read. Called only after `findOccurrence` missed, so a call that resolves
+    /// an occurrence costs what it did; a miss costs one more enumeration of the day, and writes nothing.
+    func editedOccurrences(for request: EditedOccurrenceAddress.Request, calendar: EKCalendar?) -> [EditedOccurrenceAddress.Match] {
+        EditedOccurrenceAddress.matches(onDay: dayReadings(containing: request.requested, in: request.seriesZone, calendar: calendar), for: request)
     }
 
     /// The answer of `move_events_batch` for a date on which no occurrence of the event starts.
@@ -1998,7 +1996,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     func occurrenceMissError(series: EKEvent, id: String, on date: Date, call: EditedOccurrenceAddress.Call) -> EventKitError {
         let request = EditedOccurrenceAddress.Request(seriesID: id, seriesIsAllDay: series.isAllDay,
                                                       seriesZone: Self.occurrenceZone(of: series), requested: date)
-        switch EditedOccurrenceAddress.miss(for: call, matches: editedOccurrences(for: request), request: request) {
+        switch EditedOccurrenceAddress.miss(for: call, matches: editedOccurrences(for: request, calendar: series.calendar), request: request) {
         case .refusal(let reason):
             return call == .moveRow ? .moveRefused(reason: reason) : .occurrenceAddressRefused(reason: reason)
         case .notFound(let detail):
@@ -2034,7 +2032,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let snapshots: DeletedEventSnapshots
         let anchor: SeriesDeleteAnchor?
         if hadRules, let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent)) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: masterEvent),
+                                                  calendar: masterEvent.calendar) else {
                 // #532, as in updateEvent.
                 throw occurrenceMissError(series: masterEvent, id: identifier, on: date, call: .delete(futureSpan: span == .futureEvents))
             }
@@ -2393,7 +2392,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 let snapshots: DeletedEventSnapshots
                 let anchor: SeriesDeleteAnchor?
                 if hadRules, let date = item.occurrenceDate {
-                    guard let occurrence = findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone, slot: slot) else {
+                    guard let occurrence = findOccurrence(identifier: item.identifier, on: date, in: masterEvent.timeZone, slot: slot,
+                                                          calendar: masterEvent.calendar) else {
                         failures.append((item.identifier, "No occurrence found on specified date"))
                         continue
                     }
@@ -2658,7 +2658,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var subject = master
         if isRecurring, span == .this, let date = occurrenceDate {
-            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: master)) else {
+            guard let occurrence = findOccurrence(identifier: identifier, on: date, in: Self.occurrenceZone(of: master), calendar: master.calendar) else {
                 // #532, as in updateEvent; with no edited occurrence, the answer is as before.
                 throw occurrenceMissError(series: master, id: identifier, on: date, call: .moveRow)
             }

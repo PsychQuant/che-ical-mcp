@@ -32,7 +32,7 @@ final class ExclusionRetryTargetWiringTests: XCTestCase {
     /// series' identifier.
     func testThePresenceLoopChecksTheSeries() throws {
         let body = try create()
-        let loop = "for date in excluded { switch EditedOccurrenceAddress.presence( lookupHit: findOccurrence(identifier: seriesID, on: date, in: tz) != nil, onDay: dayReadings(containing: date, in: tz), seriesID: seriesID, requested: date, zone: tz) { case .absent: continue case .resolved: throw EventKitError.exclusionConflict( existingId: seriesID, date: Self.formatExclusionDay(date, timezone: tz)) case .editedOccurrenceStarts: throw EventKitError.exclusionEditedOccurrence( existingId: seriesID, date: Self.formatExclusionDay(date, timezone: tz)) } }"
+        let loop = "for date in excluded { switch EditedOccurrenceAddress.presence( lookupHit: findOccurrence(identifier: seriesID, on: date, in: tz, calendar: calendar) != nil, onDay: dayReadings(containing: date, in: tz, calendar: calendar), seriesID: seriesID, requested: date, zone: tz) { case .absent: continue case .resolved: throw EventKitError.exclusionConflict( existingId: seriesID, date: Self.formatExclusionDay(date, timezone: tz)) case .editedOccurrenceStarts: throw EventKitError.exclusionEditedOccurrence( existingId: seriesID, date: Self.formatExclusionDay(date, timezone: tz)) } }"
         assertOnce(loop, in: body)
         let resolve = try XCTUnwrap(body.range(of: "ExclusionRetryTarget.resolve("))
         let presence = try XCTUnwrap(body.range(of: "EditedOccurrenceAddress.presence("))
