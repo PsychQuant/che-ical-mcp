@@ -3,11 +3,15 @@ import XCTest
 
 /// #533: the #509 first-slot read and the #503 baseline ask `seriesOccurrences` for the same listing on
 /// one route (span `all` through the series' id), and #527's stretch opened after the #509 read, so the
-/// series was listed twice. A differential test over the call shapes: the readers' requests run through
-/// `SeriesListingMemo` with a counting fake of the store, in `main`'s order (the #509 read before the
-/// stretch) and in the branch's (the stretch opened before it). Each reader gets the same listing in
-/// both, and the branch lists once less exactly where #509 and the baseline ask for the same key.
-/// Where the readers sit in `updateEvent` is pinned in `SingleListingWiringTests`.
+/// series was listed twice. A model test of the call orders, not of `updateEvent` itself (its readers run
+/// only against an event store): the readers' requests run through the real `SeriesListingMemo` with a
+/// fake store, in `main`'s order (the #509 read before the stretch) and in the branch's (the stretch
+/// opened before it). With a store whose listing depends on the key only, each reader gets the same
+/// listing in both orders, which holds by construction; what the model shows is the count (one listing
+/// fewer exactly where two readers ask for one key) and, with a store whose listing changes on every
+/// call, that the answers differ exactly in those shapes (the trade: one listing for both readers) and
+/// that nothing is kept past a stretch. Where the readers sit in `updateEvent` is pinned in
+/// `SingleListingWiringTests`.
 final class RuleEndListingSharingTests: XCTestCase {
     private struct Shape: CustomStringConvertible {
         let throughSeriesID: Bool       // #509 reads the first slot only through the series' id (`wholeThroughSeries`)
@@ -36,21 +40,33 @@ final class RuleEndListingSharingTests: XCTestCase {
                          ranges: base.ranges + [DateInterval(start: Date(timeIntervalSinceReferenceDate: 86_400 * 2000), duration: 86_400 * 730)])
     }
 
-    /// The readers in `updateEvent`'s order; `openBefore509` is where the stretch opens.
-    private func run(_ shape: Shape, openBefore509: Bool) -> (answers: [String: [String]], listings: Int) {
-        let memo = SeriesListingMemo<[String]>()
+    /// A store that another process writes to between any two listings: every call gives another listing.
+    private final class ChangingStore {
+        private(set) var calls = 0
+        func list(_ key: SeriesListingKey) -> [String] {
+            calls += 1
+            return ["\(key.eventIdentifier) generation \(calls)"]
+        }
+    }
+
+    /// The readers in `updateEvent`'s order; `openBefore509` is where the stretch opens. `changing` uses a
+    /// store whose listing changes on every call; `memo` lets a test pass one memo to several runs.
+    private func run(_ shape: Shape, openBefore509: Bool, changing: Bool = false,
+                     memo: SeriesListingMemo<[String]> = SeriesListingMemo<[String]>()) -> (answers: [String: [String]], listings: Int) {
         let store = CountingStore()
+        let changingStore = ChangingStore()
+        func list(_ key: SeriesListingKey) -> [String] { changing ? changingStore.list(key) : store.list(key) }
         var answers: [String: [String]] = [:]
         func ruleEnd() {
             if shape.throughSeriesID && shape.ruleEndChecked {
-                answers["509"] = memo.listing(for: base) { store.list(base) }
+                answers["509"] = memo.listing(for: base) { list(base) }
             }
         }
         func stretch() {
-            if shape.baselineRuns { answers["503 baseline"] = memo.listing(for: base) { store.list(base) } }
+            if shape.baselineRuns { answers["503 baseline"] = memo.listing(for: base) { list(base) } }
             if shape.verdictRuns {
                 let key = shape.verdictOwnWindow ? horizon : base
-                answers["503 verdict"] = memo.listing(for: key) { store.list(key) }
+                answers["503 verdict"] = memo.listing(for: key) { list(key) }
             }
         }
         if openBefore509 {
@@ -59,7 +75,7 @@ final class RuleEndListingSharingTests: XCTestCase {
             ruleEnd()
             memo.sharing { stretch() }
         }
-        return (answers, store.calls.count)
+        return (answers, changing ? changingStore.calls : store.calls.count)
     }
 
     private var shapes: [Shape] {
@@ -89,9 +105,37 @@ final class RuleEndListingSharingTests: XCTestCase {
             let shape = Shape(throughSeriesID: true, ruleEndChecked: ruleEnd, baselineRuns: baseline, verdictRuns: verdict, verdictOwnWindow: ownWindow)
             return (run(shape, openBefore509: false).listings, run(shape, openBefore509: true).listings)
         }
-        XCTAssertTrue(listings(true, true, verdict: true, ownWindow: false) == (2, 1))
-        XCTAssertTrue(listings(true, true, verdict: true, ownWindow: true) == (3, 2))
-        XCTAssertTrue(listings(true, false, verdict: false, ownWindow: false) == (1, 1))
-        XCTAssertTrue(listings(false, true, verdict: true, ownWindow: false) == (1, 1))
+        for (ruleEnd, baseline, verdict, ownWindow, before, now) in [(true, true, true, false, 2, 1), (true, true, true, true, 3, 2),
+                                                                     (true, false, false, false, 1, 1), (false, true, true, false, 1, 1)] {
+            let counts = listings(ruleEnd, baseline, verdict: verdict, ownWindow: ownWindow)
+            XCTAssertEqual(counts.0, before, "main: \(ruleEnd) \(baseline) \(verdict) \(ownWindow)")
+            XCTAssertEqual(counts.1, now, "branch: \(ruleEnd) \(baseline) \(verdict) \(ownWindow)")
+        }
+    }
+
+    /// With a store another process writes to between listings, the two orders give the same answers
+    /// except where #509 and a later reader ask for one key: there the later reader sees #509's listing
+    /// (one generation earlier than `main` gave it). Everywhere else nothing differs.
+    func testWithAChangingStoreTheAnswersDifferExactlyWhereAListingIsShared() {
+        for shape in shapes {
+            let main = run(shape, openBefore509: false, changing: true), branch = run(shape, openBefore509: true, changing: true)
+            let shares = shape.throughSeriesID && shape.ruleEndChecked && (shape.baselineRuns || (shape.verdictRuns && !shape.verdictOwnWindow))
+            XCTAssertEqual(branch.answers == main.answers, !shares, "\(shape)")
+            if shares {
+                XCTAssertEqual(branch.answers["509"], main.answers["509"], "#509 lists first in both: \(shape)")
+                if shape.baselineRuns { XCTAssertEqual(branch.answers["503 baseline"], branch.answers["509"], "\(shape)") }
+            }
+        }
+    }
+
+    /// One memo over two calls of `updateEvent`: the second call lists again (nothing kept past a stretch).
+    func testNothingIsKeptFromOneCallToTheNext() {
+        let memo = SeriesListingMemo<[String]>()
+        let shape = Shape(throughSeriesID: true, ruleEndChecked: true, baselineRuns: true, verdictRuns: true, verdictOwnWindow: false)
+        let first = run(shape, openBefore509: true, changing: true, memo: memo)
+        let second = run(shape, openBefore509: true, changing: true, memo: memo)
+        XCTAssertEqual(first.listings, 1)
+        XCTAssertEqual(second.listings, 1, "the second call lists for itself")
+        XCTAssertFalse(memo.isSharing)
     }
 }

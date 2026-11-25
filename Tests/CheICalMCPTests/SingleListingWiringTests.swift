@@ -136,10 +136,20 @@ final class SingleListingWiringTests: XCTestCase {
         XCTAssertEqual(count("seriesForCheck()", in: stretch), 2, "one read of the series per reader")
         XCTAssertEqual(count("try seriesForCheck().map {", in: stretch), 2, "each reader lists inside its read's closure")
         let firstRead = try XCTUnwrap(stretch.range(of: "try seriesForCheck().map {"))
-        for listing in ["try seriesForCheck().map { wholeSeriesBaseline(", "deletedOccurrenceVerdict("] {
-            XCTAssertEqual(count(listing, in: stretch), 1, listing)
-            let range = try XCTUnwrap(stretch.range(of: listing), listing)
-            XCTAssertLessThanOrEqual(firstRead.lowerBound, range.lowerBound, "the series is read before \(listing) lists")
+        XCTAssertEqual(count("try seriesForCheck().map { wholeSeriesBaseline(", in: stretch), 1, "the baseline lists inside its read's closure")
+        let verdictListing = try XCTUnwrap(stretch.range(of: "deletedOccurrenceVerdict("))
+        XCTAssertLessThan(firstRead.lowerBound, verdictListing.lowerBound, "the series is read before the verdict lists")
+        // #533 (PR #599 verify r1): before that first read, the stretch's one shared listing is #509's
+        // first-slot read of the series object, and it is reachable only through the series' id: its
+        // guard `needsFirstSlot` requires `wholeThroughSeries`, which excludes an occurrence's own id. So
+        // on the own-id route, where `seriesForCheck()` refreshes, nothing is listed before that refresh.
+        let beforeFirstRead = String(stretch[stretch.startIndex..<firstRead.lowerBound])
+        XCTAssertEqual(count("wholeSeriesBaseline(", in: beforeFirstRead), 1)
+        XCTAssertEqual(count("let firstSlot: Date? = needsFirstSlot ? wholeSeriesBaseline(of: masterEvent,", in: beforeFirstRead), 1)
+        XCTAssertEqual(count("let wholeThroughSeries = applyToAll && !addressesOwnOccurrence", in: beforeFirstRead), 1)
+        XCTAssertEqual(count("let needsFirstSlot = RuleEndShift.needsFirstSlot(wholeThroughSeries: wholeThroughSeries,", in: beforeFirstRead), 1)
+        for other in ["seriesOccurrences(", "deletedOccurrenceVerdict(", "firstRemainingOccurrence(", "seriesUpdatePlan("] {
+            XCTAssertFalse(beforeFirstRead.contains(other), other)
         }
         XCTAssertEqual(count("let verdict: DeletedOccurrenceCheck.Verdict = try seriesForCheck().map {", in: stretch), 1)
         let verdictRead = try XCTUnwrap(stretch.range(of: "let verdict: DeletedOccurrenceCheck.Verdict = try seriesForCheck().map {"))
