@@ -1543,190 +1543,6 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // PR #510 round 1: gated on the series' rules, so the own-id routes (#416, #428) are checked
         // (HIGH 2); a zone change counts (MEDIUM 5); a rule passed in the call is checked against its
         // own end (MEDIUM 6).
-        let shiftStart: Date = datePlan.datesToWrite?.start ?? event.startDate
-        // PR #510 round 5 (MEDIUM): through the series id over the whole series the shown start may not be
-        // the first slot the store expands from, so any date written enters; the slot is proven below.
-        let wholeThroughSeries = applyToAll && !addressesOwnOccurrence
-        if RuleEndShift.applies(
-            repeats: RuleEndShift.repeats(masterHasRules: masterEvent.hasRecurrenceRules, addressesOwnOccurrence: addressesOwnOccurrence),
-            reachesEnd: applyToAll || span == .futureEvents,
-            movesStart: RuleEndShift.mayMoveStart(planned: shiftStart, from: [event.startDate, eventSlot],
-                                                  writesDates: datePlan.datesToWrite != nil, firstSlotUnread: wholeThroughSeries),
-            changesZone: changesZone,
-            changesAllDay: datePlan.isAllDay != event.isAllDay) {
-            let seriesID: String? = addressesOwnOccurrence ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
-            let ruleHolder: EKEvent? = addressesOwnOccurrence ? try seriesObject(ofOccurrence: identifier) : event
-            // A series object that fails to refresh still holds its rules (#326); none read refuses below.
-            if addressesOwnOccurrence { _ = ruleHolder?.refresh() }
-            // PR #510 round 2 (HIGH 1): the series is known to repeat here, so no series object or no
-            // rules is a failure to read, refused before the plan, not a rule with no end.
-            guard let holder = ruleHolder, let rules = RuleEndShift.readRules(holder.recurrenceRules) else {
-                throw EventKitError.seriesWriteRefused(reason: RuleEndShift.uncheckedReason(.unreadable))
-            }
-            let storedEnds = rules.compactMap { $0.recurrenceEnd?.endDate }
-            let passedRule = RuleEndShift.passedRule(recurrenceRule, clearing: clearRecurrence)
-            // PR #510 round 4 (HIGH): whether a rule fixes its day, apart from whether it has BY parts.
-            let parts = rules.map(RuleEndShift.parts)
-            // #513: a rule passed in the call counts for the unit and the day (fail closed).
-            let passedUnit = recurrenceRule.map { RuleEndShift.unit(of: $0.frequency) }
-            let passedTakesDayFromStart = recurrenceRule.map { !RuleEndShift.namesDays(daysOfWeek: $0.daysOfWeek, daysOfMonth: $0.daysOfMonth) } ?? false
-            let unit = RuleEndShift.coarser(RuleEndShift.unit(of: rules), passedUnit)
-            let dayFromStart = parts.contains { !$0.fixesDay } || passedTakesDayFromStart
-            // Round 5 (MEDIUM): the first slot, proven as #503 proves it, where an end is checked or (PR #518
-            // round 1) where the month-end check of a series with no end can apply (#513); one that cannot be
-            // shown refuses (fail closed), in that check's own words when no end is checked.
-            let endsChecked = !RuleEndShift.ends(stored: storedEnds, passedRule: passedRule).isEmpty
-            let needsFirstSlot = RuleEndShift.needsFirstSlot(wholeThroughSeries: wholeThroughSeries, endsChecked: endsChecked,
-                                                             monthEndShape: RuleEndShift.monthEndShape(unit: unit, dayFromStart: dayFromStart, passedRule: passedRule))
-            let firstSlot: Date? = needsFirstSlot ? wholeSeriesBaseline(of: masterEvent, id: identifier, viaStandIn: resolved.viaStandIn).slot : nil
-            guard let storedStarts = RuleEndShift.storedStarts(shown: event.startDate, slot: eventSlot, needsFirstSlot: needsFirstSlot,
-                                                                firstSlot: firstSlot) else {
-                throw EventKitError.seriesWriteRefused(reason: endsChecked ? RuleEndShift.uncheckedReason(.firstSlot) : RuleEndShift.openFirstSlotReason)
-            }
-            if RuleEndShift.moves(planned: shiftStart, from: storedStarts) || changesZone || datePlan.isAllDay != event.isAllDay {
-                let storedZone: TimeZone = event.isAllDay ? .current : (event.timeZone ?? .current)
-                let newZone: TimeZone = datePlan.isAllDay || clearTimezone ? .current : (timezone ?? event.timeZone ?? .current)
-                let plan = RuleEndShift.Plan(storedStarts: storedStarts,
-                    plannedStart: shiftStart, storedZone: storedZone, newZone: newZone, unit: unit,
-                    keepsDays: parts.contains { $0.fixesDay }, dayFromStart: dayFromStart,
-                    expandable: parts.allSatisfy { $0.expandable }, weeklyDays: RuleEndShift.weeklyDays(rules))
-                // Round 2: an all-day series before or after the write is refused as not checked (LOW 7);
-                // through an occurrence's own id the route is Calendar (LOW 6). Round 3: so it is for a
-                // rule with days of its own (MEDIUM 3) and a series that ended after an occurrence
-                // happened (LOW 7, #451).
-                if let reason = ruleEndShiftRefusal(
-                    series: holder, seriesID: seriesID, storedEnds: storedEnds, passedRule: passedRule, plan: plan,
-                    from: applyToAll ? nil : eventSlot, allDay: event.isAllDay || datePlan.isAllDay || holder.isAllDay,
-                    route: RuleEndShift.route(ruleWritable: SeriesRuleWrite.writableRule(seriesRules) != nil, addressesOwnOccurrence: addressesOwnOccurrence,
-                                              viaStandIn: resolved.viaStandIn, keepsDays: plan.keepsDays,
-                                              startsAgree: RuleEndShift.startsAgree(storedStarts), endedAfterHappening: happened && storedEnds.contains { $0 < now })) {
-                    throw EventKitError.seriesWriteRefused(reason: reason)
-                }
-            }
-        }
-        // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the
-        // stored pattern with a bound that keeps what happened; any other rewrote the past.
-        // The stored count runs from the original first start, which only a call over the whole
-        // series from its first slot holds (PR #471 verify round 3).
-        if let reason = SeriesRuleWrite.startedRuleRefusal(
-            recurrenceRule, stored: seriesRules, happened: happened,
-            countBase: SeriesRuleWrite.countBase(reach: reach, viaStandIn: resolved.viaStandIn,
-                                                 firstSlotGone: ownNeighbours?.own.firstSlotGone ?? false),
-            now: now, calendar: Calendar.gregorian(in: event.timeZone ?? .current)) {
-            throw EventKitError.seriesWriteRefused(reason: reason)
-        }
-
-        // Validate recurrence weekday consistency (#5, #454): which days apply is `WeekdayCheck.daysToCheck`.
-        // Skip entirely if clearRecurrence is true (event becoming non-recurring)
-        // Read from the values the event will have after this update: the planned start, in the
-        // zone WeekdayCheck.zone picks (the host zone for an all-day result).
-        let effectiveRule: RecurrenceRuleInput? = clearRecurrence ? nil : recurrenceRule
-        // #428: the detached object has no rules of its own; a new start over the series still has
-        // to fit the series' rule.
-        let detachedWrite = (applyToAll || span != .thisEvent)
-            && DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: event.isDetached)
-        let storedRule = clearRecurrence ? nil
-            : (detachedWrite ? try seriesObject(ofOccurrence: identifier)?.recurrenceRules : event.recurrenceRules)?.first
-        let plannedStart: Date = datePlan.datesToWrite?.start ?? event.startDate
-        let startDayMoves = WeekdayCheck.dayChanges(
-            from: event.startDate, in: WeekdayCheck.zone(resultIsAllDay: event.isAllDay, requested: nil, clearTimezone: false, stored: event.timeZone),
-            to: plannedStart, in: WeekdayCheck.zone(resultIsAllDay: datePlan.isAllDay, requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone),
-            host: Calendar.current)
-        let storedNumbered = storedRule.map {
-            WeekdayCheck.isNumberedRule(weekNumbers: $0.daysOfTheWeek?.map(\.weekNumber) ?? [], setPositions: $0.setPositions?.map(\.intValue))
-        } ?? false
-        let ruleKeepsStoredPattern: Bool = {
-            guard let effectiveRule, let storedRule else { return false }
-            let otherParts = [storedRule.monthsOfTheYear, storedRule.weeksOfTheYear, storedRule.daysOfTheYear]
-                .contains { $0?.isEmpty == false }
-            return WeekdayCheck.keepsStoredPattern(
-                frequency: effectiveRule.frequency, interval: effectiveRule.interval, daysOfMonth: effectiveRule.daysOfMonth,
-                stored: storedRule.frequency, storedInterval: storedRule.interval,
-                storedDaysOfMonth: storedRule.daysOfTheMonth?.map(\.intValue),
-                storedNumbered: storedNumbered, storedHasOtherParts: otherParts)
-        }()
-        let daysToValidate = WeekdayCheck.daysToCheck(
-            requested: effectiveRule?.daysOfWeek, ruleInCall: effectiveRule != nil,
-            stored: storedRule?.daysOfTheWeek?.map { $0.dayOfTheWeek.rawValue },
-            storedCount: storedRule.map { WeekdayCheck.storedDaysCount(isWeekly: $0.frequency == .weekly, span: span) } ?? false,
-            ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)
-        // #416: through an occurrence's own id the rule runs from its original day, not the day it
-        // shows. A new start moves that day, and `recurrence` is not written with one here.
-        let originalDay = startDate != nil ? nil : DetachedOccurrenceSpan.originalDay(
-            identifier: identifier, isDetached: event.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents,
-            externalIdentifier: event.calendarItemExternalIdentifier, occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay)
-        // #428 verify r4: through an occurrence's own id a new weekly days_of_week is read against
-        // the original day before #454's exemptions, which read the series' stored rule.
-        if let originalDay, let rule = effectiveRule, rule.frequency == .weekly,
-           DetachedOccurrenceSpan.refusesRecurrenceDay(
-               originalWeekday: WeekdayCheck.weekday(of: originalDay, resultIsAllDay: datePlan.isAllDay, requested: timezone,
-                                                     clearTimezone: clearTimezone, stored: event.timeZone, host: Calendar.current),
-               requestedDays: rule.daysOfWeek) {
-            throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.recurrenceDayReason)
-        }
-        if let days = daysToValidate, !days.isEmpty {
-            let weekday = WeekdayCheck.weekday(
-                of: originalDay ?? datePlan.datesToWrite?.start ?? event.startDate, resultIsAllDay: datePlan.isAllDay,
-                requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone, host: Calendar.current)
-            if !days.contains(weekday) {
-                if originalDay != nil, effectiveRule != nil { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.recurrenceDayReason) }
-                let names = WeekdayCheck.names(weekday: weekday, days: days)
-                if effectiveRule == nil, storedNumbered {
-                    throw EventKitError.weekdayOffNumberedRule(startDay: names.start)
-                }
-                throw EventKitError.weekdayMismatch(startDay: names.start, expectedDays: names.expected)
-            }
-        }
-
-        // #461: days_of_month by the same rules, read on the same day in the same zone.
-        let storedUsesMonthDays = storedRule.map { $0.frequency == .monthly || $0.frequency == .yearly } ?? false
-        if MonthDayCheck.refusesStoredMove(ruleInCall: effectiveRule != nil, stored: storedRule?.daysOfTheMonth?.map(\.intValue),
-                                           storedUsesMonthDays: storedUsesMonthDays, span: span, startDayMoves: startDayMoves) {
-            let otherParts = storedRule.map { [$0.monthsOfTheYear, $0.weeksOfTheYear, $0.daysOfTheYear].contains { $0?.isEmpty == false } } ?? false
-            throw EventKitError.monthDayMoveRefused(
-                expectedDays: MonthDayCheck.names(storedRule?.daysOfTheMonth?.map(\.intValue) ?? []),
-                unwritable: MonthDayCheck.storedUnwritable(days: storedRule?.daysOfTheMonth?.map(\.intValue), numbered: storedNumbered, otherParts: otherParts),
-                spanAll: applyToAll)
-        }
-        let monthDaysToValidate = MonthDayCheck.daysToCheck(
-            requested: effectiveRule?.daysOfMonth, ruleInCall: effectiveRule != nil,
-            stored: storedRule?.daysOfTheMonth?.map(\.intValue),
-            storedUsesMonthDays: storedUsesMonthDays,
-            span: span, ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)
-        if let days = monthDaysToValidate {
-            let start = MonthDayCheck.day(
-                of: originalDay ?? plannedStart,
-                zone: WeekdayCheck.zone(resultIsAllDay: datePlan.isAllDay, requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone),
-                host: Calendar.current)
-            if !MonthDayCheck.contains(day: start.day, daysInMonth: start.daysInMonth, list: days) {
-                if originalDay != nil { throw EventKitError.occurrenceAddressRefused(reason: MonthDayCheck.occurrenceReason) }
-                throw EventKitError.dayOfMonthMismatch(startDay: start.day, expectedDays: MonthDayCheck.names(days))
-            }
-        }
-
-        // #503: a change of the start, end or all-day flag over more than one occurrence brought back
-        // every occurrence deleted on its own among them (device, iCloud), answered updated, and undo
-        // refuses recurring updates. Refused while one is found or cannot be ruled out; read only
-        // when the write is that shape, and still before the first field is assigned (#373).
-        // PR #505 round 4 (MEDIUM): a calendar of another account is a create plus a delete (not
-        // measured), so it goes through the same verdict; its refusal says so when no date changes.
-        // PR #505 round 5 (LOW): a rule written over several occurrences with another pattern (not
-        // measured) goes through the verdict too, which reads the stored rule.
-        // A weekly rule without days runs on its start's weekday (a monthly one on its start's day), so
-        // the measured end-date-only call is not a pattern change whether the store reads that day back
-        // or none. Round 6 (LOW 4): read from the series' original first slot, and every stored rule
-        // is compared (more than one is a pattern change).
-        let changesPattern = effectiveRule.map {
-            DeletedOccurrenceCheck.changesPattern(DeletedOccurrenceCheck.Rule($0), stored: (rulesSeries?.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
-                                                  startWeekday: seriesFirstSlotDay?.weekday, startDay: seriesFirstSlotDay?.day)
-        } ?? false
-        func deletedOccurrenceCheckApplies(changesAccount: Bool, baseline: DeletedOccurrenceCheck.StoredBaseline = .stored) -> Bool {
-            DeletedOccurrenceCheck.applies(
-                reachesSeveral: reach.isWholeSeries || reach.isFromLaterOccurrence, clearingRecurrence: clearRecurrence,
-                plannedDates: datePlan.datesToWrite.map { ($0.start, $0.end) }, storedStart: event.startDate, storedEnd: event.endDate,
-                resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay, changesZone: changesZone, changesAccount: changesAccount,
-                changesPattern: changesPattern, baseline: baseline)
-        }
         // The series the check lists, read once and only when the check needs it.
         var checkSeries: (EKEvent, String)??
         func seriesForCheck() throws -> (EKEvent, String)? {
@@ -1741,38 +1557,231 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             checkSeries = .some(found)
             return found
         }
-        let viaStandInForCheck = addressesOwnOccurrence ? false : resolved.viaStandIn
-        // PR #505 round 5 (MEDIUM): a whole-series write of the stored start and end compares them with
-        // the first occurrence's shown times, which are its slot only when it was not edited on its own
-        // and its slot is shown; otherwise any date in the call is checked (fail closed).
-        // Round 6 (LOW 5): the proven slot is also what a planned start is compared with for the route text.
-        var baseline = DeletedOccurrenceCheck.StoredBaseline.stored
-        var provenSlot: Date? = event.startDate
         // #506: what the check reached on a series the listing does not cover, for the response.
         var deletionsChecked: DeletionCheckHorizon?
-        // #527: the baseline and the verdict list the same series one after the other. Inside this
-        // stretch a listing is made once per set of ranges, so where the verdict lists the ranges the
-        // baseline listed (no horizon, a series begun less than about three years ago, or one the
-        // base ranges cover) it reads the baseline's listing. Otherwise (#506: a horizon the base
-        // ranges end before, on a series they do not cover) it lists under a key of its own, the base
-        // window and the window around now merged and cut into one-query pieces
-        // (`DeletedOccurrenceCheck.listingRanges`), which lists the baseline's dates again with the
-        // rest. The stretch cannot suspend and ends before `seriesUpdatePlan`,
-        // which lists after a refresh is requested, and before the first field is assigned.
-        // Only these two readers share: every other listing of the call is made on its own. Those
-        // made through `seriesOccurrences` each list the series' base ranges, the ones the baseline
-        // lists when it runs, whatever is listed in the stretch. Before it: #428's where the series'
-        // id is answered through its first edited occurrence (`firstEditedOccurrenceID`, before the
-        // call made again through that occurrence's id), #416's through an occurrence's own id
-        // (`occurrenceNeighbours`), #442's for an all_day change (`allDayEditFacts`), and the #509
-        // check when it needs the first slot (`needsFirstSlot` above). After it: the first-slot proof
-        // of the #263 plan (`seriesUpdatePlan`). The #326 stand-in (`firstRemainingOccurrence`) is
-        // listed from the stored series object's start; through a stand-in the baseline reads its
-        // ranges from the stand-in occurrence, so those two need not be the same ranges.
-        // The series is read by `seriesForCheck()`, whose first call is inside the stretch and comes
-        // before the first listing: through an occurrence's own id it refreshes the series object
-        // once (the result is cached in `checkSeries`), never between the two listings.
+        // #533: the stretch of #527 (see the comment above the baseline below) opens here, so the #509
+        // check's first-slot read and the #503 baseline, which ask for the same listing through the
+        // series' id, share it.
         try seriesListings.sharing {
+            let shiftStart: Date = datePlan.datesToWrite?.start ?? event.startDate
+            // PR #510 round 5 (MEDIUM): through the series id over the whole series the shown start may not be
+            // the first slot the store expands from, so any date written enters; the slot is proven below.
+            let wholeThroughSeries = applyToAll && !addressesOwnOccurrence
+            if RuleEndShift.applies(
+                repeats: RuleEndShift.repeats(masterHasRules: masterEvent.hasRecurrenceRules, addressesOwnOccurrence: addressesOwnOccurrence),
+                reachesEnd: applyToAll || span == .futureEvents,
+                movesStart: RuleEndShift.mayMoveStart(planned: shiftStart, from: [event.startDate, eventSlot],
+                                                      writesDates: datePlan.datesToWrite != nil, firstSlotUnread: wholeThroughSeries),
+                changesZone: changesZone,
+                changesAllDay: datePlan.isAllDay != event.isAllDay) {
+                let seriesID: String? = addressesOwnOccurrence ? DetachedOccurrenceSpan.seriesIdentifier(of: identifier) : identifier
+                let ruleHolder: EKEvent? = addressesOwnOccurrence ? try seriesObject(ofOccurrence: identifier) : event
+                // A series object that fails to refresh still holds its rules (#326); none read refuses below.
+                if addressesOwnOccurrence { _ = ruleHolder?.refresh() }
+                // PR #510 round 2 (HIGH 1): the series is known to repeat here, so no series object or no
+                // rules is a failure to read, refused before the plan, not a rule with no end.
+                guard let holder = ruleHolder, let rules = RuleEndShift.readRules(holder.recurrenceRules) else {
+                    throw EventKitError.seriesWriteRefused(reason: RuleEndShift.uncheckedReason(.unreadable))
+                }
+                let storedEnds = rules.compactMap { $0.recurrenceEnd?.endDate }
+                let passedRule = RuleEndShift.passedRule(recurrenceRule, clearing: clearRecurrence)
+                // PR #510 round 4 (HIGH): whether a rule fixes its day, apart from whether it has BY parts.
+                let parts = rules.map(RuleEndShift.parts)
+                // #513: a rule passed in the call counts for the unit and the day (fail closed).
+                let passedUnit = recurrenceRule.map { RuleEndShift.unit(of: $0.frequency) }
+                let passedTakesDayFromStart = recurrenceRule.map { !RuleEndShift.namesDays(daysOfWeek: $0.daysOfWeek, daysOfMonth: $0.daysOfMonth) } ?? false
+                let unit = RuleEndShift.coarser(RuleEndShift.unit(of: rules), passedUnit)
+                let dayFromStart = parts.contains { !$0.fixesDay } || passedTakesDayFromStart
+                // Round 5 (MEDIUM): the first slot, proven as #503 proves it, where an end is checked or (PR #518
+                // round 1) where the month-end check of a series with no end can apply (#513); one that cannot be
+                // shown refuses (fail closed), in that check's own words when no end is checked.
+                let endsChecked = !RuleEndShift.ends(stored: storedEnds, passedRule: passedRule).isEmpty
+                let needsFirstSlot = RuleEndShift.needsFirstSlot(wholeThroughSeries: wholeThroughSeries, endsChecked: endsChecked,
+                                                                 monthEndShape: RuleEndShift.monthEndShape(unit: unit, dayFromStart: dayFromStart, passedRule: passedRule))
+                let firstSlot: Date? = needsFirstSlot ? wholeSeriesBaseline(of: masterEvent, id: identifier, viaStandIn: resolved.viaStandIn).slot : nil
+                guard let storedStarts = RuleEndShift.storedStarts(shown: event.startDate, slot: eventSlot, needsFirstSlot: needsFirstSlot,
+                                                                    firstSlot: firstSlot) else {
+                    throw EventKitError.seriesWriteRefused(reason: endsChecked ? RuleEndShift.uncheckedReason(.firstSlot) : RuleEndShift.openFirstSlotReason)
+                }
+                if RuleEndShift.moves(planned: shiftStart, from: storedStarts) || changesZone || datePlan.isAllDay != event.isAllDay {
+                    let storedZone: TimeZone = event.isAllDay ? .current : (event.timeZone ?? .current)
+                    let newZone: TimeZone = datePlan.isAllDay || clearTimezone ? .current : (timezone ?? event.timeZone ?? .current)
+                    let plan = RuleEndShift.Plan(storedStarts: storedStarts,
+                        plannedStart: shiftStart, storedZone: storedZone, newZone: newZone, unit: unit,
+                        keepsDays: parts.contains { $0.fixesDay }, dayFromStart: dayFromStart,
+                        expandable: parts.allSatisfy { $0.expandable }, weeklyDays: RuleEndShift.weeklyDays(rules))
+                    // Round 2: an all-day series before or after the write is refused as not checked (LOW 7);
+                    // through an occurrence's own id the route is Calendar (LOW 6). Round 3: so it is for a
+                    // rule with days of its own (MEDIUM 3) and a series that ended after an occurrence
+                    // happened (LOW 7, #451).
+                    if let reason = ruleEndShiftRefusal(
+                        series: holder, seriesID: seriesID, storedEnds: storedEnds, passedRule: passedRule, plan: plan,
+                        from: applyToAll ? nil : eventSlot, allDay: event.isAllDay || datePlan.isAllDay || holder.isAllDay,
+                        route: RuleEndShift.route(ruleWritable: SeriesRuleWrite.writableRule(seriesRules) != nil, addressesOwnOccurrence: addressesOwnOccurrence,
+                                                  viaStandIn: resolved.viaStandIn, keepsDays: plan.keepsDays,
+                                                  startsAgree: RuleEndShift.startsAgree(storedStarts), endedAfterHappening: happened && storedEnds.contains { $0 < now })) {
+                        throw EventKitError.seriesWriteRefused(reason: reason)
+                    }
+                }
+            }
+            // #451 (PR #471 verify item 4): a rule from an occurrence that happened keeps only the
+            // stored pattern with a bound that keeps what happened; any other rewrote the past.
+            // The stored count runs from the original first start, which only a call over the whole
+            // series from its first slot holds (PR #471 verify round 3).
+            if let reason = SeriesRuleWrite.startedRuleRefusal(
+                recurrenceRule, stored: seriesRules, happened: happened,
+                countBase: SeriesRuleWrite.countBase(reach: reach, viaStandIn: resolved.viaStandIn,
+                                                     firstSlotGone: ownNeighbours?.own.firstSlotGone ?? false),
+                now: now, calendar: Calendar.gregorian(in: event.timeZone ?? .current)) {
+                throw EventKitError.seriesWriteRefused(reason: reason)
+            }
+
+            // Validate recurrence weekday consistency (#5, #454): which days apply is `WeekdayCheck.daysToCheck`.
+            // Skip entirely if clearRecurrence is true (event becoming non-recurring)
+            // Read from the values the event will have after this update: the planned start, in the
+            // zone WeekdayCheck.zone picks (the host zone for an all-day result).
+            let effectiveRule: RecurrenceRuleInput? = clearRecurrence ? nil : recurrenceRule
+            // #428: the detached object has no rules of its own; a new start over the series still has
+            // to fit the series' rule.
+            let detachedWrite = (applyToAll || span != .thisEvent)
+                && DetachedOccurrenceSpan.addressesOneOccurrence(identifier: identifier, isDetached: event.isDetached)
+            let storedRule = clearRecurrence ? nil
+                : (detachedWrite ? try seriesObject(ofOccurrence: identifier)?.recurrenceRules : event.recurrenceRules)?.first
+            let plannedStart: Date = datePlan.datesToWrite?.start ?? event.startDate
+            let startDayMoves = WeekdayCheck.dayChanges(
+                from: event.startDate, in: WeekdayCheck.zone(resultIsAllDay: event.isAllDay, requested: nil, clearTimezone: false, stored: event.timeZone),
+                to: plannedStart, in: WeekdayCheck.zone(resultIsAllDay: datePlan.isAllDay, requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone),
+                host: Calendar.current)
+            let storedNumbered = storedRule.map {
+                WeekdayCheck.isNumberedRule(weekNumbers: $0.daysOfTheWeek?.map(\.weekNumber) ?? [], setPositions: $0.setPositions?.map(\.intValue))
+            } ?? false
+            let ruleKeepsStoredPattern: Bool = {
+                guard let effectiveRule, let storedRule else { return false }
+                let otherParts = [storedRule.monthsOfTheYear, storedRule.weeksOfTheYear, storedRule.daysOfTheYear]
+                    .contains { $0?.isEmpty == false }
+                return WeekdayCheck.keepsStoredPattern(
+                    frequency: effectiveRule.frequency, interval: effectiveRule.interval, daysOfMonth: effectiveRule.daysOfMonth,
+                    stored: storedRule.frequency, storedInterval: storedRule.interval,
+                    storedDaysOfMonth: storedRule.daysOfTheMonth?.map(\.intValue),
+                    storedNumbered: storedNumbered, storedHasOtherParts: otherParts)
+            }()
+            let daysToValidate = WeekdayCheck.daysToCheck(
+                requested: effectiveRule?.daysOfWeek, ruleInCall: effectiveRule != nil,
+                stored: storedRule?.daysOfTheWeek?.map { $0.dayOfTheWeek.rawValue },
+                storedCount: storedRule.map { WeekdayCheck.storedDaysCount(isWeekly: $0.frequency == .weekly, span: span) } ?? false,
+                ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)
+            // #416: through an occurrence's own id the rule runs from its original day, not the day it
+            // shows. A new start moves that day, and `recurrence` is not written with one here.
+            let originalDay = startDate != nil ? nil : DetachedOccurrenceSpan.originalDay(
+                identifier: identifier, isDetached: event.isDetached, wholeSeries: applyToAll, futureSpan: span == .futureEvents,
+                externalIdentifier: event.calendarItemExternalIdentifier, occurrenceDate: event.occurrenceDate, isAllDay: event.isAllDay)
+            // #428 verify r4: through an occurrence's own id a new weekly days_of_week is read against
+            // the original day before #454's exemptions, which read the series' stored rule.
+            if let originalDay, let rule = effectiveRule, rule.frequency == .weekly,
+               DetachedOccurrenceSpan.refusesRecurrenceDay(
+                   originalWeekday: WeekdayCheck.weekday(of: originalDay, resultIsAllDay: datePlan.isAllDay, requested: timezone,
+                                                         clearTimezone: clearTimezone, stored: event.timeZone, host: Calendar.current),
+                   requestedDays: rule.daysOfWeek) {
+                throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.recurrenceDayReason)
+            }
+            if let days = daysToValidate, !days.isEmpty {
+                let weekday = WeekdayCheck.weekday(
+                    of: originalDay ?? datePlan.datesToWrite?.start ?? event.startDate, resultIsAllDay: datePlan.isAllDay,
+                    requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone, host: Calendar.current)
+                if !days.contains(weekday) {
+                    if originalDay != nil, effectiveRule != nil { throw EventKitError.occurrenceAddressRefused(reason: DetachedOccurrenceSpan.recurrenceDayReason) }
+                    let names = WeekdayCheck.names(weekday: weekday, days: days)
+                    if effectiveRule == nil, storedNumbered {
+                        throw EventKitError.weekdayOffNumberedRule(startDay: names.start)
+                    }
+                    throw EventKitError.weekdayMismatch(startDay: names.start, expectedDays: names.expected)
+                }
+            }
+
+            // #461: days_of_month by the same rules, read on the same day in the same zone.
+            let storedUsesMonthDays = storedRule.map { $0.frequency == .monthly || $0.frequency == .yearly } ?? false
+            if MonthDayCheck.refusesStoredMove(ruleInCall: effectiveRule != nil, stored: storedRule?.daysOfTheMonth?.map(\.intValue),
+                                               storedUsesMonthDays: storedUsesMonthDays, span: span, startDayMoves: startDayMoves) {
+                let otherParts = storedRule.map { [$0.monthsOfTheYear, $0.weeksOfTheYear, $0.daysOfTheYear].contains { $0?.isEmpty == false } } ?? false
+                throw EventKitError.monthDayMoveRefused(
+                    expectedDays: MonthDayCheck.names(storedRule?.daysOfTheMonth?.map(\.intValue) ?? []),
+                    unwritable: MonthDayCheck.storedUnwritable(days: storedRule?.daysOfTheMonth?.map(\.intValue), numbered: storedNumbered, otherParts: otherParts),
+                    spanAll: applyToAll)
+            }
+            let monthDaysToValidate = MonthDayCheck.daysToCheck(
+                requested: effectiveRule?.daysOfMonth, ruleInCall: effectiveRule != nil,
+                stored: storedRule?.daysOfTheMonth?.map(\.intValue),
+                storedUsesMonthDays: storedUsesMonthDays,
+                span: span, ruleKeepsStoredPattern: ruleKeepsStoredPattern, startDayMoves: startDayMoves)
+            if let days = monthDaysToValidate {
+                let start = MonthDayCheck.day(
+                    of: originalDay ?? plannedStart,
+                    zone: WeekdayCheck.zone(resultIsAllDay: datePlan.isAllDay, requested: timezone, clearTimezone: clearTimezone, stored: event.timeZone),
+                    host: Calendar.current)
+                if !MonthDayCheck.contains(day: start.day, daysInMonth: start.daysInMonth, list: days) {
+                    if originalDay != nil { throw EventKitError.occurrenceAddressRefused(reason: MonthDayCheck.occurrenceReason) }
+                    throw EventKitError.dayOfMonthMismatch(startDay: start.day, expectedDays: MonthDayCheck.names(days))
+                }
+            }
+
+            // #503: a change of the start, end or all-day flag over more than one occurrence brought back
+            // every occurrence deleted on its own among them (device, iCloud), answered updated, and undo
+            // refuses recurring updates. Refused while one is found or cannot be ruled out; read only
+            // when the write is that shape, and still before the first field is assigned (#373).
+            // PR #505 round 4 (MEDIUM): a calendar of another account is a create plus a delete (not
+            // measured), so it goes through the same verdict; its refusal says so when no date changes.
+            // PR #505 round 5 (LOW): a rule written over several occurrences with another pattern (not
+            // measured) goes through the verdict too, which reads the stored rule.
+            // A weekly rule without days runs on its start's weekday (a monthly one on its start's day), so
+            // the measured end-date-only call is not a pattern change whether the store reads that day back
+            // or none. Round 6 (LOW 4): read from the series' original first slot, and every stored rule
+            // is compared (more than one is a pattern change).
+            let changesPattern = effectiveRule.map {
+                DeletedOccurrenceCheck.changesPattern(DeletedOccurrenceCheck.Rule($0), stored: (rulesSeries?.recurrenceRules ?? []).map(DeletedOccurrenceCheck.Rule.init),
+                                                      startWeekday: seriesFirstSlotDay?.weekday, startDay: seriesFirstSlotDay?.day)
+            } ?? false
+            func deletedOccurrenceCheckApplies(changesAccount: Bool, baseline: DeletedOccurrenceCheck.StoredBaseline = .stored) -> Bool {
+                DeletedOccurrenceCheck.applies(
+                    reachesSeveral: reach.isWholeSeries || reach.isFromLaterOccurrence, clearingRecurrence: clearRecurrence,
+                    plannedDates: datePlan.datesToWrite.map { ($0.start, $0.end) }, storedStart: event.startDate, storedEnd: event.endDate,
+                    resultAllDay: datePlan.isAllDay, storedAllDay: event.isAllDay, changesZone: changesZone, changesAccount: changesAccount,
+                    changesPattern: changesPattern, baseline: baseline)
+            }
+            let viaStandInForCheck = addressesOwnOccurrence ? false : resolved.viaStandIn
+            // PR #505 round 5 (MEDIUM): a whole-series write of the stored start and end compares them with
+            // the first occurrence's shown times, which are its slot only when it was not edited on its own
+            // and its slot is shown; otherwise any date in the call is checked (fail closed).
+            // Round 6 (LOW 5): the proven slot is also what a planned start is compared with for the route text.
+            var baseline = DeletedOccurrenceCheck.StoredBaseline.stored
+            var provenSlot: Date? = event.startDate
+            // #527: the baseline and the verdict list the same series one after the other. Inside this
+            // stretch a listing is made once per set of ranges, so where the verdict lists the ranges the
+            // baseline listed (no horizon, a series begun less than about three years ago, or one the
+            // base ranges cover) it reads the baseline's listing. Otherwise (#506: a horizon the base
+            // ranges end before, on a series they do not cover) it lists under a key of its own, the base
+            // window and the window around now merged and cut into one-query pieces
+            // (`DeletedOccurrenceCheck.listingRanges`), which lists the baseline's dates again with the
+            // rest. The stretch cannot suspend and ends before `seriesUpdatePlan`,
+            // which lists after a refresh is requested, and before the first field is assigned.
+            // #533: the stretch opens above the #509 check, whose first-slot read (`needsFirstSlot`, span
+            // all through the series' id only) asks for the baseline's listing too; the three readers
+            // share. Between that read and the baseline nothing suspends, writes, saves or replaces the
+            // store; the refreshes in the stretch (#509's rule holder, `seriesForCheck()`'s series) are on
+            // the own-id route, where #509 reads no first slot, so they come before the first shared
+            // listing. Every other listing of the call is made on its own. Those
+            // made through `seriesOccurrences` each list the series' base ranges, the ones the baseline
+            // lists when it runs, whatever is listed in the stretch. Before it: #428's where the series'
+            // id is answered through its first edited occurrence (`firstEditedOccurrenceID`, before the
+            // call made again through that occurrence's id), #416's through an occurrence's own id
+            // (`occurrenceNeighbours`) and #442's for an all_day change (`allDayEditFacts`); inside it but
+            // not shared, the #509 refusal's listing around the rule end (`ruleEndShiftRefusal`, another
+            // range, not through `seriesOccurrences`). After it: the first-slot proof
+            // of the #263 plan (`seriesUpdatePlan`). The #326 stand-in (`firstRemainingOccurrence`) is
+            // listed from the stored series object's start; through a stand-in the baseline reads its
+            // ranges from the stand-in occurrence, so those two need not be the same ranges.
+            // The series is read by `seriesForCheck()`, whose first call is inside the stretch and comes
+            // before the first listing: through an occurrence's own id it refreshes the series object
+            // once (the result is cached in `checkSeries`), never between the two listings.
             if reach.isWholeSeries, datePlan.datesToWrite != nil {
                 let proof = try seriesForCheck().map { wholeSeriesBaseline(of: $0.0, id: $0.1, viaStandIn: viaStandInForCheck) }
                 baseline = proof?.baseline ?? .unproven
