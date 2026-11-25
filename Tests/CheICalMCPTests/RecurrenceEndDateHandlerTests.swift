@@ -176,7 +176,7 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
             if name.hasSuffix("reminder") {
                 // Only what is stored: the reminder side of the end day was not measured.
                 XCTAssertEqual(text.components(separatedBy: "a date only (YYYY-MM-DD) is stored as the last second of that day, 23:59:59, in this Mac's time zone, also when the due date has another zone").count - 1, 1, "\(name): \(text)")
-                XCTAssertFalse(text.contains("is kept (#584)"), "\(name): \(text)")
+                XCTAssertFalse(text.contains("occurrence is kept"), "\(name): \(text)")
             } else {
                 XCTAssertEqual(text.components(separatedBy: "a date only (YYYY-MM-DD) includes that day").count - 1, 1, "\(name): \(text)")
                 XCTAssertEqual(text.components(separatedBy: "so that day's occurrence is kept (#584)").count - 1, 1, "\(name): \(text)")
