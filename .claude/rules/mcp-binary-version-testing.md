@@ -1592,3 +1592,17 @@ create-undo 有狀態（undo stack 在長駐 process 裡），`--cli` 走不到�
 3. 主機時區在 UTC 以西時（`TZ` 只改 server process，系統時區沒有量過），第 1 步預期仍以 `modified_occurrences` 拒絕；記下結果。
 
 任何一步與預期不同就回報到 #563。結果記在 #563。結束後刪掉拋棄式日曆，隔一分鐘以上 `list_calendars` 兩次，名稱含 `#563` 的都是 0。
+
+## Release gate：只寫日期的 recurrence.end_date 包含當天（#584）
+
+#584 讓 `recurrence.end_date` 只寫日期時，存成那天在讀取時區的最後一秒（下一天的第一個時刻減一秒）。純函式與 handler 測試涵蓋五個寫入路徑；
+2026-11-25 已在 iCloud 用這個 PR 的 Developer ID 簽章 release build 與 `main`（`37f94bd6`）以 `--cli` 量過（結果見 PR 與 CHANGELOG）。
+**出 #584 的版本打 tag 之前**，用出版的 binary（含 #589、#592）的 `--cli`，只在名稱含 `#584` 的拋棄式日曆與提醒事項清單上，
+讀回一律帶 `calendar_name`（`list_events`、`list_reminders`）只讀那個日曆或清單：
+
+1. `create_event` 每週一 10:00（`timezone` Asia/Taipei）、`end_date` 為第三個週一的日期：`list_events` 讀回三個場次，含最後那天。
+2. `update_event` 用系列 ID、span `all`、`recurrence` 的 `end_date` 為第四個週一的日期：讀回四個場次。
+3. `create_reminder` 帶時間的到期日、每週、`end_date` 只寫日期：`reminder_recurrence_rules[0].end_date` 是那天 23:59:59（主機時區）。
+4. 對照：`end_date` 帶時間（那天 00:00）：存成給的時刻，事件只剩兩個場次。
+
+結束後依 id 刪掉日曆與清單，隔一分鐘以上用名稱過濾的列表數兩次，名稱含 `#584` 的都是 0。

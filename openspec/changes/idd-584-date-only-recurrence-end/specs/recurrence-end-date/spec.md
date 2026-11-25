@@ -17,5 +17,6 @@ A `recurrence.end_date` given as a date only (`YYYY-MM-DD`) on `create_event`, `
 | `2026-12-14` | America/New_York | 2026-12-14T23:59:59-05:00 |
 | `2027-03-13` | America/New_York (the next day starts in daylight time) | 2027-03-13T23:59:59-05:00 |
 | `2028-03-11` | America/Havana (the next midnight is skipped) | 2028-03-11T23:59:59-05:00 |
+| `2027-03-14` | America/New_York (a 23-hour day) | 2027-03-14T23:59:59-04:00 |
 | `2026-12-14T00:00:00+08:00` | any | unchanged |
 | `2028-03-12` | America/Havana | refused, as before |

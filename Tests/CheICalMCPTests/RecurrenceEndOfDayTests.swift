@@ -18,6 +18,10 @@ final class RecurrenceEndOfDayTests: XCTestCase {
         XCTAssertEqual(FlexibleDate.endOfDay(ofDateOnly: "2028-03-11", in: zone("America/Havana")), instant("2028-03-11T23:59:59-05:00"),
                        "the next day's midnight is skipped: its first instant is 01:00")
         XCTAssertEqual(FlexibleDate.endOfDay(ofDateOnly: "2028-02-29", in: zone("UTC")), instant("2028-02-29T23:59:59Z"))
+        XCTAssertEqual(FlexibleDate.endOfDay(ofDateOnly: "2027-03-14", in: zone("America/New_York")), instant("2027-03-14T23:59:59-04:00"),
+                       "a 23-hour day: its last second is 23 hours less a second after its start")
+        XCTAssertEqual(FlexibleDate.endOfDay(ofDateOnly: "2027-11-07", in: zone("America/New_York")), instant("2027-11-07T23:59:59-05:00"),
+                       "a 25-hour day")
     }
 
     func testOnlyAPlainDateHasAnEndOfDay() {

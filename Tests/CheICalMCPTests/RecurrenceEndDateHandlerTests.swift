@@ -128,6 +128,9 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
             let text = try XCTUnwrap(endDateDescription(tool), "\(name) has no recurrence.end_date description")
             XCTAssertEqual(text.components(separatedBy: "a date only (YYYY-MM-DD) includes that day").count - 1, 1, "\(name): \(text)")
             XCTAssertFalse(text.contains("stops before that day"), "\(name): \(text)")
+            XCTAssertEqual(text.components(separatedBy: "so that day's occurrence is kept (#584)").count - 1, 1, "\(name): \(text)")
+            let zone = name.hasSuffix("reminder") ? "in this Mac's time zone" : "timezone (else this Mac's)"
+            XCTAssertTrue(text.contains(zone), "\(name): \(text)")
         }
     }
 }
