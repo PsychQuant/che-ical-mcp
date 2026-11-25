@@ -59,16 +59,18 @@ final class SingleListingWiringTests: XCTestCase {
         XCTAssertTrue(verdict.contains("guard let (_, candidates) = seriesOccurrences("))
     }
 
-    /// `updateEvent` opens one stretch: after everything the two readers need is declared, around the
+    /// `updateEvent` opens one stretch: from the #509 check's first-slot read (#533) around the
     /// baseline and the verdict, ended before `seriesUpdatePlan` (which lists after a refresh is
     /// requested) and before the first field is assigned.
-    func testUpdateEventSharesTheListingAroundTheBaselineAndTheVerdictOnly() throws {
+    func testUpdateEventSharesTheListingFromThe509ReadThroughTheVerdict() throws {
         let manager = SourcePins.code(try SourcePins.source("EventKit/EventKitManager.swift"))
         let update = try XCTUnwrap(SourcePins.body(of: "func updateEvent(", in: manager))
         XCTAssertEqual(count("try seriesListings.sharing {", in: update), 1)
         XCTAssertEqual(count("seriesListings", in: update), 1)
         let stretch = try XCTUnwrap(SourcePins.body(of: "try seriesListings.sharing {", in: update))
-        // Inside: the baseline, the check, the verdict and its refusals.
+        // Inside: #533's #509 first-slot read, the baseline, the check, the verdict and its refusals.
+        XCTAssertEqual(count("let firstSlot: Date? = needsFirstSlot ? wholeSeriesBaseline(of: masterEvent, id: identifier, viaStandIn: resolved.viaStandIn).slot : nil", in: stretch), 1)
+        XCTAssertEqual(count("if RuleEndShift.applies(", in: stretch), 1)
         XCTAssertEqual(count("let proof = try seriesForCheck().map { wholeSeriesBaseline(of: $0.0, id: $0.1, viaStandIn: viaStandInForCheck) }", in: stretch), 1)
         XCTAssertEqual(count("if reach.isWholeSeries, datePlan.datesToWrite != nil {", in: stretch), 1)
         XCTAssertEqual(count("if deletedOccurrenceCheckApplies(changesAccount: crossesAccounts, baseline: baseline) {", in: stretch), 1)
@@ -76,17 +78,32 @@ final class SingleListingWiringTests: XCTestCase {
         XCTAssertEqual(count("case .unknown(let cause): throw EventKitError.seriesWriteRefused(reason: DeletedOccurrenceCheck.unknownReason(cause))", in: stretch), 1)
         // The two readers are called nowhere else between the stretch and the save.
         XCTAssertEqual(count("deletedOccurrenceVerdict(", in: update), 1)
-        XCTAssertEqual(count("wholeSeriesBaseline(", in: stretch), 1)
-        // The stretch's own code does not suspend, write or record, and asks for no refresh of the
-        // store's view. One refresh does run while it is open: `seriesForCheck()`, called from it,
-        // refreshes the series object through an occurrence's own id. That it runs once and before
-        // the first listing is pinned in `testTheSeriesIsReadAndRefreshedOnceBeforeTheFirstListing`.
-        for outside in ["await", "refreshIfNeeded", "markNeedsRefresh", "seriesUpdatePlan(", "eventStore.save(", "event.title = ",
-                        ".refresh()"] {
+        XCTAssertEqual(count("wholeSeriesBaseline(", in: stretch), 2, "the #509 read and the baseline")
+        XCTAssertEqual(count("wholeSeriesBaseline(", in: update), 2, "and nowhere else in updateEvent")
+        // The stretch's code does not suspend, write or record, and asks for no refresh of the store's
+        // view. Two series objects are refreshed while it is open, both on the own-id route only: the
+        // #509 rule holder and `seriesForCheck()`'s series. On that route #509 reads no first slot
+        // (`wholeThroughSeries` excludes it), so both come before the first shared listing; that
+        // `seriesForCheck()` refreshes once is pinned in `testTheSeriesIsReadAndRefreshedOnceBeforeTheFirstListing`.
+        for outside in ["await", "refreshIfNeeded", "markNeedsRefresh", "seriesUpdatePlan(", "eventStore.save(", "event.title = "] {
             XCTAssertFalse(stretch.contains(outside), outside)
         }
+        XCTAssertEqual(count(".refresh()", in: stretch), 1, "the #509 rule holder's, on the own-id route")
+        XCTAssertEqual(count("if addressesOwnOccurrence { _ = ruleHolder?.refresh() }", in: stretch), 1)
+        XCTAssertEqual(count("let wholeThroughSeries = applyToAll && !addressesOwnOccurrence", in: stretch), 1)
+        XCTAssertEqual(count("let needsFirstSlot = RuleEndShift.needsFirstSlot(wholeThroughSeries: wholeThroughSeries,", in: stretch), 1)
+        let rules = SourcePins.code(try SourcePins.source("EventKit/RuleEndShift.swift"))
+        let needs = try XCTUnwrap(SourcePins.body(of: "static func needsFirstSlot(", in: rules))
+        XCTAssertEqual(count("wholeThroughSeries && (endsChecked || monthEndShape)", in: needs), 1)
+        // The #509 read comes before the baseline, and the rule holder's refresh before every shared listing.
+        let firstRead = try XCTUnwrap(stretch.range(of: "let firstSlot: Date? = needsFirstSlot ? wholeSeriesBaseline("))
+        let baselineRead = try XCTUnwrap(stretch.range(of: "let proof = try seriesForCheck().map { wholeSeriesBaseline("))
+        let holderRefresh = try XCTUnwrap(stretch.range(of: "if addressesOwnOccurrence { _ = ruleHolder?.refresh() }"))
+        XCTAssertLessThan(firstRead.lowerBound, baselineRead.lowerBound)
+        XCTAssertLessThan(holderRefresh.lowerBound, firstRead.lowerBound)
         // The series is read (and, through an occurrence's own id, refreshed) by `seriesForCheck`,
-        // declared before the stretch and called inside it only.
+        // declared before the stretch (a function declared inside its closure would not be on the
+        // actor) and called inside it only.
         let seriesForCheck = try XCTUnwrap(update.range(of: "func seriesForCheck() throws -> (EKEvent, String)? {"))
         let open = try XCTUnwrap(update.range(of: "try seriesListings.sharing {"))
         let plan = try XCTUnwrap(update.range(of: "let seriesPlan = seriesUpdatePlan("))
@@ -99,12 +116,10 @@ final class SingleListingWiringTests: XCTestCase {
                        "before the stretch: the declaration only")
         XCTAssertEqual(count("seriesForCheck()", in: stretch), 2, "inside the stretch: one call per reader")
         XCTAssertEqual(count("seriesForCheck()", in: update), 3, "and nowhere after it: the declaration and those two calls")
-        // What the stretch assigns is declared before it, so the response and the texts read it after.
-        for declared in ["var baseline = DeletedOccurrenceCheck.StoredBaseline.stored", "var provenSlot: Date? = event.startDate",
-                         "var deletionsChecked: DeletionCheckHorizon?"] {
-            let range = try XCTUnwrap(update.range(of: declared), declared)
-            XCTAssertLessThan(range.lowerBound, open.lowerBound, declared)
-        }
+        // What the response and the texts read after the stretch is declared before it.
+        let declared = try XCTUnwrap(update.range(of: "var deletionsChecked: DeletionCheckHorizon?"))
+        XCTAssertLessThan(declared.lowerBound, open.lowerBound)
+        XCTAssertEqual(count("var deletionsChecked: DeletionCheckHorizon?", in: update), 1)
     }
 
     /// PR #531 verify r1: what keeps a listing made inside the stretch good for both readers although
@@ -120,11 +135,21 @@ final class SingleListingWiringTests: XCTestCase {
         // Two calls in the stretch, one per reader, each opening the closure its reader lists in.
         XCTAssertEqual(count("seriesForCheck()", in: stretch), 2, "one read of the series per reader")
         XCTAssertEqual(count("try seriesForCheck().map {", in: stretch), 2, "each reader lists inside its read's closure")
-        let firstRead = try XCTUnwrap(stretch.range(of: "seriesForCheck()"))
-        for listing in ["wholeSeriesBaseline(", "deletedOccurrenceVerdict("] {
-            XCTAssertEqual(count(listing, in: stretch), 1, listing)
-            let range = try XCTUnwrap(stretch.range(of: listing), listing)
-            XCTAssertLessThan(firstRead.lowerBound, range.lowerBound, "the series is read before \(listing) lists")
+        let firstRead = try XCTUnwrap(stretch.range(of: "try seriesForCheck().map {"))
+        XCTAssertEqual(count("try seriesForCheck().map { wholeSeriesBaseline(", in: stretch), 1, "the baseline lists inside its read's closure")
+        let verdictListing = try XCTUnwrap(stretch.range(of: "deletedOccurrenceVerdict("))
+        XCTAssertLessThan(firstRead.lowerBound, verdictListing.lowerBound, "the series is read before the verdict lists")
+        // #533 (PR #599 verify r1): before that first read, the stretch's one shared listing is #509's
+        // first-slot read of the series object, and it is reachable only through the series' id: its
+        // guard `needsFirstSlot` requires `wholeThroughSeries`, which excludes an occurrence's own id. So
+        // on the own-id route, where `seriesForCheck()` refreshes, nothing is listed before that refresh.
+        let beforeFirstRead = String(stretch[stretch.startIndex..<firstRead.lowerBound])
+        XCTAssertEqual(count("wholeSeriesBaseline(", in: beforeFirstRead), 1)
+        XCTAssertEqual(count("let firstSlot: Date? = needsFirstSlot ? wholeSeriesBaseline(of: masterEvent,", in: beforeFirstRead), 1)
+        XCTAssertEqual(count("let wholeThroughSeries = applyToAll && !addressesOwnOccurrence", in: beforeFirstRead), 1)
+        XCTAssertEqual(count("let needsFirstSlot = RuleEndShift.needsFirstSlot(wholeThroughSeries: wholeThroughSeries,", in: beforeFirstRead), 1)
+        for other in ["seriesOccurrences(", "deletedOccurrenceVerdict(", "firstRemainingOccurrence(", "seriesUpdatePlan("] {
+            XCTAssertFalse(beforeFirstRead.contains(other), other)
         }
         XCTAssertEqual(count("let verdict: DeletedOccurrenceCheck.Verdict = try seriesForCheck().map {", in: stretch), 1)
         let verdictRead = try XCTUnwrap(stretch.range(of: "let verdict: DeletedOccurrenceCheck.Verdict = try seriesForCheck().map {"))
