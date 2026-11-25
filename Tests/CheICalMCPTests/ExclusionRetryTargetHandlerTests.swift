@@ -20,7 +20,7 @@ private actor SkippingWrites: EventWriteSource {
         return EventCreateValue(event: matched, isDuplicate: true,
                                 existingSeriesIdentifier: request.title == "one-off" ? nil : seriesID)
     }
-    func similarEventValues(title: String, calendarIdentifier: String, limit: Int) async throws -> [SimilarEventValue] { [] }
+    func similarEventValues(title: String, calendarIdentifier: String, excluding: Set<String>, limit: Int) async throws -> [SimilarEventValue] { [] }
     func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? { nil }
 }
 

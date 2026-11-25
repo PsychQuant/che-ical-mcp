@@ -18,7 +18,7 @@ private actor RefusingCreates: EventWriteSource {
         return EventCreateValue(event: EventWriteValue(eventIdentifier: "created-\(created.count)", title: request.title, isAllDay: false,
                                                        startDate: request.startDate, endDate: request.endDate), isDuplicate: false)
     }
-    func similarEventValues(title: String, calendarIdentifier: String, limit: Int) async throws -> [SimilarEventValue] { [] }
+    func similarEventValues(title: String, calendarIdentifier: String, excluding: Set<String>, limit: Int) async throws -> [SimilarEventValue] { [] }
     func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? { nil }
 }
 

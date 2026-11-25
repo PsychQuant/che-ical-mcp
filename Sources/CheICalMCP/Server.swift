@@ -2762,13 +2762,13 @@ class CheICalMCPServer {
         return try formatJSON(response)
     }
 
-    /// Feature 4: Create multiple events at once
     /// #590: a title and the calendar a batch row was written to, searched once for similar events.
     private struct SimilarSearch: Equatable {
         let title: String
         let calendarIdentifier: String
     }
 
+    /// Feature 4: Create multiple events at once
     private func handleCreateEventsBatch(arguments: [String: Value]) async throws -> String {
         guard let eventsArray = arguments["events"]?.arrayValue else {
             throw ToolError.invalidParameter("events array is required")
@@ -2777,6 +2777,9 @@ class CheICalMCPServer {
         var results: [[String: Any]] = []
         // #590: one similar-events search per distinct title and calendar of the rows written, in order.
         var similarSearches: [SimilarSearch] = []
+        // The events the rows wrote or matched (their own and the answered identifiers), left out
+        // of the search before its limit, so the batch's own events take no place in the hints.
+        var writtenIds: Set<String> = []
 
         for (index, eventValue) in eventsArray.enumerated() {
             guard let eventDict = eventValue.objectValue else {
@@ -2914,6 +2917,8 @@ class CheICalMCPServer {
                         hostZone: host.timeZone, skipped: result.isDuplicate)) { $1 }
                 }
                 results.append(entry)
+                if let own = result.event.eventIdentifier { writtenIds.insert(own) }
+                if let answered = result.answeredIdentifier { writtenIds.insert(answered) }
                 // #590: the similar-events search reads only this row's calendar.
                 if let calendar = result.event.calendarIdentifier, !calendar.isEmpty {
                     let search = SimilarSearch(title: title, calendarIdentifier: calendar)
@@ -2952,13 +2957,11 @@ class CheICalMCPServer {
         // than treating an error as "no similar events exist".
         var similarHints: [[String: Any]] = []
         var similarLookupErrors: [String: String] = [:]
-        let createdIds = Set(results.compactMap { $0["event_id"] as? String })
         for search in similarSearches {
             let title = search.title
             do {
-                let similar = try await eventWriteSource.similarEventValues(title: title, calendarIdentifier: search.calendarIdentifier, limit: 3)
+                let similar = try await eventWriteSource.similarEventValues(title: title, calendarIdentifier: search.calendarIdentifier, excluding: writtenIds, limit: 3)
                 for event in similar {
-                    if let eid = event.eventIdentifier, createdIds.contains(eid) { continue }
                     similarHints.append([
                         "matched_title": title,
                         "existing_title": event.title ?? "",

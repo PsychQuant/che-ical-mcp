@@ -90,7 +90,7 @@ actor FakeEventWriteSource: EventWriteSource {
     /// #590: how many similar-event searches the batch handler asked for (its saved events carry no
     /// calendar identifier, so none is expected).
     private(set) var similarSearches = 0
-    func similarEventValues(title: String, calendarIdentifier: String, limit: Int) async throws -> [SimilarEventValue] {
+    func similarEventValues(title: String, calendarIdentifier: String, excluding: Set<String>, limit: Int) async throws -> [SimilarEventValue] {
         similarSearches += 1
         return []
     }

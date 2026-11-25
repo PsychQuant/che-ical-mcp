@@ -115,7 +115,8 @@ protocol EventWriteSource: Sendable {
     func createEventValue(_ request: EventCreateRequest) async throws -> EventCreateValue
     /// `create_events_batch`'s advisory lookup of existing events with a similar title (kept on the
     /// seam so a handler test does not read the host's calendars).
-    func similarEventValues(title: String, calendarIdentifier: String, limit: Int) async throws -> [SimilarEventValue]
+    /// #590: events similar to `title` in that calendar only, leaving out `excluding` (the batch's own events).
+    func similarEventValues(title: String, calendarIdentifier: String, excluding: Set<String>, limit: Int) async throws -> [SimilarEventValue]
     /// #383: the zone `update_event` reads an offset-less `occurrence_date` in, the zone its search
     /// takes the day boundary in (`EventKitManager.occurrenceDateTimeZone`, shared with
     /// `delete_event` and `move_events_batch` since #270).
@@ -168,8 +169,8 @@ extension EventKitManager: EventWriteSource {
         return EventCreateValue(event: EventWriteValue(result.event), isDuplicate: result.isDuplicate, existingSeriesIdentifier: result.seriesIdentifier)
     }
 
-    func similarEventValues(title: String, calendarIdentifier: String, limit: Int) async throws -> [SimilarEventValue] {
-        try await findSimilarEvents(title: title, calendarIdentifier: calendarIdentifier, limit: limit).map {
+    func similarEventValues(title: String, calendarIdentifier: String, excluding: Set<String>, limit: Int) async throws -> [SimilarEventValue] {
+        try await findSimilarEvents(title: title, calendarIdentifier: calendarIdentifier, excluding: excluding, limit: limit).map {
             SimilarEventValue(eventIdentifier: $0.eventIdentifier, title: $0.title,
                               calendarTitle: $0.calendar.title, startDate: $0.startDate)
         }
