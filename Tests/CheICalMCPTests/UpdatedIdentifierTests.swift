@@ -209,13 +209,13 @@ final class UpdatedIdentifierTests: XCTestCase {
         // Clearing never goes through span future, which collapsed the series, and a refused caller
         // is not sent to a delete, which would take the occurrence named too (PR #439 verify round
         // 3). Measured on iCloud: span 'all' with end_date ends the series there and keeps its id; a
-        // bare date ends it before that day's occurrence.
+        // bare date ended it before that day's occurrence until #584, which stores it as that day's last second.
         for address in [EventKitManager.RecurrenceChangeAddress.seriesId, .occurrenceOwnId(series: "S:E"), .occurrenceOwnId(series: nil)] {
             let message = text(clearing: true, address)
             XCTAssertTrue(message.contains("deletes the other occurrences"), message)
             XCTAssertFalse(message.contains("Pass span 'future'"), message)
             XCTAssertFalse(message.contains("delete_event"), message)
-            for phrase in ["span 'all'", "whole rule", "end_date", "23:59:59", "a bare date", "also one edited on its own"] {
+            for phrase in ["span 'all'", "whole rule", "end_date", "23:59:59", "a bare date, which includes that day (#584)", "also one edited on its own"] {
                 XCTAssertTrue(message.contains(phrase), "\(phrase): \(message)")
             }
         }

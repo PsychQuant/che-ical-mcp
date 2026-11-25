@@ -60,6 +60,18 @@ enum FlexibleDate {
         throw invalidDate(string)
     }
 
+    /// #584: the last instant of the day a plain `YYYY-MM-DD` names in `zone`: the first instant
+    /// of the next day minus one second, so a day whose next midnight is skipped still ends at its own
+    /// 23:59:59. nil for any other form, or for a date that does not exist (the spelling is checked as
+    /// `firstInstant(ofDay:in:)` checks it). A date-only `recurrence.end_date` is stored as this, so
+    /// the occurrence on that day is in the series at any time of day.
+    static func endOfDay(ofDateOnly string: String, in zone: TimeZone) -> Date? {
+        guard let start = firstInstant(ofDay: string, in: zone) else { return nil }
+        let calendar = Calendar.gregorian(in: zone)
+        guard let laterNoon = calendar.date(byAdding: .hour, value: 36, to: start) else { return nil }
+        return calendar.startOfDay(for: laterNoon).addingTimeInterval(-1)
+    }
+
     static func invalidDate(_ string: String) -> ToolError {
         return ToolError.invalidParameter("'\(string)' is not a valid date. Supported formats: ISO8601 (2026-02-06T14:00:00+08:00), datetime (2026-02-06T14:00:00), date (2026-02-06), time (14:00)")
     }
