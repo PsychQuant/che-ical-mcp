@@ -101,7 +101,10 @@ final class OccurrenceDateZoneTests: XCTestCase {
         let body = try call(in: "private func handleUpdateEvent(arguments: [String: Value]) async throws -> String {")
         let expected = #"let occurrenceDate: Date\? = try await OccurrenceDateInput\.resolve\( arguments\["occurrence_date"\]\?\.stringValue, iso: dateFormatter, span: spanStr, zoneLookup: \{ try await self\.eventWriteSource\.occurrenceDateTimeZone\(identifier: eventId\) \}\)"#
         XCTAssertEqual(SourcePins.ranges(ofPattern: expected, in: body).count, 1, "the exact call")
-        XCTAssertEqual(body.components(separatedBy: "occurrenceDateTimeZone(").count - 1, 1, "looked up in that call only")
+        // #584 (PR #596 verify round 1): the same lookup gives the zone a date-only recurrence end
+        // is read in when the call has no timezone; it is the second and last call.
+        XCTAssertEqual(body.components(separatedBy: "occurrenceDateTimeZone(").count - 1, 2, "that call and the #584 end-date read only")
+        XCTAssertEqual(SourcePins.ranges(of: "let zone = clearTimezone ? nil : try await eventWriteSource.occurrenceDateTimeZone(identifier: eventId)", in: body).count, 1)
         XCTAssertFalse(body.contains(#"arguments["occurrence_date"]?.stringValue.map"#), "the old host-zone parse")
         let manager = "EventKit/EventKitManager.swift"
         let update = try call(in: "func updateEvent( identifier: String, fields: Set<String>, title: String? = nil, startDate: Date? = nil, endDate: Date? = nil, notes: String? = nil, location: String? = nil, url: String? = nil, calendarName: String? = nil, calendarSource: String? = nil, isAllDay: Bool? = nil, alarmOffsets: [Int]? = nil, recurrenceRule: RecurrenceRuleInput? = nil, clearRecurrence: Bool = false, structuredLocation: StructuredLocationInput? = nil, span: EKSpan = .thisEvent, occurrenceDate: Date? = nil, applyToAll: Bool = false, timezone: TimeZone? = nil, clearTimezone: Bool = false, skippedMidnightEndpoint: String? = nil ) async throws -> (event: EKEvent, seriesIdentifier: String?, matchedOccurrence: MatchedOccurrence?, deletionsChecked: DeletionCheckHorizon?) {", file: manager)

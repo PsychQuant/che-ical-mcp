@@ -331,7 +331,7 @@ class CheICalMCPServer {
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
-                                    "description": .string("When to stop recurring (ISO8601 date). Giving occurrence_count too is refused.")
+                                    "description": .string("When to stop recurring. A date with a time is the instant given; a date only (YYYY-MM-DD) includes that day: it is stored as the day's last second, 23:59:59, in the event's timezone (else this Mac's), so that day's occurrence is kept (#584). Giving occurrence_count too is refused.")
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
@@ -403,7 +403,7 @@ class CheICalMCPServer {
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
-                                    "description": .string("When to stop recurring (ISO8601 date). A bare date stops before that day's occurrence, so to keep it pass a time after its start. Giving occurrence_count too is refused.")
+                                    "description": .string("When to stop recurring. A date with a time is the instant given; a date only (YYYY-MM-DD) includes that day: it is stored as the day's last second, 23:59:59, in the call's timezone, else the event's own time zone (through an occurrence's own id, that occurrence's zone, the series' unless set elsewhere; a floating event, or one clear_timezone makes floating: this Mac's), so that day's occurrence is kept (#584). Giving occurrence_count too is refused.")
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
@@ -576,7 +576,7 @@ class CheICalMCPServer {
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
-                                    "description": .string("When to stop recurring (ISO8601 date). Giving occurrence_count too is refused.")
+                                    "description": .string("When to stop recurring. A date with a time is the instant given; a date only (YYYY-MM-DD) is stored as the last second of that day, 23:59:59, in this Mac's time zone, also when the due date has another zone (#584; whether Reminders then keeps that day's occurrence was not measured). Giving occurrence_count too is refused.")
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
@@ -683,7 +683,7 @@ class CheICalMCPServer {
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
-                                    "description": .string("When to stop recurring (ISO8601 date). Giving occurrence_count too is refused.")
+                                    "description": .string("When to stop recurring. A date with a time is the instant given; a date only (YYYY-MM-DD) is stored as the last second of that day, 23:59:59, in this Mac's time zone, also when the due date has another zone (#584; whether Reminders then keeps that day's occurrence was not measured). Giving occurrence_count too is refused.")
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
@@ -902,7 +902,7 @@ class CheICalMCPServer {
                                         "properties": .object([
                                             "frequency": .object(["type": .string("string"), "enum": .array([.string("daily"), .string("weekly"), .string("monthly"), .string("yearly")])]),
                                             "interval": .object(["type": .string("integer"), "description": .string("Repeat every N units (default 1; an integer from 1 to 1000)")]),
-                                            "end_date": .object(["type": .string("string")]),
+                                            "end_date": .object(["type": .string("string"), "description": .string("When to stop recurring. A date with a time is the instant given; a date only (YYYY-MM-DD) includes that day: it is stored as the day's last second, 23:59:59, in the item's timezone (else this Mac's), so that day's occurrence is kept (#584). Giving occurrence_count too fails this item.")]),
                                             "occurrence_count": .object(["type": .string("integer"), "description": .string("Maximum number of occurrences, an integer from 1 to 10000. Giving end_date too fails this item. A yearly rule with days_of_week repeats in the start's month. With interval 1 and no days_of_month the rule refuses occurrence_count: use frequency monthly with interval 12 or end_date for those days, or yearly without days_of_week for once a year.")]),
                                             "days_of_week": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days to repeat (1=Sunday, 2=Monday, ..., 7=Saturday); the start has to fall on one of them")]),
                                             "days_of_month": .object(["type": .string("array"), "items": .object(["type": .string("integer")]), "description": .string("Days of month to repeat (1-31), for monthly and yearly rules; refused on daily and weekly rules, which do not use them; the start has to fall on one of them")]),
@@ -1565,7 +1565,7 @@ class CheICalMCPServer {
 
         let alarmOffsets = try InputValidation.parseAlarmOffsets(arguments)   // #333: shared with the reminder tools
 
-        let recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone)
+        var recurrenceRule = try parseRecurrenceRule(from: arguments, defaultTimezone: timezone)
         let clearRecurrence = try InputValidation.requireOptionalBool(arguments, key: "clear_recurrence") ?? false
         // PR #439 verify: clear_recurrence goes first in the manager, so the rule would be dropped.
         if recurrenceRule != nil && clearRecurrence {
@@ -1584,6 +1584,16 @@ class CheICalMCPServer {
         let occurrenceDate: Date? = try await OccurrenceDateInput.resolve(
             arguments["occurrence_date"]?.stringValue, iso: dateFormatter, span: spanStr,
             zoneLookup: { try await self.eventWriteSource.occurrenceDateTimeZone(identifier: eventId) })
+        // #584 (PR #596 verify round 1): without `timezone`, a date-only recurrence end is the last
+        // second of that day in the zone the event keeps, the stored one (the zone `occurrence_date`
+        // is read in), not this Mac's; a floating event, or one `clear_timezone` makes floating, this
+        // Mac's. With `timezone`, the zone the event gets (read by `parseRecurrenceRule`).
+        if timezone == nil, let rule = recurrenceRule,
+           let endText = arguments["recurrence"]?.objectValue?["end_date"]?.stringValue,
+           FlexibleDate.endOfDay(ofDateOnly: endText, in: .current) != nil {
+            let zone = clearTimezone ? nil : try await eventWriteSource.occurrenceDateTimeZone(identifier: eventId)
+            recurrenceRule = rule.withEndDate(FlexibleDate.endOfDay(ofDateOnly: endText, in: zone ?? .current) ?? rule.endDate)
+        }
 
         let event = try await eventWriteSource.updateEventValue(EventUpdateRequest(
             identifier: eventId,
@@ -3809,7 +3819,10 @@ class CheICalMCPServer {
             guard let s = endDateValue.stringValue else {
                 throw ToolError.invalidParameter("recurrence.end_date must be a date string (e.g. \"2026-09-30\"), got a non-string value")
             }
-            endDate = try parseFlexibleDate(s, defaultTimezone: defaultTimezone)
+            let parsed = try parseFlexibleDate(s, defaultTimezone: defaultTimezone)
+            // #584: a date-only end includes that day (its last instant in the same zone); the
+            // parse above keeps its refusals (#546's skipped midnight among them).
+            endDate = FlexibleDate.endOfDay(ofDateOnly: s, in: defaultTimezone ?? .current) ?? parsed
         }
         var occurrenceCount: Int?
         if let countValue = recurrenceDict["occurrence_count"] {
