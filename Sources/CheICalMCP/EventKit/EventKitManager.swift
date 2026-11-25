@@ -2309,43 +2309,23 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         )
     }
 
-    /// Find events with similar titles (case-insensitive substring match).
-    /// Used to provide hints when creating events, helping LLMs reuse correct calendar names.
-    /// - Parameters:
-    ///   - title: The title to match against
-    ///   - limit: Maximum number of results (default 5)
-    /// - Returns: Array of matching events, sorted by start date descending (most recent first)
-    func findSimilarEvents(title: String, limit: Int = 5) async throws -> [EKEvent] {
+    /// The events of the calendar `calendarIdentifier`, within the default search range, whose title
+    /// contains a word (two or more characters) of `title`, chosen by `SimilarEvents.select`: the
+    /// events in `excluding` left out first, then the most recent of each title, at most `limit`.
+    /// #590: only that calendar is read (a batch row's own); the search read every calendar before.
+    /// An identifier that names no calendar throws `calendarNotFound`.
+    func findSimilarEvents(title: String, calendarIdentifier: String, excluding: Set<String> = [], limit: Int = 5) async throws -> [EKEvent] {
         try await ensureCalendarAccess()
         refreshIfNeeded()
 
+        guard let calendar = eventStore.calendar(withIdentifier: calendarIdentifier) else {
+            throw EventKitError.calendarNotFound(identifier: calendarIdentifier)
+        }
         let searched = EventRangeQuery.defaultSearchRange(now: Date())
-        let allEvents = try events(from: searched.start, to: searched.end, calendars: nil)
-
-        let lowercasedTitle = title.lowercased()
-        // Split title into words for flexible matching
-        let titleWords = lowercasedTitle.split(separator: " ").map(String.init).filter { $0.count >= 2 }
-
-        let matches = allEvents.filter { event in
-            guard let eventTitle = event.title?.lowercased() else { return false }
-            // Match if any significant word from the new title appears in existing event title
-            return titleWords.contains { eventTitle.contains($0) }
-        }
-        .sorted { ($0.startDate ?? .distantPast) > ($1.startDate ?? .distantPast) }
-
-        // Deduplicate by title+calendar (keep most recent)
-        var seen = Set<String>()
-        var unique: [EKEvent] = []
-        for event in matches {
-            let key = "\(event.title ?? "")|\(event.calendar.title)"
-            if !seen.contains(key) {
-                seen.insert(key)
-                unique.append(event)
-            }
-            if unique.count >= limit { break }
-        }
-
-        return unique
+        let allEvents = try events(from: searched.start, to: searched.end, calendars: [calendar])
+        return SimilarEvents.select(allEvents, title: title, excluding: excluding, limit: limit,
+                                    id: { $0.eventIdentifier }, title: { $0.title }, calendar: { $0.calendar?.title ?? "" },
+                                    start: { $0.startDate })
     }
 
     // MARK: - Batch Operations

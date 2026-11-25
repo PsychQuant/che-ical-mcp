@@ -1396,7 +1396,7 @@ session MCP 上（行為探測確認是新 binary 之後：`delete_reminder` 的
 | G11 選擇與排除場次 | `update_event` 以 `occurrence_date: "2028-03-12"` 更新從 03-11 10:00 起每天重複的系列中 03-12 定時場次的標題。另建每天重複、總共兩場且首場為 03-13 00:30 的系列，送同一個 03-12 選擇。用 `create_event` 建另一個從 03-11 10:00 起每天重複的系列，在重複規則指定 03-12 排除日期 | 第一個更新只改 03-12 場次。第二個更新回找不到，讀回確認 03-13 00:30 場次未變。排除日期可剖析，讀回沒有 03-12 場次。限隔離帳號 |
 | G12 複製與拆出場次 | `copy_event` 複製 03-12 全天事件；`move_events_batch` 用純日期、帶位移的日期時間、場次識別碼搭配必要日期拆出 03-12 全天場次。每個指定方式都須能依儲存值找到同一個來源場次 | 已知形狀的複製與拆出場次均回 #568 拒絕，來源與目的事件不變。拆出場次限隔離帳號 |
 
-G6 的批次建立會跨行事曆搜尋相似事件。G11 與 G12 的場次查找也會跨行事曆搜尋。缺少隔離帳號時，略過表中標示的部分並記錄為未執行，核對測試替身與接線測試。G 編號屬這份發行檢查表，可用案例名稱對照 PR 量測。
+G6 的批次建立在 #590 之前的 binary 上會跨行事曆搜尋相似事件（`similar_events`）。G11 與 G12 的場次查找也會跨行事曆搜尋。缺少隔離帳號時，略過表中標示的部分並記錄為未執行，核對測試替身與接線測試。G 編號屬這份發行檢查表，可用案例名稱對照 PR 量測。
 
 若隔離帳號可建立 Google 拋棄式行事曆，先做 G5 並讀回起訖，再做 G1 至 G4。原始量測中 G5 的 Google 起日為 `2028-03-12T04:00:00Z`，依程序時區校正後預期為 `2028-03-12T05:00:00Z`。原始量測中對應 G1 的呼叫遭拒。iCloud 原始形狀是 01:00 到隔天 00:59:59。Google 形狀在這一輪由測試資料覆蓋。
 
@@ -1499,7 +1499,7 @@ G6 的批次建立會跨行事曆搜尋相似事件。G11 與 G12 的場次查�
    （`main` 回衝突，指名第一場的識別碼與第五場的日期）。
 3. 排除第五場與第三場（沒改過、還在）：衝突，指名系列的識別碼與第三場的日期。
 4. 排除第四場（被單獨改過）：#534 的那句，指名系列的識別碼與第四場的日期。
-5. （已移除：`create_events_batch` 的這一列不再在裝置上跑，因為 batch 的路徑會讀其他行事曆；batch 由 handler 測試與 wiring pin 涵蓋。）
+5. （已移除：`create_events_batch` 的這一列不再在裝置上跑，因為 batch 的路徑在 #590 之前會讀其他行事曆（`similar_events` 的搜尋）；batch 由 handler 測試與 wiring pin 涵蓋。）
 
 形狀 M（第 6 列）：同標題、每週六 10:00、共六場的舊系列，用 span `this` 把第二場移到下一個週一 10:00。
 
@@ -1535,7 +1535,7 @@ iCloud 以外的來源、長駐 process（session MCP）上讀到過期的系列
 
 #578 的兩個決定（`CreateRetryIdentity.answeredSeries`、`retitledFirstOccurrence`）是純函式，都建立在 #544 的 `ExclusionRetryTarget.resolve` 上，`createEvent` 的接線由 `CreateRetryIdentityWiringTests` 釘住。
 重試什麼都不寫，是 stateless 的，所以用 `--cli` 做（見上表），不用 AppleScript、不用 session MCP，只在名稱含 `#578` 的拋棄式日曆上做，每種形狀一個日曆。
-**不要用 `create_events_batch` 做裝置格**：batch 的路徑會讀其他行事曆。batch 由 handler 測試與 wiring pin 涵蓋。
+**不要用 `create_events_batch` 做裝置格**：batch 的路徑在 #590 之前會讀其他行事曆（`similar_events` 的搜尋），舊版 binary 都是這樣。batch 由 handler 測試與 wiring pin 涵蓋。
 **每一列的 setup 與第 5 列 X 在 #573 之前會讀其他行事曆**：`update_event` 帶 `occurrence_date`（每個形狀改第一場或某一場都用它），以及第 5 列 X 的帶排除日的 `create_event` 與重試，經 `findOccurrence`／`dayReadings` 查當天。PR #589（#573）已合併，這兩個查詢現在只讀系列物件的日曆（`OccurrenceLookup`），所以用含 #589 的 binary 時，第 1 到 6 列都只讀拋棄式日曆，可以在裝置上跑；含 #589 之前的 binary（例如 `main` 的 `88e5158a`）會讀當天所有行事曆，**不要**拿它在裝置上對照。#573 的前提（來源回報的場次在系列的日曆裡）沒有在裝置上量過，只有 iCloud 上 #426 的結果間接支持，見下一節。
 
 **出 #578 的版本打 tag 之前**，用出版的 binary 重做下面全部的列（第 1 到 6 列）。第 5 列不再拿 #578 之前的 binary 對照：那些 binary 都在 #589 之前，會讀其他行事曆；它們的結果已在 2026-11-24 記在 #578。每一列都是同標題、同開始時間的 `create_event`，前後各 `list_events` 一次（只列那個拋棄式日曆）。
@@ -1567,7 +1567,7 @@ iCloud 以外的來源、長駐 process（session MCP）上讀到過期的系列
 
 依賴而沒量過的前提：來源回報一個場次時，它的日曆就是系列的日曆。iCloud 上把新日曆給一個場次會搬走整個系列（#426，量過）；Google、Exchange 沒有量過。前提不成立時，查不到的場次在 `update_event`、`delete_event`、`delete_events_batch`、`move_events_batch` 回拒絕或該列失敗，什麼都沒寫；但相同的 exclusion retry 會把那天當成已排除而回 `skipped`，`main` 則回 conflict（#182、#534 防的就是這種假 `skipped`）。
 
-**不擋 tag**；有 Google 或 Exchange 帳號時，在該來源名稱含 `#573` 的拋棄式日曆上，用剛 build 的 binary 的 `--cli`。系列一律用 `create_event` 建（不要用 `create_events_batch`：它的 `similar_events` 會讀每個日曆）；每次讀回都用 `list_events` 帶 `calendar_name` 只列這個拋棄式日曆：
+**不擋 tag**；有 Google 或 Exchange 帳號時，在該來源名稱含 `#573` 的拋棄式日曆上，用剛 build 的 binary 的 `--cli`。系列一律用 `create_event` 建（不要用 `create_events_batch`：在 #590 之前的 binary 上，它的 `similar_events` 會讀每個日曆）；每次讀回都用 `list_events` 帶 `calendar_name` 只列這個拋棄式日曆：
 
 1. `create_event` 建每週 3 次的系列 → `delete_event` 用系列 id、span `this`、`occurrence_date` 為第二場：要成功；`list_events`（`calendar_name`）讀回只剩第一、三場。
 2. `create_event` 另建一個系列 → `update_event` 用系列 id、span `this`、`occurrence_date` 為第二場、只改 `title`：要成功；`list_events`（`calendar_name`）讀回只有第二場的標題變了。

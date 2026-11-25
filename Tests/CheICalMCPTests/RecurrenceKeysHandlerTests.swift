@@ -17,7 +17,7 @@ private actor RecurrenceEventFake: EventWriteSource {
         created.append(request)
         return EventCreateValue(event: value(request.title), isDuplicate: false)
     }
-    func similarEventValues(title: String, limit: Int) async throws -> [SimilarEventValue] { [] }
+    func similarEventValues(title: String, calendarIdentifier: String, excluding: Set<String>, limit: Int) async throws -> [SimilarEventValue] { [] }
     func occurrenceDateTimeZone(identifier: String) async throws -> TimeZone? { nil }
 }
 
