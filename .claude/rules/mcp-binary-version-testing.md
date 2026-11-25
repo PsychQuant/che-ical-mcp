@@ -1604,5 +1604,9 @@ create-undo 有狀態（undo stack 在長駐 process 裡），`--cli` 走不到�
 2. `update_event` 用系列 ID、span `all`、`recurrence` 的 `end_date` 為第四個週一的日期：讀回四個場次。
 3. `create_reminder` 帶時間的到期日、每週、`end_date` 只寫日期：`reminder_recurrence_rules[0].end_date` 是那天 23:59:59（主機時區）。
 4. 對照：`end_date` 帶時間（那天 00:00）：存成給的時刻，事件只剩兩個場次。
+5. 第 1 輪的修正（不帶 `timezone` 時用事件存著的時區）：`create_event` 帶 `timezone` America/New_York、每週一 21:00 的系列（臺北已是隔天週二）
+   → `update_event` 用系列 ID、span `all`、`recurrence` 的 `end_date` 只寫日期（第三個週一）、**不帶** `timezone` → `list_events`（`calendar_name`）讀回：
+   第三個週一（紐約）那一場還在，隔天沒有多出一場。主機在 UTC 以東時，再用 Asia/Tokyo 之類比主機更東的時區做一次，同樣要保留最後一天、不多一場。
+   這一步要用 #584 第 1 輪之後的出版 binary（含 37f94bd6 之後的 #589、#592），只在名稱含 `#584` 的拋棄式日曆上做。
 
 結束後依 id 刪掉日曆與清單，隔一分鐘以上數兩次：`list_calendars` 的結果在本機依名稱過濾，只留下數目，名稱含 `#584` 的都是 0。

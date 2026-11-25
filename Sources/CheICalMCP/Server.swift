@@ -403,7 +403,7 @@ class CheICalMCPServer {
                                 ]),
                                 "end_date": .object([
                                     "type": .string("string"),
-                                    "description": .string("When to stop recurring. A date with a time is the instant given; a date only (YYYY-MM-DD) includes that day: it is stored as the day's last second, 23:59:59, in the call's timezone, else the event's own time zone (a floating event, or one clear_timezone makes floating: this Mac's), so that day's occurrence is kept (#584). Giving occurrence_count too is refused.")
+                                    "description": .string("When to stop recurring. A date with a time is the instant given; a date only (YYYY-MM-DD) includes that day: it is stored as the day's last second, 23:59:59, in the call's timezone, else the event's own time zone (through an occurrence's own id, that occurrence's zone, the series' unless set elsewhere; a floating event, or one clear_timezone makes floating: this Mac's), so that day's occurrence is kept (#584). Giving occurrence_count too is refused.")
                                 ]),
                                 "occurrence_count": .object([
                                     "type": .string("integer"),
