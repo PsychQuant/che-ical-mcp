@@ -3929,6 +3929,12 @@ struct RecurrenceRuleInput: Sendable {
     /// `create_events_batch` populate this (parser-level caller gating); EventKit
     /// has no EXDATE, so exclusions execute as post-save occurrence removals.
     let excludedOccurrenceDates: [Date]?
+
+    /// A copy with `endDate` replaced (#584: a date-only end read again in the event's stored zone).
+    func withEndDate(_ endDate: Date?) -> RecurrenceRuleInput {
+        RecurrenceRuleInput(frequency: frequency, interval: interval, endDate: endDate, occurrenceCount: occurrenceCount,
+                            daysOfWeek: daysOfWeek, daysOfMonth: daysOfMonth, excludedOccurrenceDates: excludedOccurrenceDates)
+    }
 }
 
 struct StructuredLocationInput {

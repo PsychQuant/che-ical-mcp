@@ -84,26 +84,72 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
         let fake = FakeEventWriteSource()
         let server = try await CheICalMCPServer(eventWriteSource: fake)
         _ = try await server.executeToolCall(name: "create_events_batch", arguments: [
-            "events": .array([.object(eventArguments("2026-12-14", zone: "Asia/Taipei"))])])
+            "events": .array([.object(eventArguments("2026-12-14", zone: "Asia/Tokyo"))])])
         let creates = await fake.creates
-        XCTAssertEqual(creates.first?.recurrenceRule?.endDate, instant("2026-12-14T23:59:59+08:00"))
+        XCTAssertEqual(creates.first?.recurrenceRule?.endDate, instant("2026-12-14T23:59:59+09:00"))
     }
 
-    func testUpdateEventReadsTheDateInTheEventsZone() async throws {
+    func testUpdateEventReadsTheDateInTheZoneTheCallGives() async throws {
         let fake = FakeEventWriteSource()
         let server = try await CheICalMCPServer(eventWriteSource: fake)
         _ = try await server.executeToolCall(name: "update_event", arguments: [
-            "event_id": .string("series"), "span": .string("all"), "timezone": .string("Asia/Taipei"), "recurrence": weekly("2026-12-14")])
+            "event_id": .string("series"), "span": .string("all"), "timezone": .string("Europe/Berlin"), "recurrence": weekly("2026-12-14")])
         let updates = await fake.updates
-        XCTAssertEqual(updates.first?.recurrenceRule?.endDate, instant("2026-12-14T23:59:59+08:00"))
+        XCTAssertEqual(updates.first?.recurrenceRule?.endDate, instant("2026-12-14T23:59:59+01:00"), "the zone the call gives the event")
+    }
+
+    /// Without `timezone`, `update_event` reads the day in the stored event's zone (the zone
+    /// `occurrence_date` is read in), not this Mac's: a series in New York or in Tokyo, whatever the
+    /// host. Both directions: a zone behind and a zone ahead of any test host.
+    func testUpdateEventWithoutTimezoneReadsTheDateInTheStoredEventsZone() async throws {
+        for (identifier, expected) in [("Pacific/Honolulu", "2026-12-14T23:59:59-10:00"), ("Pacific/Kiritimati", "2026-12-14T23:59:59+14:00")] {
+            let fake = FakeEventWriteSource(occurrenceZone: TimeZone(identifier: identifier))
+            let server = try await CheICalMCPServer(eventWriteSource: fake)
+            _ = try await server.executeToolCall(name: "update_event", arguments: [
+                "event_id": .string("series"), "span": .string("all"), "recurrence": weekly("2026-12-14")])
+            let updates = await fake.updates
+            XCTAssertEqual(updates.first?.recurrenceRule?.endDate, instant(expected), identifier)
+            let lookups = await fake.zoneLookups
+            XCTAssertEqual(lookups, ["series"], identifier)
+        }
+    }
+
+    /// A floating event (no stored zone), and `clear_timezone` (the event becomes floating): this Mac's zone.
+    func testUpdateEventOfAFloatingEventReadsTheDateInThisMacsZone() async throws {
+        let floating = FakeEventWriteSource(occurrenceZone: nil)
+        let server = try await CheICalMCPServer(eventWriteSource: floating)
+        _ = try await server.executeToolCall(name: "update_event", arguments: [
+            "event_id": .string("series"), "span": .string("all"), "recurrence": weekly("2026-12-14")])
+        let updates = await floating.updates
+        XCTAssertEqual(updates.first?.recurrenceRule?.endDate, lastSecond(of: "2026-12-14", in: .current))
+
+        let zoned = FakeEventWriteSource(occurrenceZone: TimeZone(identifier: "Pacific/Kiritimati"))
+        let cleared = try await CheICalMCPServer(eventWriteSource: zoned)
+        _ = try await cleared.executeToolCall(name: "update_event", arguments: [
+            "event_id": .string("series"), "span": .string("all"), "clear_timezone": .bool(true), "recurrence": weekly("2026-12-14")])
+        let clearedUpdates = await zoned.updates
+        XCTAssertEqual(clearedUpdates.first?.recurrenceRule?.endDate, lastSecond(of: "2026-12-14", in: .current), "the event becomes floating")
+    }
+
+    /// The stored zone is looked up only for a date-only end; a date-time end, or a call with
+    /// `timezone`, needs no lookup.
+    func testUpdateEventLooksTheZoneUpOnlyForADateOnlyEnd() async throws {
+        for arguments in [["recurrence": weekly("2026-12-14T10:00:00+08:00")],
+                          ["timezone": .string("Europe/Berlin"), "recurrence": weekly("2026-12-14")]] as [[String: Value]] {
+            let fake = FakeEventWriteSource(occurrenceZone: TimeZone(identifier: "Pacific/Kiritimati"))
+            let server = try await CheICalMCPServer(eventWriteSource: fake)
+            _ = try await server.executeToolCall(name: "update_event", arguments: arguments.merging(["event_id": .string("series"), "span": .string("all")]) { $1 })
+            let lookups = await fake.zoneLookups
+            XCTAssertEqual(lookups, [], "\(arguments)")
+        }
     }
 
     func testAnEventDateTimeEndIsStoredAsGiven() async throws {
         let fake = FakeEventWriteSource()
         let server = try await CheICalMCPServer(eventWriteSource: fake)
-        _ = try await server.executeToolCall(name: "create_event", arguments: eventArguments("2026-12-14T10:00:00", zone: "Asia/Taipei"))
+        _ = try await server.executeToolCall(name: "create_event", arguments: eventArguments("2026-12-14T10:00:00", zone: "Asia/Kolkata"))
         let creates = await fake.creates
-        XCTAssertEqual(creates.first?.recurrenceRule?.endDate, instant("2026-12-14T10:00:00+08:00"), "read in the event's zone, unchanged")
+        XCTAssertEqual(creates.first?.recurrenceRule?.endDate, instant("2026-12-14T10:00:00+05:30"), "read in the event's zone, unchanged")
     }
 
     // MARK: texts
@@ -126,11 +172,17 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
         for name in names {
             let tool = try XCTUnwrap(tools.first { $0.name == name }, name)
             let text = try XCTUnwrap(endDateDescription(tool), "\(name) has no recurrence.end_date description")
-            XCTAssertEqual(text.components(separatedBy: "a date only (YYYY-MM-DD) includes that day").count - 1, 1, "\(name): \(text)")
             XCTAssertFalse(text.contains("stops before that day"), "\(name): \(text)")
-            XCTAssertEqual(text.components(separatedBy: "so that day's occurrence is kept (#584)").count - 1, 1, "\(name): \(text)")
-            let zone = name.hasSuffix("reminder") ? "in this Mac's time zone" : "timezone (else this Mac's)"
-            XCTAssertTrue(text.contains(zone), "\(name): \(text)")
+            if name.hasSuffix("reminder") {
+                // Only what is stored: the reminder side of the end day was not measured.
+                XCTAssertEqual(text.components(separatedBy: "a date only (YYYY-MM-DD) is stored as the last second of that day, 23:59:59, in this Mac's time zone, also when the due date has another zone").count - 1, 1, "\(name): \(text)")
+                XCTAssertFalse(text.contains("is kept (#584)"), "\(name): \(text)")
+            } else {
+                XCTAssertEqual(text.components(separatedBy: "a date only (YYYY-MM-DD) includes that day").count - 1, 1, "\(name): \(text)")
+                XCTAssertEqual(text.components(separatedBy: "so that day's occurrence is kept (#584)").count - 1, 1, "\(name): \(text)")
+                let zone = name == "update_event" ? "in the call's timezone, else the event's own time zone" : "timezone (else this Mac's)"
+                XCTAssertTrue(text.contains(zone), "\(name): \(text)")
+            }
         }
     }
 }

@@ -1605,4 +1605,4 @@ create-undo 有狀態（undo stack 在長駐 process 裡），`--cli` 走不到�
 3. `create_reminder` 帶時間的到期日、每週、`end_date` 只寫日期：`reminder_recurrence_rules[0].end_date` 是那天 23:59:59（主機時區）。
 4. 對照：`end_date` 帶時間（那天 00:00）：存成給的時刻，事件只剩兩個場次。
 
-結束後依 id 刪掉日曆與清單，隔一分鐘以上用名稱過濾的列表數兩次，名稱含 `#584` 的都是 0。
+結束後依 id 刪掉日曆與清單，隔一分鐘以上數兩次：`list_calendars` 的結果在本機依名稱過濾，只留下數目，名稱含 `#584` 的都是 0。

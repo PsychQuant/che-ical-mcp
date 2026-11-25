@@ -8,7 +8,7 @@ How a recurrence end_date given as a date only is stored (#584).
 
 ### Requirement: A date-only recurrence end includes that day
 
-A `recurrence.end_date` given as a date only (`YYYY-MM-DD`) on `create_event`, `create_events_batch`, `update_event`, `create_reminder` or `update_reminder` SHALL be stored as the last instant of that day in the zone it is read in (the event's `timezone` when given, otherwise the host zone): the first instant of the next day minus one second. An occurrence on that day SHALL therefore be in the series at any time of day. A `recurrence.end_date` with a time SHALL be stored as the instant given. A date the parser refuses SHALL stay refused.
+A `recurrence.end_date` given as a date only (`YYYY-MM-DD`) on `create_event`, `create_events_batch`, `update_event`, `create_reminder` or `update_reminder` SHALL be stored as the last instant of that day in the zone it is read in: on `create_event` and `create_events_batch` the event's `timezone` when given, otherwise the host zone; on `update_event` the call's `timezone` when given, otherwise the event's stored zone, and the host zone for a floating event or one `clear_timezone` makes floating; on the reminder tools the host zone, also when the due date carries another zone: the first instant of the next day minus one second. An occurrence on that day SHALL therefore be in the series at any time of day. A `recurrence.end_date` with a time SHALL be stored as the instant given. A date the parser refuses SHALL stay refused.
 
 #### Scenario: A weekly reminder ending on its third Monday
 

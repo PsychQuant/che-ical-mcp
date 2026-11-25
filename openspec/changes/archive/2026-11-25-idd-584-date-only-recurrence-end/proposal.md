@@ -8,7 +8,7 @@ A date-only `recurrence.end_date` (`YYYY-MM-DD`) is stored as 00:00 of that day,
 
 ## Proposed Solution
 
-After the same parse (same refusals, including #546's strict reading on a skipped midnight), a date-only value becomes the last instant of that day in the zone it was read in: the first instant of the next day minus one second. A date-time value is unchanged. This applies to `create_event`, `create_events_batch`, `update_event`, `create_reminder` and `update_reminder`, which share the parser. Decided on #584 (Clarity Surface, 2026-11-23).
+After the same parse (same refusals, including #546's strict reading on a skipped midnight), a date-only value becomes the last instant of that day in the zone it was read in: the first instant of the next day minus one second. A date-time value is unchanged. This applies to `create_event`, `create_events_batch`, `update_event`, `create_reminder` and `update_reminder`, which share the parser. Decided by the maintainer on #584 (Decision comment 7156253185). On `update_event` without `timezone` the day is read in the event's stored zone (PR #596 verify round 1).
 
 ## Non-Goals
 
