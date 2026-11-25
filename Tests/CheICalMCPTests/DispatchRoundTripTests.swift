@@ -1,6 +1,6 @@
 // MARK: - Dispatch round-trip tests (#131 — re-enabled in CI)
 //
-// The two `executeToolCall(...)` tests drive a real `CheICalMCPServer()`, whose
+// Until #575 the two `executeToolCall(...)` tests drove a default `CheICalMCPServer()`, whose
 // handlers call `EventKitManager.shared` (real EventKit). Historically these hung on
 // GHA macos sandboxed runners: with no TCC grants, `AuthorizationGate.ensureAccess`
 // called `requestFullAccess` for `.notDetermined` even in a non-interactive session,
@@ -15,8 +15,10 @@
 // #575: they no longer build the server with its default sources. Where the test process has
 // Calendar and Reminders access, `list_calendars`, `cleanup_completed_reminders` and the other
 // tools that need no argument read the developer's real stores. The server is now built with
-// `DispatchProbe` for every source and a fresh undo history, so no dispatch reaches a live store
-// whatever access the process has, and a handler that is reached shows up in the probe's calls.
+// `DispatchProbe` for every source and a fresh undo history, so no dispatch with these arguments
+// reaches a live store whatever access the process has (`delete_reminder` with a `reminder_id`
+// would: it calls the live manager directly, and no test dispatches it so), and a handler that is
+// reached shows up in the probe's calls.
 
 import XCTest
 import MCP
@@ -94,12 +96,70 @@ final class DispatchRoundTripTests: XCTestCase {
     /// store again.
     func testTheServerHasNoOtherDirectStoreCall() throws {
         let server = SourcePins.code(try SourcePins.source("Server.swift"))
-        XCTAssertEqual(SourcePins.ranges(of: "eventKitManager.", in: server).count, 1)
-        XCTAssertEqual(SourcePins.ranges(of: "EventKitManager.shared.", in: server).count, 0)
+        // PR #601 verify r1: the bare identifier, so a pass-on, an alias or a call across a line break
+        // counts too, in code read with the code inside string interpolation kept (`SourceScan.codeOnly`).
+        let serverCode = SourceScan.codeOnly(try SourcePins.source("Server.swift"))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\beventKitManager\b"#, in: serverCode).count, 2,
+                       "its declaration and the delete_reminder call")
+        XCTAssertEqual(SourcePins.ranges(of: "private let eventKitManager = EventKitManager.shared", in: serverCode).count, 1)
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"EKEventStore\(|CountingEventStore\("#, in: serverCode).count, 0, "no store of its own")
         let handler = try XCTUnwrap(SourcePins.body(of: "private func handleDeleteReminder(arguments: [String: Value]) async throws -> String {", in: server))
         let guardRange = try XCTUnwrap(handler.range(of: "guard let reminderId = arguments["), "string literals are blanked by SourcePins.code")
         let call = try XCTUnwrap(handler.range(of: "try await eventKitManager.deleteReminder(identifier: reminderId)"))
         XCTAssertLessThan(guardRange.lowerBound, call.lowerBound)
+    }
+
+    /// PR #601 verify r1: every source the init defaults to `EventKitManager.shared` is one
+    /// `DispatchProbe.server` replaces, and `EventKitManager.shared` appears in `Server.swift` only
+    /// as those defaults and the `eventKitManager` property: a new source left at its default, or the
+    /// manager passed on or bound to a local, makes this fail. The undo history is passed too.
+    func testTheProbeServerReplacesEverySourceTheInitDefaultsToTheLiveManager() throws {
+        let serverCode = SourceScan.codeOnly(try SourcePins.source("Server.swift"))
+        let initSignature = try XCTUnwrap(SourceScan.arguments(of: "init(reminderCleanupSource:", in: serverCode).map { "reminderCleanupSource:" + $0 })
+        let defaulted = Set(SourcePins.ranges(ofPattern: #"([A-Za-z]+): any [A-Za-z]+ = EventKitManager\.shared"#, in: initSignature)
+            .map { String(initSignature[$0].prefix { $0 != ":" }) })
+        XCTAssertEqual(defaulted.count, 14, "\(defaulted.sorted())")
+        let shared = SourcePins.ranges(of: "EventKitManager.shared", in: serverCode).count
+        XCTAssertEqual(shared, defaulted.count + 1, "the defaults and the eventKitManager property only")
+        XCTAssertTrue(initSignature.contains("undoManager: CalendarUndoManager = .shared"))
+
+        let probe = SourceScan.codeOnly(try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("Helpers/DispatchProbe.swift"), encoding: .utf8))
+        let call = try XCTUnwrap(SourceScan.arguments(of: "try await CheICalMCPServer(", in: probe))
+        let passed = Set(SourcePins.ranges(ofPattern: #"([A-Za-z]+): probe\b"#, in: call).map { String(call[$0].prefix { $0 != ":" }) })
+        XCTAssertEqual(passed, defaulted, "every defaulted source is replaced by the probe")
+        XCTAssertTrue(call.contains("undoManager: CalendarUndoManager()"), "a fresh undo history, not the shared one")
+    }
+
+    /// PR #601 verify r1: outside `EventKitManager.swift` and `Server.swift` (counted above), no Sources
+    /// file reaches the live manager or makes a store in its code, apart from these, which a dispatch
+    /// does not run: the setup flow, the authorization status source, and `NewObjectSave`'s fresh store,
+    /// made only inside the manager after one of its own saves (each an `EKEventStore()`).
+    func testNoOtherSourcesFileReachesTheLiveManagerOrMakesAStore() throws {
+        var found: [String: Int] = [:]
+        for file in try SourceScan.swiftFiles() {
+            let name = file.lastPathComponent
+            guard name != "EventKitManager.swift", name != "Server.swift" else { continue }
+            let code = SourceScan.codeOnly(try String(contentsOf: file, encoding: .utf8))
+            let count = SourcePins.ranges(ofPattern: #"EventKitManager\.shared|EKEventStore\(|CountingEventStore\("#, in: code).count
+            if count > 0 { found[name] = count }
+        }
+        XCTAssertEqual(found, ["SetupRunner.swift": 1, "AuthorizationStatusSource.swift": 1, "NewObjectSave.swift": 1])
+    }
+
+    /// PR #601 verify r1: the one dispatch of `delete_reminder` in the tests is the empty one above, so
+    /// no test reaches its direct live call (`eventKitManager.deleteReminder`).
+    func testNoTestDispatchesDeleteReminderWithAnIdentifier() throws {
+        let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let tool = "delete_" + "reminder"
+        var dispatches: [String] = []
+        for file in try SourceScan.swiftFiles(under: tests) {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            for line in text.split(separator: "\n") where line.contains("name: \"" + tool + "\"") {
+                dispatches.append("\(file.lastPathComponent): \(line.trimmingCharacters(in: .whitespaces))")
+            }
+        }
+        XCTAssertEqual(dispatches, ["DispatchRoundTripTests.swift: _ = try await server.executeToolCall(name: \"" + tool + "\", arguments: [:])"])
     }
 
     /// The same, at run time: `delete_reminder` with no `reminder_id` is refused before the call.
