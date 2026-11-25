@@ -11,6 +11,12 @@
 // #131 RESOLVED: the gate now fast-fails in non-interactive sessions, so these
 // real-server dispatch tests return promptly (handler throws `accessDenied`) instead
 // of hanging. The `-DCI_BUILD` guard is removed and the class runs in CI again.
+//
+// #575: they no longer build the server with its default sources. Where the test process has
+// Calendar and Reminders access, `list_calendars`, `cleanup_completed_reminders` and the other
+// tools that need no argument read the developer's real stores. The server is now built with
+// `DispatchProbe` for every source and a fresh undo history, so no dispatch reaches a live store
+// whatever access the process has, and a handler that is reached shows up in the probe's calls.
 
 import XCTest
 import MCP
@@ -26,16 +32,17 @@ import MCP
 /// Strategy: call `executeToolCall` with empty arguments for every
 /// declared tool. The only failure we care about is
 /// `ToolError.unknownTool`, which proves the name→handler routing is
-/// intact. Any other error (missing required parameter, permission
-/// denied, EventKit access revoked in CI, …) is fine and expected —
-/// those errors prove the dispatch reached a handler.
+/// intact. Any other error (missing required parameter, the probe's
+/// `Reached`, …) is fine and expected — those errors prove the dispatch
+/// reached a handler.
 final class DispatchRoundTripTests: XCTestCase {
 
     func testEveryDeclaredToolIsDispatched() async throws {
         let tools = CheICalMCPServer.defineTools()
         XCTAssertFalse(tools.isEmpty, "defineTools() returned an empty list")
 
-        let server = try await CheICalMCPServer()
+        let probe = DispatchProbe()
+        let server = try await DispatchProbe.server(probe)
         var undispatched: [String] = []
 
         for tool in tools {
@@ -48,9 +55,8 @@ final class DispatchRoundTripTests: XCTestCase {
                 // Any other ToolError is expected — missing required args,
                 // invalid params, etc. Those prove the handler was reached.
             } catch {
-                // Non-ToolError failures (EventKit permission denied in CI,
-                // NSError from Foundation, etc.) also prove dispatch reached
-                // the handler. Not our concern.
+                // Non-ToolError failures (the probe's `Reached`, NSError from
+                // Foundation, etc.) also prove dispatch reached the handler.
             }
         }
 
@@ -58,19 +64,52 @@ final class DispatchRoundTripTests: XCTestCase {
             undispatched.isEmpty,
             "Tools declared in defineTools() but not dispatched in executeToolCall: \(undispatched)"
         )
+        // #575: the tools that need no argument reached the probe, not a live store.
+        let calls = await probe.calls
+        XCTAssertTrue(calls.contains("listCalendarValues"), "list_calendars reached its source: \(calls)")
+        XCTAssertTrue(calls.contains("listCompletedReminderIdentifiers"), "cleanup_completed_reminders reached its source: \(calls)")
     }
 
     /// Specific pin: #21 introduced `cleanup_completed_reminders`. Without
     /// this test, a rename at either site that broke the link would pass
     /// all other tests.
     func testCleanupCompletedRemindersIsDispatched() async throws {
-        let server = try await CheICalMCPServer()
+        let probe = DispatchProbe()
+        let server = try await DispatchProbe.server(probe)
         do {
             _ = try await server.executeToolCall(name: "cleanup_completed_reminders", arguments: [:])
         } catch ToolError.unknownTool(let name) {
             XCTFail("cleanup_completed_reminders is not dispatched; executeToolCall returned unknownTool(\(name))")
         } catch {
-            // Expected — handler runs and throws (permission denied, etc.).
+            // Expected — the handler runs and the probe throws `Reached`.
+        }
+        // #575: its default dry run asked the probe for the completed reminders, not the live store.
+        let calls = await probe.calls
+        XCTAssertEqual(calls, ["listCompletedReminderIdentifiers"])
+    }
+
+    /// #575: the server's one store call that does not go through an injected source is
+    /// `deleteReminder`, behind the `reminder_id` guard, so a dispatch with empty arguments cannot
+    /// reach it. Pinned on the source; a new direct call would make the dispatch tests reach a live
+    /// store again.
+    func testTheServerHasNoOtherDirectStoreCall() throws {
+        let server = SourcePins.code(try SourcePins.source("Server.swift"))
+        XCTAssertEqual(SourcePins.ranges(of: "eventKitManager.", in: server).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "EventKitManager.shared.", in: server).count, 0)
+        let handler = try XCTUnwrap(SourcePins.body(of: "private func handleDeleteReminder(arguments: [String: Value]) async throws -> String {", in: server))
+        let guardRange = try XCTUnwrap(handler.range(of: "guard let reminderId = arguments["), "string literals are blanked by SourcePins.code")
+        let call = try XCTUnwrap(handler.range(of: "try await eventKitManager.deleteReminder(identifier: reminderId)"))
+        XCTAssertLessThan(guardRange.lowerBound, call.lowerBound)
+    }
+
+    /// The same, at run time: `delete_reminder` with no `reminder_id` is refused before the call.
+    func testDeleteReminderWithoutAnIdentifierIsRefusedBeforeTheStore() async throws {
+        let server = try await DispatchProbe.server(DispatchProbe())
+        do {
+            _ = try await server.executeToolCall(name: "delete_reminder", arguments: [:])
+            XCTFail("delete_reminder took no reminder_id")
+        } catch ToolError.invalidParameter(let message) {
+            XCTAssertTrue(message.contains("reminder_id"), message)
         }
     }
 
