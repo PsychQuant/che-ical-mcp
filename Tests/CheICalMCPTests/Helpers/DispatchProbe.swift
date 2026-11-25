@@ -5,14 +5,17 @@ import Foundation
 /// #575: a test double for every store source `CheICalMCPServer` takes. A server built with it reaches
 /// no live Calendar or Reminders store through its sources; the one exception is `delete_reminder`
 /// given a `reminder_id`, which calls the live manager directly (`eventKitManager.deleteReminder`),
-/// so a server built with this double must not be sent that (no test does:
-/// `DispatchRoundTripTests.testNoTestDispatchesDeleteReminderWithAnIdentifier`). Every method records
+/// so a server built with this double must not be sent that (no test line has the literal dispatch:
+/// `DispatchRoundTripTests.testTheOnlyLiteralDeleteReminderDispatchLineInTheTestsIsTheEmptyOne`, a text
+/// check that misses other spellings, #600). Every method records
 /// its name and throws `Reached`: a handler that gets this far proves the dispatch reached it, and
 /// nothing is read or written.
 ///
 /// When the server gains a source protocol, add a conformance here and pass it in `server()`; a
-/// source left at its default reaches `EventKitManager.shared` again
-/// (`DispatchRoundTripTests.testTheProbeServerReplacesEverySourceTheInitDefaultsToTheLiveManager`).
+/// source left at its default reaches `EventKitManager.shared` again. A default written
+/// `label: any Protocol = EventKitManager.shared` and not passed here fails
+/// `DispatchRoundTripTests.testTheProbeServerReplacesEveryInitParameterDefaultedToEventKitManagerShared`;
+/// a default spelled another way does not (#600).
 actor DispatchProbe: EventKitManaging, ReminderReadSource, EventCopySource, EventWriteSource, EventDeletionSource,
     CalendarDeletionSource, CalendarWriteSource, EventBatchDeletionSource, DuplicateSearchSource,
     EventRangeReadSource, CalendarListSource, ReminderWriteSource, ReminderCompletionSource, UndoExecutionSource {
