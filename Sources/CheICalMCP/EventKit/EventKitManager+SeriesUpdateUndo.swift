@@ -76,9 +76,10 @@ extension EventKitManager {
                                   saved: saved, fields: plan.fields, before: plan.before, after: after)
     }
 
-    /// The undo of `.updateSeries`. The #236 guard first: it resolves the series by its identifier,
-    /// refreshes it and compares its fields with the state the update left (its access check is the
-    /// only suspension, before the comparison). From there nothing suspends: the series' identity,
+    /// The undo of `.updateSeries`. An access check first (#600), then the #236 guard: it resolves the
+    /// series by its identifier, refreshes it and compares its fields with the state the update left
+    /// (the two access checks are the only suspensions, both before the comparison). From there
+    /// nothing suspends: the series' identity,
     /// rule, account and exceptions are checked (`SeriesUpdateUndo.refusal`; a refusal keeps the
     /// record), the recorded fields are written back with span "all" in one save (rolled back when
     /// it throws; the record is kept), and the series is read back. A read-back that does not show

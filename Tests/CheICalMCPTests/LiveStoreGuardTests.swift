@@ -76,49 +76,48 @@ final class LiveStoreGuardTests: XCTestCase {
         XCTAssertFalse(code.contains("environment"), "the guard reads no environment variable")
     }
 
-    /// PR #603 verify r1: the one store the tests build (`SharedTestStore.store`, a real
-    /// `CountingEventStore`) is used only to make in-memory items. Outside its own helper and its
-    /// tests, the only members a test calls on it, or on a local bound to it, are `commitCount` and
-    /// one `save` of a reminder that has no list, which EventKit refuses
-    /// (`CalendarEmptinessTests.testTheStoreCountsAWriteThatThrows`); it is otherwise passed only as an
-    /// item's `eventStore:` or a calendar's `for:` store. A text check over the code with comments
-    /// blanked: an alias other than `let x = SharedTestStore.store` is not followed.
-    func testTheSharedTestStoreMakesInMemoryItemsOnly() throws {
-        let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let skipped: Set<String> = ["SharedTestStore.swift", "SharedTestStoreTests.swift", "LiveStoreGuardTests.swift"]
-        var uses: [String] = []
-        for file in try SourceScan.swiftFiles(under: tests) where !skipped.contains(file.lastPathComponent) {
-            // Comments blanked, strings kept (`SourcePins.code` misreads a multi-line string with line
-            // continuations in CalendarEmptinessTests and blanks the rest of that file).
-            let code = SourceScan.codeOnly(try String(contentsOf: file, encoding: .utf8))
-            guard code.contains("SharedTestStore.store") else { continue }
-            // Each alias is followed to the end of the function it is declared in (the next `func`).
-            var scopes: [(name: String, text: Substring)] = [("SharedTestStore.store", code[...])]
-            for range in SourcePins.ranges(ofPattern: #"let\s+\w+\s*(?::\s*\w+\s*)?=\s*SharedTestStore\.store"#, in: code) {
-                let name = String(code[range].dropFirst(4).prefix { $0.isLetter || $0.isNumber || $0 == "_" })
-                let end = code.range(of: "func ", range: range.upperBound..<code.endIndex)?.lowerBound ?? code.endIndex
-                scopes.append((name, code[range.upperBound..<end]))
-            }
-            for (name, text) in scopes {
-                let scope = String(text)
-                let escaped = NSRegularExpression.escapedPattern(for: name)
-                for range in SourcePins.ranges(ofPattern: #"(?<![\w.])"# + escaped + #"\s*\.\s*\w+"#, in: scope) {
-                    let member = scope[range].split(separator: ".").last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-                    uses.append("\(file.lastPathComponent): \(member)")
-                }
-                for range in SourcePins.ranges(ofPattern: #"[(,]\s*(?:\w+\s*:\s*)?"# + escaped + #"\s*[),]"#, in: scope) {
-                    let call = scope[range]
-                    if call.contains("eventStore:") || call.contains("for:") || call.contains("store:") { continue }
-                    uses.append("\(file.lastPathComponent): argument \(call.trimmingCharacters(in: .whitespaces))")
-                }
-            }
+    /// PR #603 verify r2 (was `testTheSharedTestStoreMakesInMemoryItemsOnly`, a text check that
+    /// missed aliases): the store the tests build items on (`SharedTestStore.store`) is a
+    /// `GuardedTestStore`, whose every member that reads, writes, commits or refreshes the store
+    /// checks `LiveStoreGuard` before calling EventKit, so a test that uses it for anything but
+    /// building items stops, whatever it calls it. The commit-count store is checked on use too.
+    func testTheSharedTestStoreChecksEveryStoreMember() throws {
+        let helper = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Helpers/SharedTestStore.swift")
+        let code = SourcePins.code(try String(contentsOf: helper, encoding: .utf8))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"static\s+let\s+store\s*=\s*GuardedTestStore\(\)"#, in: code).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "static var counting: CountingEventStore {\n        LiveStoreGuard.check(", in: code).count, 1)
+        let members = ["override var sources:", "override func source(withIdentifier", "override func calendars(for",
+                       "override func calendar(withIdentifier", "override var defaultCalendarForNewEvents:",
+                       "override func defaultCalendarForNewReminders(", "override func saveCalendar(", "override func removeCalendar(",
+                       "override func calendarItem(withIdentifier", "override func calendarItems(withExternalIdentifier",
+                       "override func save(_ event: EKEvent, span: EKSpan)", "override func save(_ event: EKEvent, span: EKSpan, commit: Bool)",
+                       "override func remove(_ event: EKEvent, span: EKSpan)", "override func remove(_ event: EKEvent, span: EKSpan, commit: Bool)",
+                       "override func event(withIdentifier", "override func events(matching", "override func enumerateEvents(matching",
+                       "override func save(_ reminder: EKReminder", "override func remove(_ reminder: EKReminder",
+                       "override func fetchReminders(matching", "override func commit()", "override func reset()",
+                       "override func refreshSourcesIfNecessary()"]
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\boverride\s+(func|var)\b"#, in: code).count, members.count)
+        for member in members {
+            let start = try XCTUnwrap(code.range(of: member), member)
+            let brace = try XCTUnwrap(code.range(of: "{", range: start.upperBound..<code.endIndex), member)
+            let rest = code[brace.upperBound...].drop { $0.isWhitespace }
+            XCTAssertTrue(rest.hasPrefix("LiveStoreGuard.check("), "\(member) checks first")
         }
-        XCTAssertEqual(uses.sorted(), ["CalendarEmptinessTests.swift: commitCount", "CalendarEmptinessTests.swift: commitCount",
-                                       "CalendarEmptinessTests.swift: save"])
     }
 
-    /// The opt-in is greppable, and no test uses it.
-    func testNoTestOptsIntoTheLiveStore() throws {
+    /// A forTesting manager's store is reached only through the checked `eventStore`: the init sets
+    /// it once, and hands it to the live authorization source only when no probe is given (`shared`).
+    func testTheManagersOwnStoreIsReachedOnlyThroughTheCheckedAccessor() throws {
+        let manager = SourcePins.code(try SourcePins.source("EventKit/EventKitManager.swift"))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bstore\b"#, in: try XCTUnwrap(SourcePins.body(of: "fileprivate init(authorizationSource: AuthorizationStatusSource? = nil,", in: manager))).count, 4,
+                       "made, set as liveEventStore, and `store: store` to LiveAuthorizationStatusSource only when no probe is passed")
+        XCTAssertEqual(SourcePins.ranges(of: "self.authorizationSource = authorizationSource ?? LiveAuthorizationStatusSource(store: store)", in: manager).count, 1)
+    }
+
+    /// The opt-in is greppable, and one test uses it: `CalendarEmptinessTests.testTheStoreCountsAWriteThatThrows`,
+    /// which must call the real `save` to see the commit count move; it saves a reminder with no list,
+    /// which EventKit refuses before writing anything.
+    func testOnlyTheCommitCountTestOptsIntoTheLiveStore() throws {
         let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         var users: [String] = []
         for file in try SourceScan.swiftFiles(under: tests) where file.lastPathComponent != "LiveStoreGuardTests.swift" {
@@ -126,6 +125,6 @@ final class LiveStoreGuardTests: XCTestCase {
                 users.append(file.lastPathComponent)
             }
         }
-        XCTAssertEqual(users, [])
+        XCTAssertEqual(users, ["CalendarEmptinessTests.swift"])
     }
 }

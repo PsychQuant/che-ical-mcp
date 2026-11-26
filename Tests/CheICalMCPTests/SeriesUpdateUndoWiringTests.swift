@@ -3,7 +3,7 @@ import XCTest
 
 /// #263: the production wiring of the whole-series update undo, which writes to the store, so no
 /// unit test runs it: the record site lists the exceptions before the first field is assigned and
-/// again after the save; the undo arm runs the #236 guard (its only suspension) before its own
+/// again after the save; the undo arm runs an access check (#600) and the #236 guard (its only suspensions) before its own
 /// checks, then writes, saves with rollback, and reads back, with no `await` after the guard.
 final class SeriesUpdateUndoWiringTests: XCTestCase {
     private static let manager = "EventKit/EventKitManager.swift"

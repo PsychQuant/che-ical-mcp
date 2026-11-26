@@ -44,7 +44,7 @@ final class SharedTestStoreTests: XCTestCase {
     /// The helper's store is a `static let`: built once, on first use, not per test case.
     func testTheSharedStoreIsAStaticLet() throws {
         let code = try XCTUnwrap(try testFiles().first { $0.name == Self.helper }?.code, Self.helper)
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"static\s+let\s+store\s*=\s*CountingEventStore\(\)"#, in: code).count, 1, code)
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"static\s+let\s+store\s*=\s*GuardedTestStore\(\)"#, in: code).count, 1, code)
     }
 
     /// The pattern catches the spellings a new fixture may use and nothing in a comment or string.

@@ -32,7 +32,8 @@ protocol EventKitManaging: Sendable {
 
 /// EventKit wrapper for Calendar and Reminders operations
 actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionSource {
-    // Internal for same-actor feature extensions; still actor-isolated. It counts its own commits
+    // Internal for the feature extensions, and nonisolated (a `let` behind it, so closures off the
+    // actor read it as they read the `let` before #600). It counts its own commits
     // (`CountingEventStore`, #328).
     /// #600: checked on each use, so under XCTest any manager, `forTesting` ones with a granting probe
     /// included, stops the process before it touches its store (`LiveStoreGuard`).
