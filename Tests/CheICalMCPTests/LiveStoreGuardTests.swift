@@ -76,12 +76,45 @@ final class LiveStoreGuardTests: XCTestCase {
         XCTAssertFalse(code.contains("environment"), "the guard reads no environment variable")
     }
 
-    /// PR #603 verify r1: the one store the tests build for in-memory items has no sources, so a
-    /// lookup, fetch or save through it reaches nothing of the developer's.
-    func testTheSharedTestStoreHasNoSources() {
-        XCTAssertTrue(SharedTestStore.store.sources.isEmpty)
-        XCTAssertTrue(SharedTestStore.store.calendars(for: .event).isEmpty)
-        XCTAssertTrue(SharedTestStore.store.calendars(for: .reminder).isEmpty)
+    /// PR #603 verify r1: the one store the tests build (`SharedTestStore.store`, a real
+    /// `CountingEventStore`) is used only to make in-memory items. Outside its own helper and its
+    /// tests, the only members a test calls on it, or on a local bound to it, are `commitCount` and
+    /// one `save` of a reminder that has no list, which EventKit refuses
+    /// (`CalendarEmptinessTests.testTheStoreCountsAWriteThatThrows`); it is otherwise passed only as an
+    /// item's `eventStore:` or a calendar's `for:` store. A text check over the code with comments
+    /// blanked: an alias other than `let x = SharedTestStore.store` is not followed.
+    func testTheSharedTestStoreMakesInMemoryItemsOnly() throws {
+        let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let skipped: Set<String> = ["SharedTestStore.swift", "SharedTestStoreTests.swift", "LiveStoreGuardTests.swift"]
+        var uses: [String] = []
+        for file in try SourceScan.swiftFiles(under: tests) where !skipped.contains(file.lastPathComponent) {
+            // Comments blanked, strings kept (`SourcePins.code` misreads a multi-line string with line
+            // continuations in CalendarEmptinessTests and blanks the rest of that file).
+            let code = SourceScan.codeOnly(try String(contentsOf: file, encoding: .utf8))
+            guard code.contains("SharedTestStore.store") else { continue }
+            // Each alias is followed to the end of the function it is declared in (the next `func`).
+            var scopes: [(name: String, text: Substring)] = [("SharedTestStore.store", code[...])]
+            for range in SourcePins.ranges(ofPattern: #"let\s+\w+\s*(?::\s*\w+\s*)?=\s*SharedTestStore\.store"#, in: code) {
+                let name = String(code[range].dropFirst(4).prefix { $0.isLetter || $0.isNumber || $0 == "_" })
+                let end = code.range(of: "func ", range: range.upperBound..<code.endIndex)?.lowerBound ?? code.endIndex
+                scopes.append((name, code[range.upperBound..<end]))
+            }
+            for (name, text) in scopes {
+                let scope = String(text)
+                let escaped = NSRegularExpression.escapedPattern(for: name)
+                for range in SourcePins.ranges(ofPattern: #"(?<![\w.])"# + escaped + #"\s*\.\s*\w+"#, in: scope) {
+                    let member = scope[range].split(separator: ".").last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+                    uses.append("\(file.lastPathComponent): \(member)")
+                }
+                for range in SourcePins.ranges(ofPattern: #"[(,]\s*(?:\w+\s*:\s*)?"# + escaped + #"\s*[),]"#, in: scope) {
+                    let call = scope[range]
+                    if call.contains("eventStore:") || call.contains("for:") || call.contains("store:") { continue }
+                    uses.append("\(file.lastPathComponent): argument \(call.trimmingCharacters(in: .whitespaces))")
+                }
+            }
+        }
+        XCTAssertEqual(uses.sorted(), ["CalendarEmptinessTests.swift: commitCount", "CalendarEmptinessTests.swift: commitCount",
+                                       "CalendarEmptinessTests.swift: save"])
     }
 
     /// The opt-in is greppable, and no test uses it.

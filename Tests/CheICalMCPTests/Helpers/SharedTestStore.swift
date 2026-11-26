@@ -15,8 +15,5 @@ import EventKit
 /// It is the server's `CountingEventStore` (#328, PR #413 round 2), so a test of the commit count
 /// uses it too instead of building a second store; it behaves as an `EKEventStore` otherwise.
 enum SharedTestStore {
-    /// #600: built with no sources, so it holds no calendar, list or item of the developer's: a
-    /// fetch, a lookup or a save through it finds nothing and writes nowhere, whatever access the test
-    /// process has. `LiveStoreGuardTests` pins this.
-    static let store = CountingEventStore(sources: [])
+    static let store = CountingEventStore()
 }
