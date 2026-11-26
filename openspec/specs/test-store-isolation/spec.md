@@ -18,7 +18,7 @@ The tests that dispatch every declared tool SHALL build the server with a test d
 ---
 ### Requirement: No test reaches the live store or the shared undo history unless it opts in
 
-Under XCTest, a DEBUG build SHALL stop the test process at each use of `EventKitManager.shared`, `CalendarUndoManager.shared`, `LiveAuthorizationStatusSource` and `SetupRunner.requestBoth`, unless the use runs inside `LiveStoreGuard.allowingLiveStore`. Release builds SHALL carry no check. Tests SHALL build the server with `TestServer.make`, which gives every source they leave out a double and an undo history of the server's own.
+Under XCTest, a DEBUG build SHALL stop the test process at each use of `EventKitManager.shared`, `CalendarUndoManager.shared`, any manager's `eventStore` (`EventKitManager.forTesting` managers included), a new write store, `NewObjectSave`'s fresh store, `LiveAuthorizationStatusSource` and `SetupRunner.requestBoth`, unless the use runs inside `LiveStoreGuard.allowingLiveStore`. Release builds SHALL carry no check. Tests SHALL build the server with `TestServer.make`, which gives every source they leave out a double and an undo history of the server's own.
 
 #### Scenario: A test builds the server with a source left at its default
 

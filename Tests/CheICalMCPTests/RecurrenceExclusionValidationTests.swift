@@ -224,10 +224,11 @@ extension RecurrenceExclusionValidationTests {
     }
 
     /// #184 — absent recurrence keeps returning nil (no behavior change for the
-    /// overwhelmingly common non-recurring path). Reaching the EventKit access
-    /// gate (not a parse error) proves the parser passed.
+    /// overwhelmingly common non-recurring path). Reaching the event-write source
+    /// (not a parse error) proves the parser passed.
     func testAbsentRecurrenceStillAccepted() async throws {
-        let server = try await TestServer.make()
+        let probe = DispatchProbe()
+        let server = try await TestServer.make(filler: probe)
         let result = await server.handleToolCallForTesting(
             name: "create_event",
             arguments: [
@@ -237,11 +238,14 @@ extension RecurrenceExclusionValidationTests {
                 "calendar_name": .string("Work")
             ]
         )
-        // CI has no EventKit access — the call fails at the access gate, NOT at
-        // parseRecurrenceRule. ANY recurrence-related error here = regression
+        // The call fails at the event-write source (a probe that throws; before #600 the live
+        // manager), NOT at parseRecurrenceRule. ANY recurrence-related error here = regression
         // (R2 assertion hardening: "recurrence.frequency" alone would still pass
         // if the new must-be-an-object error misfired on the absent path).
         XCTAssertFalse(errorText(result).contains("recurrence"),
                        "absent recurrence must not enter the parser, got: \(errorText(result))")
+        // PR #603 verify r1: it got past the parser to the event-write source.
+        let calls = await probe.calls
+        XCTAssertEqual(calls, ["createEventValue"])
     }
 }

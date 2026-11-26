@@ -677,7 +677,7 @@ final class NewObjectSaveTests: XCTestCase {
         let code = try code()
         XCTAssertEqual(try matches(#"func freshStoreFinds\( ?_ check: ?\( ?EKEventStore ?\) ?-> ?Found ?\) ?-> ?Found\? ?\{"#, in: code).count, 1)
         let finds = try body(of: "func freshStoreFinds(", in: code)
-        XCTAssertEqual(try matches(#"^\{ ?autoreleasepool ?\{ ?let store = EKEventStore\( ?\) ?return store\.sources\.isEmpty \? nil : check\( ?store ?\) ?\} ?\}$"#,
+        XCTAssertEqual(try matches(#"^\{ ?autoreleasepool ?\{ ?LiveStoreGuard\.check\( ?[^)]*\) ?let store = EKEventStore\( ?\) ?return store\.sources\.isEmpty \? nil : check\( ?store ?\) ?\} ?\}$"#,
                                    in: finds).count, 1, finds)
         // What each site's check looks up in that store, and what it compares the object with.
         let reminderCheck = try body(of: "func reminderCheck(_ reminder: EKReminder) -> (EKEventStore) -> Found", in: code)

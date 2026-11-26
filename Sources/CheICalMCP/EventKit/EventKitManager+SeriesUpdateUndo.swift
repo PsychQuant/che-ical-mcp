@@ -85,6 +85,9 @@ extension EventKitManager {
     /// the state before the update is reported as such and the record discarded; the actor excludes
     /// this server's other calls, not another process's change in between.
     func undoSeriesUpdate(_ operation: UndoOperation, _ record: SeriesUpdateRecord) async throws -> String {
+        // #600: the access check that `verifiedEvent` makes comes first, so the refresh below never
+        // touches the store of a manager without access (the same error as before, a step earlier).
+        try await ensureCalendarAccess()
         // Verify r2: a refresh is requested before the guard and the listing that decide whether to
         // write, as before the two listings of the record site (in the background, not proven current).
         markNeedsRefresh()

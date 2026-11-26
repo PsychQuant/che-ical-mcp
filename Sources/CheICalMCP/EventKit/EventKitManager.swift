@@ -34,9 +34,17 @@ protocol EventKitManaging: Sendable {
 actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionSource {
     // Internal for same-actor feature extensions; still actor-isolated. It counts its own commits
     // (`CountingEventStore`, #328).
-    let eventStore: CountingEventStore
+    /// #600: checked on each use, so under XCTest any manager, `forTesting` ones with a granting probe
+    /// included, stops the process before it touches its store (`LiveStoreGuard`).
+    nonisolated var eventStore: CountingEventStore {
+        LiveStoreGuard.check("EventKitManager.eventStore")
+        return liveEventStore
+    }
+    private let liveEventStore: CountingEventStore
     /// #459: the separate stores existing reminder and list writes commit on (`ExistingReminderSave`).
-    let writeStores = WriteStorePool<EKEventStore>(make: { EKEventStore() }, isUsable: { !$0.sources.isEmpty })
+    /// #600: making one is checked (`LiveStoreGuard`).
+    let writeStores = WriteStorePool<EKEventStore>(make: { LiveStoreGuard.check("EventKitManager.writeStores"); return EKEventStore() },
+                                                   isUsable: { !$0.sources.isEmpty })
     /// #459 / #328: every write attempted on a write store, so `writeGeneration` moves with those
     /// commits too (`onWriteStore` counts each in the same synchronous step as the commit).
     var writeStoreCommits = 0
@@ -79,7 +87,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                      seriesExceptionsStore: (any SeriesExceptionsStoreSource)? = nil,
                      undoHistory: CalendarUndoManager = .shared) {
         let store = CountingEventStore()
-        self.eventStore = store
+        self.liveEventStore = store
         self.authorizationSource = authorizationSource ?? LiveAuthorizationStatusSource(store: store)
         self.seriesExceptionsStoreOverride = seriesExceptionsStore
         self.undoHistory = undoHistory

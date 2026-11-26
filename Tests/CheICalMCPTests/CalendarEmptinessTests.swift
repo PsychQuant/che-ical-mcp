@@ -188,7 +188,7 @@ final class CalendarEmptinessTests: XCTestCase {
     /// the setup's, the authorization default's and `NewObjectSave`'s read-only one.
     func testEveryCommitThroughTheManagersStoreMovesTheGenerationAtOnce() throws {
         let manager = try SourcePins.source("EventKit/EventKitManager.swift")
-        XCTAssertEqual(SourcePins.ranges(of: "let eventStore: CountingEventStore", in: manager).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "private let liveEventStore: CountingEventStore", in: manager).count, 1)   // #600: behind the checked `eventStore`
         XCTAssertEqual(SourcePins.ranges(of: "let store = CountingEventStore()", in: manager).count, 1)
         let generation = try XCTUnwrap(SourcePins.body(of: "var writeGeneration: Int", in: manager))
         XCTAssertEqual(SourcePins.ranges(of: "eventStore.commitCount", in: generation).count, 1)

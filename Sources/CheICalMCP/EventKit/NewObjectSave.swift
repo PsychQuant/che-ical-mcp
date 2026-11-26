@@ -343,6 +343,7 @@ enum NewObjectSave {
     /// the names of fields that differ leave it.
     static func freshStoreFinds(_ check: (EKEventStore) -> Found) -> Found? {
         autoreleasepool {
+            LiveStoreGuard.check("NewObjectSave.freshStoreFinds")   // #600
             let store = EKEventStore()
             return store.sources.isEmpty ? nil : check(store)
         }

@@ -1,9 +1,11 @@
 import Foundation
 
-/// #600: under XCTest, the live EventKit manager (`EventKitManager.shared`) and the process-wide undo
-/// history (`CalendarUndoManager.shared`) stop the test process at first use, unless the test opted in
-/// with `LiveStoreGuard.allowingLiveStore { ... }`. Each use is checked, not only the first, so a test
-/// that runs after another one opted in is checked too.
+/// #600: under XCTest, the live EventKit manager (`EventKitManager.shared`), the process-wide undo
+/// history (`CalendarUndoManager.shared`), any manager's store (`eventStore`, `forTesting` managers
+/// included), a new write store, `NewObjectSave`'s fresh store, `LiveAuthorizationStatusSource` and
+/// `SetupRunner.requestBoth` stop the test process, unless the test opted in with
+/// `LiveStoreGuard.allowingLiveStore { ... }`. Each use is checked, not only the first, so a test that
+/// runs after another one opted in is checked too.
 ///
 /// Tests build the server with doubles for every source and an undo history of their own
 /// (`TestServer.make`); a test that leaves one source at its default, or the undo history at

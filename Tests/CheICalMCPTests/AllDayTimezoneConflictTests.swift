@@ -30,12 +30,12 @@ final class AllDayTimezoneConflictTests: XCTestCase {
     }
 
     func testBatchItemRejectsAllDayWithTimezoneWithoutAbortingSiblings() async throws {
-        let server = try await TestServer.make()
-        // R2 hardening: one violating item + one legal sibling. The sibling's fate
-        // differs by environment (CI: access-gate failure; local: calendar-not-found
-        // or created) but in EVERY environment it must get its OWN result entry whose
-        // error (if any) is NOT the all-day guard — proving the guard is per-item,
-        // not a batch abort.
+        let probe = DispatchProbe()
+        let server = try await TestServer.make(filler: probe)
+        // R2 hardening: one violating item + one legal sibling. The sibling goes on to the
+        // event-write source (here a probe that throws; before #600 the live manager), and it must
+        // get its OWN result entry whose error is NOT the all-day guard — proving the guard is
+        // per-item, not a batch abort. The violating item never reaches the source.
         let result = await server.handleToolCallForTesting(
             name: "create_events_batch",
             arguments: [
@@ -62,13 +62,15 @@ final class AllDayTimezoneConflictTests: XCTestCase {
                       "both items must be processed, got: \(text)")
         XCTAssertTrue(text.contains("floating"),
                       "violating item's error must be the all-day guard, got: \(text)")
-        // The sibling reached past the guard: its index-1 entry exists and its error,
-        // whatever the environment produced, is not the guard message (only one
-        // occurrence of the guard text in the whole envelope).
+        // The sibling reached past the guard: its index-1 entry exists and its error is not the
+        // guard message (only one occurrence of the guard text in the whole envelope).
         XCTAssertEqual(text.components(separatedBy: "floating").count - 1, 1,
                        "guard must fire exactly once (violating item only), got: \(text)")
         XCTAssertTrue(text.contains("\"index\" : 1") || text.contains("\"index\": 1"),
                       "legal sibling must have its own result entry, got: \(text)")
+        // PR #603 verify r1: only the sibling reached the event-write source, once.
+        let calls = await probe.calls
+        XCTAssertEqual(calls.filter { $0 == "createEventValue" }.count, 1, "\(calls)")
     }
 
     func testUpdateEventRejectsAllDayWithTimezone() async throws {
