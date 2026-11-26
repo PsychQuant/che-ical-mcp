@@ -20,6 +20,11 @@
 // would: it calls the live manager directly, and no test dispatches it so), and a handler that is
 // reached shows up in the probe's calls. The source pins below count listed text forms only (see
 // each test); other spellings they do not see are listed on #600.
+//
+// #600: the property is now enforced at run time. Under XCTest, `LiveStoreGuard` stops the test
+// process at each use of `EventKitManager.shared` and `CalendarUndoManager.shared` (and
+// `delete_reminder` with a `reminder_id` reaches `EventKitManager.shared` there), and every test
+// builds its server with `TestServer.make`. The pins below are kept as a second, textual check.
 
 import XCTest
 import MCP
