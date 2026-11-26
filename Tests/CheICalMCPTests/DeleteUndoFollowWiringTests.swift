@@ -115,7 +115,7 @@ final class DeleteUndoFollowWiringTests: XCTestCase {
     /// The production manager moves records in the shared history the server uses.
     func testTheProductionManagerUsesTheSharedHistory() throws {
         let source = try SourcePins.source(Self.manager)
-        assertOnce("static let shared = EventKitManager()", in: source)
+        assertOnce("private static let liveShared = EventKitManager()", in: source)   // #600: behind the checked `shared`
         assertOnce("undoHistory: CalendarUndoManager = .shared) {", in: source)
     }
 

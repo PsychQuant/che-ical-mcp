@@ -38,7 +38,9 @@ func safeDateFromComponents(_ components: DateComponents?) -> Date? {
 class CheICalMCPServer {
     private let server: Server
     private let transport: DrainingStdioTransport
-    private let eventKitManager = EventKitManager.shared
+    /// #600: read on use (only `delete_reminder` with a `reminder_id` uses it), so building a server
+    /// does not reach the live manager; under XCTest that stops the process (`LiveStoreGuard`).
+    private var eventKitManager: EventKitManager { EventKitManager.shared }
     // #31: narrow `EventKitManaging` surface injected at init time so tests
     // can supply `FakeEventKitManager` for the cleanup handler without
     // having to fake the full 30-method EventKitManager surface. Production

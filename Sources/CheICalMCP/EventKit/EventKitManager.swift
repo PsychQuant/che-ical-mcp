@@ -59,7 +59,13 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// baseline and verdict. Outside a stretch it keeps nothing.
     let seriesListings = SeriesListingMemo<([EKEvent], [FirstRemainingOccurrence.Candidate])>()
 
-    static let shared = EventKitManager()
+    /// #600: checked on each use; under XCTest it stops the process unless the test opted in
+    /// (`LiveStoreGuard`).
+    static var shared: EventKitManager {
+        LiveStoreGuard.check("EventKitManager.shared")
+        return liveShared
+    }
+    private static let liveShared = EventKitManager()
 
     /// Singleton invariant: production code MUST go through `EventKitManager.shared`.
     /// Tests inject a mock probe via `EventKitManager.forTesting(probe:)` (DEBUG-only
@@ -84,7 +90,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// that returns `.notDetermined` without prompting). Production callers must use
     /// `EventKitManager.shared` — see fileprivate `init` above for the singleton invariant. (#115)
     static func forTesting(probe: AuthorizationStatusSource) -> EventKitManager {
-        EventKitManager(authorizationSource: probe)
+        // #600: an undo history of its own, not `CalendarUndoManager.shared`.
+        EventKitManager(authorizationSource: probe, undoHistory: CalendarUndoManager())
     }
 
     /// #322: also runs the `.deleteEvent` and `.deleteOccurrence` undo arms (`SeriesExceptionsUndo`,
@@ -92,7 +99,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
     /// sites' capture does not read it: it always runs on the manager's own store.
     static func forTesting(probe: AuthorizationStatusSource,
                            seriesExceptionsStore: any SeriesExceptionsStoreSource) -> EventKitManager {
-        EventKitManager(authorizationSource: probe, seriesExceptionsStore: seriesExceptionsStore)
+        EventKitManager(authorizationSource: probe, seriesExceptionsStore: seriesExceptionsStore,
+                        undoHistory: CalendarUndoManager())
     }
 
     /// #538: also moves older records after a delete-undo in `undoHistory`, the history the test

@@ -335,7 +335,7 @@ final class AllDayStoredDaysTests: XCTestCase {
     func testTheGoogleEventDictUsesTheAllDayZoneBeforeRenderingInAnotherZone() async throws {
         let (zone, start, next) = try gapDay()
         let utc = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let event = FakeFormattableEvent(formatStartDate: start.addingTimeInterval(-3600),
                                          formatEndDate: next.addingTimeInterval(-3601),
                                          formatSourceTimeZone: nil, formatIsAllDay: true)
@@ -352,7 +352,7 @@ final class AllDayStoredDaysTests: XCTestCase {
     func testTheEventDictDefaultsToTheProcessZoneForAllDayDates() async throws {
         let (zone, start, next) = try gapDay()
         let utc = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let rawEnd = start.addingTimeInterval(86_399)
         let event = FakeFormattableEvent(formatStartDate: start, formatEndDate: rawEnd,
                                          formatSourceTimeZone: nil, formatIsAllDay: true)
@@ -368,7 +368,7 @@ final class AllDayStoredDaysTests: XCTestCase {
     // Use the reported Havana transition to pin these exact overlapping shapes.
     func testCanonicalHalifaxAndBogotaPairsKeepTheirOwnDays() async throws {
         let havana = try XCTUnwrap(TimeZone(identifier: "America/Havana"))
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let iso = ISO8601DateFormatter()
         for (identifier, startText, endText) in [
             ("America/Halifax", "2028-03-12T04:00:00Z", "2028-03-13T02:59:59Z"),
@@ -542,7 +542,7 @@ final class AllDayStoredDaysTests: XCTestCase {
     // spec-example: all-day-skipped-midnight / list_events gives that day
     func testTheEventDictGivesThatDay() async throws {
         let (zone, start, next) = try gapDay()
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let day = FlexibleDate.formatter("yyyy-MM-dd", zone: TimeZone(identifier: "UTC")!)
             .string(from: start.addingTimeInterval(TimeInterval(zone.secondsFromGMT(for: start))))
         let iso = ISO8601DateFormatter()
@@ -559,7 +559,7 @@ final class AllDayStoredDaysTests: XCTestCase {
     /// A timed event's dates are printed as EventKit returns them.
     func testATimedEventDictIsUnchanged() async throws {
         let (zone, start, _) = try gapDay()
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let event = FakeFormattableEvent(formatStartDate: start, formatEndDate: start.addingTimeInterval(86_399),
                                          formatSourceTimeZone: zone, formatIsAllDay: false)
         let dict = server.formatEventDict(event, displayTimezone: zone, allDayZone: zone)

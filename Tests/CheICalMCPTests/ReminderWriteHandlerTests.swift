@@ -48,7 +48,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     }
     func testNormalAndDuplicateCreateResponses() async throws {
         let fake = WriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         for (title, action) in [("new", "created"), ("duplicate", "skipped")] {
             let result = try object(await server.executeToolCall(name: "create_reminder", arguments: ["title": .string(title), "tags": .array([.string("tag")])]))
             XCTAssertEqual(result["action"] as? String, action)
@@ -60,7 +60,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     // #261: a save that threw but that a new store found with some fields read back differently
     // succeeds, and the response names those fields (names only).
     func testACreateTheStoreHoldsDifferentlySucceedsAndNamesTheFields() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         let result = try object(await server.executeToolCall(name: "create_reminder", arguments: ["title": .string("differs")]))
         XCTAssertEqual(result["action"] as? String, "created")
         XCTAssertEqual(result["store_differs"] as? [String], ["due", "title"])
@@ -76,7 +76,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     }
     func testUpdateNotesPreservesTagsAndClearTagsPreservesBody() async throws {
         let fake = WriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         _ = try await server.executeToolCall(name: "update_reminder", arguments: ["reminder_id": .string("r"), "notes": .string("replacement")])
         _ = try await server.executeToolCall(name: "update_reminder", arguments: ["reminder_id": .string("r"), "clear_tags": .bool(true)])
         let requests = await fake.updated
@@ -90,7 +90,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
         "title": .string("Office"), "latitude": .double(25.04), "longitude": .double(121.61), "proximity": .string("enter")])
     func testUpdateRefusesALocationTriggerWithClearLocationTrigger() async throws {
         let fake = WriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         do {
             _ = try await server.executeToolCall(name: "update_reminder", arguments: [
                 "reminder_id": .string("r"), "location_trigger": Self.trigger, "clear_location_trigger": .bool(true)])
@@ -110,7 +110,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     }
     func testUpdateRefusesTagsWithClearTags() async throws {
         let fake = WriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         for tags in [Value.array([.string("new")]), .array([])] {
             do {
                 _ = try await server.executeToolCall(name: "update_reminder", arguments: [
@@ -130,7 +130,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     }
     // #268: the response reports the identifier after the save, and says when it changed.
     func testUpdateToAListInAnotherAccountReportsTheNewIdentifier() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "calendar_name": .string("List"), "calendar_source": .string("Other")]))
         XCTAssertEqual(result["id"] as? String, "moved-r")
@@ -138,7 +138,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
         XCTAssertEqual(result["previous_id"] as? String, "r")
     }
     func testUpdateThatKeepsTheIdentifierSaysItDidNotChange() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "title": .string("Renamed")]))
         XCTAssertEqual(result["id"] as? String, "r")
@@ -147,7 +147,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     }
     // #227: the response says what moved with the due date.
     func testUpdateResponseReportsDateSyncWhenTheDueDateMoves() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "due_date": .string("2026-10-08T10:00:00+08:00")]))
         let sync = try XCTUnwrap(result["date_sync"] as? [String: Any])
@@ -156,7 +156,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
         XCTAssertEqual(sync["absolute_alarms_removed"] as? Int, 0)
     }
     func testUpdateResponseReportsRemovedAlarmsWhenTheDueDateIsCleared() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "clear_due_date": .bool(true)]))
         let sync = try XCTUnwrap(result["date_sync"] as? [String: Any])
@@ -164,7 +164,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
         XCTAssertEqual(sync["absolute_alarms_removed"] as? Int, 1)
     }
     func testUpdateResponseOmitsDateSyncWhenTheDueDateIsUntouched() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "title": .string("Renamed")]))
         XCTAssertNil(result["date_sync"])
@@ -172,7 +172,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     // #235: realign_to_due puts the start date and absolute alarms onto the due date.
     func testRealignToDueIsPassedThroughWithTheDueDate() async throws {
         let fake = WriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "due_date": .string("2026-10-08T10:00:00+08:00"), "realign_to_due": .bool(true)]))
         let requests = await fake.updated
@@ -183,7 +183,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     }
     func testRealignToDueAloneReportsDateSync() async throws {
         let fake = WriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "realign_to_due": .bool(true)]))
         let requests = await fake.updated
@@ -195,7 +195,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     /// turns it on. (What realign does to a reminder is pinned in `ReminderUpdateWriteTests`.)
     func testRealignToDueIsOffUnlessTrue() async throws {
         let fake = WriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let due: Value = .string("2026-10-08T10:00:00+08:00")
         for extra: [String: Value] in [[:], ["realign_to_due": .null], ["realign_to_due": .bool(false)], ["realign_to_due": .bool(true)]] {
             _ = try await server.executeToolCall(name: "update_reminder",
@@ -206,7 +206,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     }
     func testRealignToDueWithClearDueDateIsRejectedBeforeAnyWrite() async throws {
         let fake = WriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         do {
             _ = try await server.executeToolCall(name: "update_reminder", arguments: [
                 "reminder_id": .string("r"), "clear_due_date": .bool(true), "realign_to_due": .bool(true)])
@@ -218,7 +218,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty)
     }
     func testBatchCountsDuplicateAndInvalidRows() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         let result = try object(await server.executeToolCall(name: "create_reminders_batch", arguments: ["reminders": .array([.object(["title": .string("new")]), .object(["title": .string("duplicate")]), .object([:])])]))
         XCTAssertEqual(result["total"] as? Int, 3)
         XCTAssertEqual(result["succeeded"] as? Int, 1)
@@ -231,7 +231,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     // A bare date reaches the store as a day on every reminder writer.
     func testABareDueDateIsPassedAsADayOnEveryWriter() async throws {
         let fake = WriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         _ = try await server.executeToolCall(name: "create_reminder", arguments: [
             "title": .string("a"), "due_date": .string("2026-10-18")])
         _ = try await server.executeToolCall(name: "create_reminders_batch", arguments: [
@@ -248,7 +248,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     // Anything with a time is an instant, as before.
     func testADueDateWithATimeIsPassedAsAnInstant() async throws {
         let fake = WriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         _ = try await server.executeToolCall(name: "create_reminder", arguments: [
             "title": .string("a"), "due_date": .string("2026-10-18T09:00:00+08:00")])
         let created = await fake.created
@@ -259,7 +259,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     // A bare date that is not a day is refused as before, before anything is written.
     func testABareDateThatIsNotADayIsRefused() async throws {
         let fake = WriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         do {
             _ = try await server.executeToolCall(name: "create_reminder", arguments: [
                 "title": .string("a"), "due_date": .string("2026-02-30")])
@@ -274,7 +274,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     // PR #298 verify round 1: a date-only update answers with the date_sync of the day write: the
     // removed absolute alarms are counted, nothing is reported as shifted.
     func testADateOnlyUpdateReportsTheRemovedAlarms() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "due_date": .string("2026-10-20")]))
         let sync = try XCTUnwrap(result["date_sync"] as? [String: Any])
@@ -291,7 +291,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     }
 
     func testOnlyADateOnlyUpdateThatRemovedAlarmsCarriesANote() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         for arguments: [String: Value] in [["due_date": .string("2026-10-20T09:00:00+08:00")], ["clear_due_date": .bool(true)], ["title": .string("Renamed")]] {
             let result = try object(await server.executeToolCall(name: "update_reminder", arguments: arguments.merging(["reminder_id": .string("r")]) { $1 }))
             XCTAssertNil(result["note"], "\(arguments)")
@@ -302,7 +302,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     // a bare date was stored as before #267) is still skipped as a duplicate, and says how to make
     // the existing one date-only.
     func testABareDateDuplicateOfATimedReminderSaysHowToMakeItDateOnly() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         let note = "The existing reminder with this title has a time on that day and was left as it is. To make it date-only, call update_reminder with this bare date."
         let single = try object(await server.executeToolCall(name: "create_reminder", arguments: [
             "title": .string("duplicate-timed"), "due_date": .string("2026-10-18")]))
@@ -315,7 +315,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     }
 
     func testOtherDuplicatesCarryNoNote() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         for (title, due) in [("duplicate-timed", "2026-10-18T00:00:00+08:00"), ("duplicate", "2026-10-18")] {
             let result = try object(await server.executeToolCall(name: "create_reminder", arguments: [
                 "title": .string(title), "due_date": .string(due)]))
@@ -332,7 +332,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     // MARK: - #301: a date-only create says whether the saved reminder reads back as asked
 
     func testADateOnlyCreateReportsDateSync() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         for (title, aligned) in [("new", true), ("unconfirmed", false)] {
             let single = try object(await server.executeToolCall(name: "create_reminder", arguments: [
                 "title": .string(title), "due_date": .string("2026-10-18")]))
@@ -355,7 +355,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
 
     /// #308: a timed create returns the report its read-back judged, as a date-only one does.
     func testATimedCreateReportsDateSync() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         for (title, aligned) in [("new", true), ("unconfirmed", false)] {
             let single = try object(await server.executeToolCall(name: "create_reminder", arguments: [
                 "title": .string(title), "due_date": .string("2026-10-18T09:00:00+08:00")]))
@@ -366,7 +366,7 @@ final class ReminderWriteHandlerTests: XCTestCase {
     }
 
     func testADuplicateOrUndatedCreateCarriesNoDateSync() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: WriteFake())
+        let server = try await TestServer.make(reminderWriteSource: WriteFake())
         for (title, due) in [("duplicate-timed", "2026-10-18T09:00:00+08:00"), ("duplicate", "2026-10-18"), ("new", nil)] as [(String, String?)] {
             var args: [String: Value] = ["title": .string(title)]
             if let due { args["due_date"] = .string(due) }

@@ -53,7 +53,7 @@ final class ArgumentRangeHandlerTests: XCTestCase {
 
     func testALocationTriggerRadiusOfZeroOrLessIsRefused() async throws {
         let source = RecordingReminderSource()
-        let server = try await CheICalMCPServer(reminderWriteSource: source)
+        let server = try await TestServer.make(reminderWriteSource: source)
         for radius in ["0", "-5", "-0.5"] {
             let inner = #""latitude": 25, "longitude": 121, "proximity": "enter", "radius": \#(radius)"#
             for (tool, head) in [("create_reminder", #""title": "t""#), ("update_reminder", #""reminder_id": "r""#)] {
@@ -69,7 +69,7 @@ final class ArgumentRangeHandlerTests: XCTestCase {
 
     func testALocationTriggerProximityOtherThanEnterOrLeaveIsRefused() async throws {
         let source = RecordingReminderSource()
-        let server = try await CheICalMCPServer(reminderWriteSource: source)
+        let server = try await TestServer.make(reminderWriteSource: source)
         let given = [#", "proximity": "Leave""#, #", "proximity": "exit""#, #", "proximity": """#, ""]
         for proximity in given {
             let inner = #""latitude": 25, "longitude": 121\#(proximity)"#
@@ -87,7 +87,7 @@ final class ArgumentRangeHandlerTests: XCTestCase {
 
     func testALocationTriggerTakesEnterAndLeave() async throws {
         let source = RecordingReminderSource()
-        let server = try await CheICalMCPServer(reminderWriteSource: source)
+        let server = try await TestServer.make(reminderWriteSource: source)
         for proximity in ["enter", "leave"] {
             let inner = #""latitude": 25, "longitude": 121, "proximity": "\#(proximity)""#
             _ = try await server.executeToolCall(name: "create_reminder", arguments: decoded(#"{"title": "t", \#(trigger(inner))}"#))
@@ -106,7 +106,7 @@ final class ArgumentRangeHandlerTests: XCTestCase {
     private func assertEveryEventToolRefuses(_ inner: String, saying expected: String,
                                              file: StaticString = #filePath, line: UInt = #line) async throws {
         let source = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: source)
+        let server = try await TestServer.make(eventWriteSource: source)
         for (tool, json) in [("create_event", #"{"title": "t", \#(start), \#(place(inner))}"#),
                              ("update_event", #"{"event_id": "e", \#(place(inner))}"#)] {
             let message = try await refusal(server, tool, json, file: file, line: line)
@@ -147,7 +147,7 @@ final class ArgumentRangeHandlerTests: XCTestCase {
                                         (#""latitude": 25, "longitude": -200"#, longitude)] {
             try await assertEveryEventToolRefuses(", \(coordinates)", saying: "structured_location.\(expected)")
             let source = RecordingReminderSource()
-            let server = try await CheICalMCPServer(reminderWriteSource: source)
+            let server = try await TestServer.make(reminderWriteSource: source)
             for (tool, head) in [("create_reminder", #""title": "t""#), ("update_reminder", #""reminder_id": "r""#)] {
                 let message = try await refusal(server, tool, "{\(head), \(trigger(coordinates + #", "proximity": "enter""#))}")
                 XCTAssertTrue(message.contains("location_trigger.\(expected)"), "\(tool) \(coordinates): \(message)")
@@ -162,7 +162,7 @@ final class ArgumentRangeHandlerTests: XCTestCase {
     func testCoordinatesOnTheBoundsAreTaken() async throws {
         let events = FakeEventWriteSource()
         let reminders = RecordingReminderSource()
-        let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
+        let server = try await TestServer.make(eventWriteSource: events, reminderWriteSource: reminders)
         for coordinates in [#""latitude": 90, "longitude": -180"#, #""latitude": -90, "longitude": 180"#] {
             _ = try await server.executeToolCall(name: "create_event", arguments: decoded(#"{"title": "t", \#(start), \#(place(", " + coordinates))}"#))
             _ = try await server.executeToolCall(name: "create_reminder", arguments: decoded(
@@ -178,7 +178,7 @@ final class ArgumentRangeHandlerTests: XCTestCase {
 
     func testAPriorityOutsideZeroToNineIsRefused() async throws {
         let source = RecordingReminderSource()
-        let server = try await CheICalMCPServer(reminderWriteSource: source)
+        let server = try await TestServer.make(reminderWriteSource: source)
         for priority in ["10", "-1", "100"] {
             for (tool, head) in [("create_reminder", #""title": "t""#), ("update_reminder", #""reminder_id": "r""#)] {
                 let message = try await refusal(server, tool, #"{\#(head), "priority": \#(priority)}"#)
@@ -192,7 +192,7 @@ final class ArgumentRangeHandlerTests: XCTestCase {
 
     func testABatchRowWithAPriorityOutsideZeroToNineFailsAlone() async throws {
         let source = RecordingReminderSource()
-        let server = try await CheICalMCPServer(reminderWriteSource: source)
+        let server = try await TestServer.make(reminderWriteSource: source)
         let batch = try object(await server.executeToolCall(name: "create_reminders_batch", arguments: decoded(
             #"{"reminders": [{"title": "low", "priority": 9}, {"title": "bad", "priority": 10}, {"title": "none", "priority": 0}]}"#)))
         let rows = try XCTUnwrap(batch["results"] as? [[String: Any]])
@@ -207,7 +207,7 @@ final class ArgumentRangeHandlerTests: XCTestCase {
     /// "Omit or JSON null = default", as update_reminder already read it.
     func testANullPriorityIsOmittedOnAllThreeTools() async throws {
         let source = RecordingReminderSource()
-        let server = try await CheICalMCPServer(reminderWriteSource: source)
+        let server = try await TestServer.make(reminderWriteSource: source)
         _ = try await server.executeToolCall(name: "create_reminder", arguments: decoded(#"{"title": "one", "priority": null}"#))
         let batch = try object(await server.executeToolCall(name: "create_reminders_batch", arguments: decoded(
             #"{"reminders": [{"title": "row", "priority": null}]}"#)))
@@ -224,7 +224,7 @@ final class ArgumentRangeHandlerTests: XCTestCase {
 
     func testADataURLElementInAStringArrayIsExplained() async throws {
         let source = RecordingReminderSource()
-        let server = try await CheICalMCPServer(reminderWriteSource: source)
+        let server = try await TestServer.make(reminderWriteSource: source)
         let arguments = try decoded(#"{"title": "t", "tags": ["a", "data: 12 subjects, 3 dropped"]}"#)
         XCTAssertNil(arguments["tags"]?.arrayValue?.last?.stringValue, "the SDK's reading, which this test depends on")
         do {

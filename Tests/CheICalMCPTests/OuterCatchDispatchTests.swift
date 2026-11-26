@@ -12,7 +12,7 @@ import XCTest
 final class OuterCatchDispatchTests: XCTestCase {
 
     func testOuterCatchToolErrorReturnsTrustedMessage() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
 
         let result = await server.handleToolCallForTesting(
             name: "definitely_not_a_real_tool",
@@ -40,7 +40,7 @@ final class OuterCatchDispatchTests: XCTestCase {
                 userInfo: [NSLocalizedDescriptionKey: "Apple-produced text that must not leak"]
             )
         )
-        let server = try await CheICalMCPServer(reminderCleanupSource: fake)
+        let server = try await TestServer.make(reminderCleanupSource: fake)
 
         let result = await server.handleToolCallForTesting(
             name: "cleanup_completed_reminders",

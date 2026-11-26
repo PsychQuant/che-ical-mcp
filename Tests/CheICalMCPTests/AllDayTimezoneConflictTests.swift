@@ -3,7 +3,7 @@ import MCP
 @testable import CheICalMCP
 
 /// #190 — all_day + timezone must be rejected, not silently degraded to a timed
-/// event. All cases fail at the handler guard BEFORE any EventKit call (CI-safe).
+/// event. The conflict cases fail at the handler guard before any store call (CI-safe).
 final class AllDayTimezoneConflictTests: XCTestCase {
 
     private func errorText(_ result: CallTool.Result) -> String {
@@ -12,7 +12,7 @@ final class AllDayTimezoneConflictTests: XCTestCase {
     }
 
     func testCreateEventRejectsAllDayWithTimezone() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let result = await server.handleToolCallForTesting(
             name: "create_event",
             arguments: [
@@ -30,7 +30,7 @@ final class AllDayTimezoneConflictTests: XCTestCase {
     }
 
     func testBatchItemRejectsAllDayWithTimezoneWithoutAbortingSiblings() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         // R2 hardening: one violating item + one legal sibling. The sibling's fate
         // differs by environment (CI: access-gate failure; local: calendar-not-found
         // or created) but in EVERY environment it must get its OWN result entry whose
@@ -72,7 +72,7 @@ final class AllDayTimezoneConflictTests: XCTestCase {
     }
 
     func testUpdateEventRejectsAllDayWithTimezone() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let result = await server.handleToolCallForTesting(
             name: "update_event",
             arguments: [
@@ -88,7 +88,8 @@ final class AllDayTimezoneConflictTests: XCTestCase {
     /// all_day without timezone stays legal (the #186 control group) — must not
     /// hit the new guard (CI fails later at the EventKit access gate instead).
     func testAllDayWithoutTimezoneNotBlocked() async throws {
-        let server = try await CheICalMCPServer()
+        let probe = DispatchProbe()
+        let server = try await TestServer.make(filler: probe)
         let result = await server.handleToolCallForTesting(
             name: "create_event",
             arguments: [
@@ -99,13 +100,14 @@ final class AllDayTimezoneConflictTests: XCTestCase {
                 "calendar_name": .string("Work")
             ]
         )
-        // R2 hardening: not-the-guard AND it reached the EventKit layer — the
-        // failure (in any environment) is access-gate or calendar-resolution,
-        // never the #190 conflict guard.
+        // R2 hardening: not-the-guard AND it reached the store layer, never the #190 conflict
+        // guard. #600: the store layer is the event-write source, here a probe; before #600 it was
+        // the live manager, which on a host with access looked the calendar up in the real store.
         let text = errorText(result)
         XCTAssertFalse(text.contains("floating"),
                        "pure all-day must not trip the conflict guard, got: \(text)")
-        XCTAssertTrue(text.contains("Calendar") || text.contains("access") || text.contains("denied"),
-                      "pure all-day must reach the EventKit layer (calendar/access error), got: \(text)")
+        let calls = await probe.calls
+        XCTAssertEqual(calls, ["createEventValue"],
+                       "pure all-day must reach the event-write source, got: \(text)")
     }
 }

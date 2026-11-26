@@ -26,7 +26,7 @@ final class DuplicateCalendarsHandlerTests: XCTestCase {
     private let range: [String: Value] = ["start_date": .string("2026-01-01"), "end_date": .string("2026-12-31")]
 
     private func call(_ fake: DuplicateSearchFake, _ extra: [String: Value] = [:]) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(duplicateSearchSource: fake)
+        let server = try await TestServer.make(duplicateSearchSource: fake)
         let raw = try await server.executeToolCall(name: "find_duplicate_events", arguments: range.merging(extra) { $1 })
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }
@@ -128,7 +128,7 @@ final class DuplicateCalendarsHandlerTests: XCTestCase {
     func testARefusalReachesTheCaller() async throws {
         for (error, phrase) in [(EventKitError.tooFewCalendarsToCompare(found: 1, canNameMore: true), "at least two"),
                                 (EventKitError.calendarNotFound(identifier: "missing"), "missing")] as [(Error, String)] {
-            let server = try await CheICalMCPServer(duplicateSearchSource: DuplicateSearchFake(error: error))
+            let server = try await TestServer.make(duplicateSearchSource: DuplicateSearchFake(error: error))
             let result = await server.handleToolCallForTesting(name: "find_duplicate_events", arguments: range)
             XCTAssertEqual(result.isError, true)
             guard case .text(let text, _, _)? = result.content.first else { return XCTFail() }
@@ -142,7 +142,7 @@ final class DuplicateCalendarsHandlerTests: XCTestCase {
         let bound = EventRangeQuery.RangeError.tooManyEvents(limit: EventRangeQuery.maxEventsRead, from: base,
                                                              to: base.addingTimeInterval(86_400 * 36_500),
                                                              readThrough: base.addingTimeInterval(86_400 * 1460))
-        let server = try await CheICalMCPServer(duplicateSearchSource: DuplicateSearchFake(error: bound))
+        let server = try await TestServer.make(duplicateSearchSource: DuplicateSearchFake(error: bound))
         do {
             _ = try await server.executeToolCall(name: "find_duplicate_events", arguments: range)
             XCTFail("expected the read bound")

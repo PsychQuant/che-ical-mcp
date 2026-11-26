@@ -23,7 +23,7 @@ final class DeleteUndoHandlerTests: XCTestCase {
     }
 
     private func undo(with history: CalendarUndoManager) async throws -> CallTool.Result {
-        let server = try await CheICalMCPServer(undoManager: history,
+        let server = try await TestServer.make(undoManager: history,
                                                 undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe()))
         return await server.handleToolCallForTesting(name: "undo", arguments: [:])
     }

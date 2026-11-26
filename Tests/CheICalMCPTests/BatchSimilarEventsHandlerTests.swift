@@ -53,7 +53,7 @@ final class BatchSimilarEventsHandlerTests: XCTestCase {
     }
 
     private func run(_ rows: [Value], on fake: CountingSimilarSearches) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         let raw = try await server.executeToolCall(name: "create_events_batch", arguments: ["events": .array(rows)])
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }
@@ -129,7 +129,7 @@ final class BatchSimilarEventsHandlerTests: XCTestCase {
     /// A saved event without a calendar identifier is not searched (no calendar to confine it to).
     func testARowWhoseSavedEventHasNoCalendarIsNotSearched() async throws {
         let fake = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         let raw = try await server.executeToolCall(name: "create_events_batch", arguments: ["events": .array([row("Standup", calendar: "A")])])
         let response = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         let rows = try XCTUnwrap(response["results"] as? [[String: Any]])

@@ -49,7 +49,7 @@ final class RedoInstructionHandlerTests: XCTestCase {
             let history = CalendarUndoManager()
             await history.record(operation)
             let executor = SpyExecutor()
-            let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+            let server = try await TestServer.make(undoManager: history, undoExecutionSource: executor)
             let undo = try json(await server.handleToolCallForTesting(name: "undo", arguments: [:]))
             XCTAssertEqual(undo["success"] as? Bool, true, operation.description)
             let before = await history.historySnapshot()
@@ -94,7 +94,7 @@ final class RedoInstructionHandlerTests: XCTestCase {
         await history.record(.completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil,
                                                title: "Pay rent", redoCompletionDate: nil, wasRecurring: false))
         let executor = SpyExecutor()
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: executor)
         _ = await server.handleToolCallForTesting(name: "undo", arguments: [:])   // the completion
         _ = await server.handleToolCallForTesting(name: "undo", arguments: [:])   // the delete, now on top of redo
 
@@ -119,7 +119,7 @@ final class RedoInstructionHandlerTests: XCTestCase {
         await history.record(.completeReminder(id: "r", wasCompleted: false, requestedCompleted: true, completionDate: nil,
                                                title: "Pay rent", redoCompletionDate: nil, wasRecurring: false))
         let executor = SpyExecutor()
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: executor)
         _ = await server.handleToolCallForTesting(name: "undo", arguments: [:])
 
         let redo = try json(await server.handleToolCallForTesting(name: "redo", arguments: [:]))
@@ -138,7 +138,7 @@ final class RedoInstructionHandlerTests: XCTestCase {
     func testNothingToRedoReportsTheCountsToo() async throws {
         let history = CalendarUndoManager()
         await history.record(.deleteEvent(id: "", snapshot: UndoSnapshotFixtures.event(title: "Standup")))
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: SpyExecutor())
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: SpyExecutor())
 
         let redo = try json(await server.handleToolCallForTesting(name: "redo", arguments: [:]))
 

@@ -39,7 +39,7 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
 
     func testCreateReminderStoresADateOnlyEndAsTheLastSecondOfThatDay() async throws {
         let fake = RecordingReminderWrites()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         _ = try await server.executeToolCall(name: "create_reminder", arguments: [
             "title": .string("Report"), "due_date": .string("2026-11-30T10:00:00+08:00"), "recurrence": weekly("2026-12-14")])
         let rules = await fake.rules
@@ -48,7 +48,7 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
 
     func testUpdateReminderStoresADateOnlyEndAsTheLastSecondOfThatDay() async throws {
         let fake = RecordingReminderWrites()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         _ = try await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "recurrence": weekly("2026-12-14")])
         let rules = await fake.rules
@@ -57,7 +57,7 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
 
     func testADateTimeEndIsStoredAsGiven() async throws {
         let fake = RecordingReminderWrites()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         _ = try await server.executeToolCall(name: "create_reminder", arguments: [
             "title": .string("Report"), "due_date": .string("2026-11-30T10:00:00+08:00"),
             "recurrence": weekly("2026-12-14T00:00:00+08:00")])
@@ -74,7 +74,7 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
 
     func testCreateEventReadsTheDateInTheEventsZone() async throws {
         let fake = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         _ = try await server.executeToolCall(name: "create_event", arguments: eventArguments("2026-12-14", zone: "America/New_York"))
         let creates = await fake.creates
         XCTAssertEqual(creates.first?.recurrenceRule?.endDate, instant("2026-12-14T23:59:59-05:00"))
@@ -82,7 +82,7 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
 
     func testCreateEventsBatchReadsTheDateInTheRowsZone() async throws {
         let fake = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         _ = try await server.executeToolCall(name: "create_events_batch", arguments: [
             "events": .array([.object(eventArguments("2026-12-14", zone: "Asia/Tokyo"))])])
         let creates = await fake.creates
@@ -91,7 +91,7 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
 
     func testUpdateEventReadsTheDateInTheZoneTheCallGives() async throws {
         let fake = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         _ = try await server.executeToolCall(name: "update_event", arguments: [
             "event_id": .string("series"), "span": .string("all"), "timezone": .string("Europe/Berlin"), "recurrence": weekly("2026-12-14")])
         let updates = await fake.updates
@@ -104,7 +104,7 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
     func testUpdateEventWithoutTimezoneReadsTheDateInTheStoredEventsZone() async throws {
         for (identifier, expected) in [("Pacific/Honolulu", "2026-12-14T23:59:59-10:00"), ("Pacific/Kiritimati", "2026-12-14T23:59:59+14:00")] {
             let fake = FakeEventWriteSource(occurrenceZone: TimeZone(identifier: identifier))
-            let server = try await CheICalMCPServer(eventWriteSource: fake)
+            let server = try await TestServer.make(eventWriteSource: fake)
             _ = try await server.executeToolCall(name: "update_event", arguments: [
                 "event_id": .string("series"), "span": .string("all"), "recurrence": weekly("2026-12-14")])
             let updates = await fake.updates
@@ -117,14 +117,14 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
     /// A floating event (no stored zone), and `clear_timezone` (the event becomes floating): this Mac's zone.
     func testUpdateEventOfAFloatingEventReadsTheDateInThisMacsZone() async throws {
         let floating = FakeEventWriteSource(occurrenceZone: nil)
-        let server = try await CheICalMCPServer(eventWriteSource: floating)
+        let server = try await TestServer.make(eventWriteSource: floating)
         _ = try await server.executeToolCall(name: "update_event", arguments: [
             "event_id": .string("series"), "span": .string("all"), "recurrence": weekly("2026-12-14")])
         let updates = await floating.updates
         XCTAssertEqual(updates.first?.recurrenceRule?.endDate, lastSecond(of: "2026-12-14", in: .current))
 
         let zoned = FakeEventWriteSource(occurrenceZone: TimeZone(identifier: "Pacific/Kiritimati"))
-        let cleared = try await CheICalMCPServer(eventWriteSource: zoned)
+        let cleared = try await TestServer.make(eventWriteSource: zoned)
         _ = try await cleared.executeToolCall(name: "update_event", arguments: [
             "event_id": .string("series"), "span": .string("all"), "clear_timezone": .bool(true), "recurrence": weekly("2026-12-14")])
         let clearedUpdates = await zoned.updates
@@ -137,7 +137,7 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
         for arguments in [["recurrence": weekly("2026-12-14T10:00:00+08:00")],
                           ["timezone": .string("Europe/Berlin"), "recurrence": weekly("2026-12-14")]] as [[String: Value]] {
             let fake = FakeEventWriteSource(occurrenceZone: TimeZone(identifier: "Pacific/Kiritimati"))
-            let server = try await CheICalMCPServer(eventWriteSource: fake)
+            let server = try await TestServer.make(eventWriteSource: fake)
             _ = try await server.executeToolCall(name: "update_event", arguments: arguments.merging(["event_id": .string("series"), "span": .string("all")]) { $1 })
             let lookups = await fake.zoneLookups
             XCTAssertEqual(lookups, [], "\(arguments)")
@@ -146,7 +146,7 @@ final class RecurrenceEndDateHandlerTests: XCTestCase {
 
     func testAnEventDateTimeEndIsStoredAsGiven() async throws {
         let fake = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         _ = try await server.executeToolCall(name: "create_event", arguments: eventArguments("2026-12-14T10:00:00", zone: "Asia/Kolkata"))
         let creates = await fake.creates
         XCTAssertEqual(creates.first?.recurrenceRule?.endDate, instant("2026-12-14T10:00:00+05:30"), "read in the event's zone, unchanged")

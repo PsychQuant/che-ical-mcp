@@ -37,7 +37,7 @@ final class ExclusionRetryTargetHandlerTests: XCTestCase {
     }
 
     func testCreateEventAnswersTheSeriesIdentifier() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: SkippingWrites())
+        let server = try await TestServer.make(eventWriteSource: SkippingWrites())
         guard case .object(let arguments) = item("retry") else { return XCTFail("item") }
         let answer = try object(try await server.executeToolCall(name: "create_event", arguments: arguments))
         XCTAssertEqual(answer["action"] as? String, "skipped")
@@ -45,7 +45,7 @@ final class ExclusionRetryTargetHandlerTests: XCTestCase {
     }
 
     func testABatchRowAnswersTheSeriesIdentifier() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: SkippingWrites())
+        let server = try await TestServer.make(eventWriteSource: SkippingWrites())
         let raw = try await server.executeToolCall(name: "create_events_batch", arguments: ["events": .array([item("retry"), item("one-off")])])
         let rows = try XCTUnwrap(try object(raw)["results"] as? [[String: Any]])
         XCTAssertEqual(rows.map { $0["event_id"] as? String }, [seriesID, "ONE"])
@@ -54,7 +54,7 @@ final class ExclusionRetryTargetHandlerTests: XCTestCase {
 
     /// Without a series identifier the answer is the matched event's, as before.
     func testWithoutASeriesIdentifierTheMatchIsAnswered() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: SkippingWrites())
+        let server = try await TestServer.make(eventWriteSource: SkippingWrites())
         guard case .object(let arguments) = item("one-off") else { return XCTFail("item") }
         let answer = try object(try await server.executeToolCall(name: "create_event", arguments: arguments))
         XCTAssertEqual(answer["id"] as? String, "ONE")

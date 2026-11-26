@@ -38,7 +38,7 @@ final class BooleanArgumentContractTests: XCTestCase {
     private let badValues: [Value] = [.string("true"), .string("false"), .int(1), .double(0)]
 
     private func server(_ read: CountingReadFake) async throws -> CheICalMCPServer {
-        try await CheICalMCPServer(reminderCleanupSource: FakeEventKitManager(), reminderReadSource: read)
+        try await TestServer.make(reminderCleanupSource: FakeEventKitManager(), reminderReadSource: read)
     }
 
     func testNonBooleanValuesAreRejectedByKeyBeforeAnyReadOrWrite() async throws {

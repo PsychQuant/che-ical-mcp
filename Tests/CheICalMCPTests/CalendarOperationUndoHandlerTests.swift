@@ -29,7 +29,7 @@ final class CalendarOperationUndoHandlerTests: XCTestCase {
         await history.record(.calendarOperation(kind: .created, title: "Scratch"))
         await history.record(.calendarOperation(kind: .updated, title: "Scratch"))
         await history.record(.calendarOperation(kind: .deleted, title: "Scratch"))
-        let server = try await CheICalMCPServer(undoManager: history,
+        let server = try await TestServer.make(undoManager: history,
                                                 undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe()))
 
         let steps: [(prefix: String, remaining: [String])] = [

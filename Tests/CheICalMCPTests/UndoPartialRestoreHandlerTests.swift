@@ -67,7 +67,7 @@ final class UndoPartialRestoreHandlerTests: XCTestCase {
         let snapshot = await history.historySnapshot()
         let id = try XCTUnwrap(snapshot.entries.first?.id)
         let executor = PartialRestoreExecutor(answers)
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: executor)
         return (history, executor, server, id)
     }
 
@@ -156,7 +156,7 @@ final class UndoPartialRestoreHandlerTests: XCTestCase {
         let history = CalendarUndoManager()
         await history.record(.batch(["A", "B", "C"].map(deleted)))
         let executor = PartialRestoreExecutor([.failure(kept([deleted("B")]))])
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: executor)
 
         let result = await server.handleToolCallForTesting(name: "undo", arguments: ["restore_available": .bool(true)])
 

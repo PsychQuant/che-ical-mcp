@@ -44,7 +44,7 @@ final class DeleteUndoFollowHandlerTests: XCTestCase {
     }
 
     private func undo(_ history: CalendarUndoManager, on store: FakeSeriesExceptionsStore) async throws -> CallTool.Result {
-        let server = try await CheICalMCPServer(
+        let server = try await TestServer.make(
             undoManager: history,
             undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe(), seriesExceptionsStore: store, undoHistory: history))
         return await server.handleToolCallForTesting(name: "undo", arguments: [:])
@@ -52,7 +52,7 @@ final class DeleteUndoFollowHandlerTests: XCTestCase {
 
     private func undo(_ history: CalendarUndoManager, source: any UndoExecutionSource,
                       arguments: [String: Value] = [:]) async throws -> CallTool.Result {
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: source)
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: source)
         return await server.handleToolCallForTesting(name: "undo", arguments: arguments)
     }
 

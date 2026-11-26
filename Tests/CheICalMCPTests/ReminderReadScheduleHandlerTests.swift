@@ -23,7 +23,7 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
     }
 
     private func item(_ tool: String, _ args: [String: Value], _ snapshot: ReminderReadSnapshot) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(reminderReadSource: ReminderScheduleFake([snapshot]))
+        let server = try await TestServer.make(reminderReadSource: ReminderScheduleFake([snapshot]))
         let raw = try await server.executeToolCall(name: tool, arguments: args)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any], tool)
         return try XCTUnwrap((json["reminders"] as? [[String: Any]])?.first, tool)
@@ -183,7 +183,7 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
 
     /// `-0 / 60` is `-0.0`, which JSON would print as `-0`.
     func testAlarmAtTheDueTimeIsNotPrintedAsNegativeZero() async throws {
-        let server = try await CheICalMCPServer(reminderReadSource: ReminderScheduleFake(
+        let server = try await TestServer.make(reminderReadSource: ReminderScheduleFake(
             [ReminderReadSnapshot(id: "zero", title: "R", alarms: [.relative(seconds: 0)])]))
         for (tool, args) in tools {
             let raw = try await server.executeToolCall(name: tool, arguments: args)
@@ -257,7 +257,7 @@ final class ReminderReadScheduleHandlerTests: XCTestCase {
         for (offset, overdue) in [(0, false), (1, false), (-1, true), (-3, true)] {
             let before = day(offset)
             let snapshot = ReminderReadSnapshot(id: "day", title: "R", dueDateComponents: before)
-            let server = try await CheICalMCPServer(reminderReadSource: ReminderScheduleFake([snapshot]))
+            let server = try await TestServer.make(reminderReadSource: ReminderScheduleFake([snapshot]))
             let allRaw = try await server.executeToolCall(name: "list_reminders", arguments: [:])
             let filteredRaw = try await server.executeToolCall(name: "list_reminders", arguments: ["filter": .string("overdue")])
             let all = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(allRaw.utf8)) as? [String: Any])

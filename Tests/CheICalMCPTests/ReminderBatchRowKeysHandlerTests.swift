@@ -27,7 +27,7 @@ final class ReminderBatchRowKeysHandlerTests: XCTestCase {
     }
 
     private func run(_ rows: [Value], _ fake: RowFake) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let raw = try await server.executeToolCall(name: "create_reminders_batch", arguments: ["reminders": .array(rows)])
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }

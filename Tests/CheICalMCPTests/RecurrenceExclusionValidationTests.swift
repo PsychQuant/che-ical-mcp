@@ -10,7 +10,7 @@ import MCP
 final class RecurrenceExclusionValidationTests: XCTestCase {
 
     private func callCreateEvent(recurrenceExtra: [String: Value]) async throws -> CallTool.Result {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         var recurrence: [String: Value] = [
             "frequency": .string("daily"),
             "end_date": .string("2026-09-30")
@@ -37,7 +37,7 @@ final class RecurrenceExclusionValidationTests: XCTestCase {
     // MARK: caller gating
 
     func testUpdateEventRejectsExcludedDates() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let result = await server.handleToolCallForTesting(
             name: "update_event",
             arguments: [
@@ -54,7 +54,7 @@ final class RecurrenceExclusionValidationTests: XCTestCase {
     }
 
     func testCreateReminderRejectsExcludedDates() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let result = await server.handleToolCallForTesting(
             name: "create_reminder",
             arguments: [
@@ -115,7 +115,7 @@ extension RecurrenceExclusionValidationTests {
 
     /// Finding #3 — top-level misplacement must be rejected, not silently dropped.
     func testTopLevelExcludedDatesRejectedOnCreateEvent() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let result = await server.handleToolCallForTesting(
             name: "create_event",
             arguments: [
@@ -132,7 +132,7 @@ extension RecurrenceExclusionValidationTests {
 
     /// Finding #3 — same guard on update_event's top level.
     func testTopLevelExcludedDatesRejectedOnUpdateEvent() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let result = await server.handleToolCallForTesting(
             name: "update_event",
             arguments: [
@@ -146,7 +146,7 @@ extension RecurrenceExclusionValidationTests {
 
     /// Finding #4 — JSON-number end_date must throw, not silently drop the window bound.
     func testNumericEndDateRejected() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let result = await server.handleToolCallForTesting(
             name: "create_event",
             arguments: [
@@ -166,7 +166,7 @@ extension RecurrenceExclusionValidationTests {
 
     /// Finding #9 — stringly-typed occurrence_count must throw (symmetry with interval).
     func testStringOccurrenceCountRejected() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let result = await server.handleToolCallForTesting(
             name: "create_event",
             arguments: [
@@ -192,7 +192,7 @@ extension RecurrenceExclusionValidationTests {
     /// #184 — a string-typed recurrence used to be silently ignored (event created,
     /// not recurring). Present-but-wrong-type must throw (#101 F2).
     func testStringRecurrenceRejectedOnCreateEvent() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let result = await server.handleToolCallForTesting(
             name: "create_event",
             arguments: [
@@ -210,7 +210,7 @@ extension RecurrenceExclusionValidationTests {
 
     /// #184 — same guard reaches update_event through the shared parser.
     func testStringRecurrenceRejectedOnUpdateEvent() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let result = await server.handleToolCallForTesting(
             name: "update_event",
             arguments: [
@@ -227,7 +227,7 @@ extension RecurrenceExclusionValidationTests {
     /// overwhelmingly common non-recurring path). Reaching the EventKit access
     /// gate (not a parse error) proves the parser passed.
     func testAbsentRecurrenceStillAccepted() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let result = await server.handleToolCallForTesting(
             name: "create_event",
             arguments: [

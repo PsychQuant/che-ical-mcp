@@ -103,7 +103,7 @@ final class DispatchRoundTripTests: XCTestCase {
         let serverCode = SourceScan.codeOnly(try SourcePins.source("Server.swift"))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\beventKitManager\b"#, in: serverCode).count, 2,
                        "the identifier eventKitManager: its declaration and the delete_reminder call only")
-        XCTAssertEqual(SourcePins.ranges(of: "private let eventKitManager = EventKitManager.shared", in: serverCode).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "private var eventKitManager: EventKitManager { EventKitManager.shared }", in: serverCode).count, 1)
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"EKEventStore\(|CountingEventStore\("#, in: serverCode).count, 0, "no EKEventStore( or CountingEventStore( text")
         let handler = try XCTUnwrap(SourcePins.body(of: "private func handleDeleteReminder(arguments: [String: Value]) async throws -> String {", in: server))
         let guardRange = try XCTUnwrap(handler.range(of: "guard let reminderId = arguments["), "string literals are blanked by SourcePins.code")

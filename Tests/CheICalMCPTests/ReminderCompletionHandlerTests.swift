@@ -31,7 +31,7 @@ private actor CompletionFake: ReminderCompletionSource {
 final class ReminderCompletionHandlerTests: XCTestCase {
     func testSuccessfulCompletionIsIndependentOfIncompleteObject() async throws {
         let fake = CompletionFake()
-        let server = try await CheICalMCPServer(reminderCompletionSource: fake)
+        let server = try await TestServer.make(reminderCompletionSource: fake)
         let raw = try await server.executeToolCall(name: "complete_reminder", arguments: ["reminder_id": .string("r")])
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         XCTAssertEqual(json["action"] as? String, "completed")
@@ -47,7 +47,7 @@ final class ReminderCompletionHandlerTests: XCTestCase {
     }
 
     func testReopenReportsRequestedActionWithoutChangingLegacyAction() async throws {
-        let server = try await CheICalMCPServer(reminderCompletionSource: CompletionFake())
+        let server = try await TestServer.make(reminderCompletionSource: CompletionFake())
         let raw = try await server.executeToolCall(name: "complete_reminder", arguments: ["reminder_id": .string("r"), "completed": .bool(false)])
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         let operation = try XCTUnwrap(json["operation"] as? [String: Any])
@@ -58,7 +58,7 @@ final class ReminderCompletionHandlerTests: XCTestCase {
 
 
     func testConfirmedSuccessorReachesTheJSONEnvelope() async throws {
-        let server = try await CheICalMCPServer(reminderCompletionSource: CompletionFake(confirmed: true))
+        let server = try await TestServer.make(reminderCompletionSource: CompletionFake(confirmed: true))
         let raw = try await server.executeToolCall(name: "complete_reminder", arguments: ["reminder_id": .string("r")])
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         let next = try XCTUnwrap(json["next_occurrence"] as? [String: Any])
@@ -72,7 +72,7 @@ final class ReminderCompletionHandlerTests: XCTestCase {
 
     func testNonBooleanCompletedIsRejectedBeforeWriting() async throws {
         let fake = CompletionFake()
-        let server = try await CheICalMCPServer(reminderCompletionSource: fake)
+        let server = try await TestServer.make(reminderCompletionSource: fake)
         for bad in [Value.string("false"), .string("true"), .int(0), .int(1), .double(1)] {
             do {
                 _ = try await server.executeToolCall(name: "complete_reminder", arguments: ["reminder_id": .string("r"), "completed": bad])
@@ -87,7 +87,7 @@ final class ReminderCompletionHandlerTests: XCTestCase {
 
     func testNullCompletedIsTreatedAsOmitted() async throws {
         let fake = CompletionFake()
-        let server = try await CheICalMCPServer(reminderCompletionSource: fake)
+        let server = try await TestServer.make(reminderCompletionSource: fake)
         let raw = try await server.executeToolCall(name: "complete_reminder", arguments: ["reminder_id": .string("r"), "completed": .null])
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         XCTAssertEqual((json["operation"] as? [String: Any])?["type"] as? String, "complete")

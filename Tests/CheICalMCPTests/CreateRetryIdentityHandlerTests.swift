@@ -30,7 +30,7 @@ final class CreateRetryIdentityHandlerTests: XCTestCase {
     }
 
     func testCreateEventAnswersTheRefusalNotSkipped() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: RefusingCreates())
+        let server = try await TestServer.make(eventWriteSource: RefusingCreates())
         guard case .object(let arguments) = item("retry") else { return XCTFail("item") }
         let result = await server.handleToolCallForTesting(name: "create_event", arguments: arguments)
         XCTAssertEqual(result.isError, true)
@@ -41,7 +41,7 @@ final class CreateRetryIdentityHandlerTests: XCTestCase {
 
     func testABatchRowAnswersTheRefusalAndTheOtherRowIsCreated() async throws {
         let fake = RefusingCreates()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         let raw = try await server.executeToolCall(name: "create_events_batch", arguments: ["events": .array([item("retry"), item("fresh")])])
         let response = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         let rows = try XCTUnwrap(response["results"] as? [[String: Any]])

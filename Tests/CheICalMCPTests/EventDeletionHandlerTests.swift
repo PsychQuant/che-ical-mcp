@@ -35,7 +35,7 @@ final class EventDeletionHandlerTests: XCTestCase {
 
     @discardableResult
     private func delete(_ fake: DeletionFake, _ args: [String: Value]) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(eventDeletionSource: fake)
+        let server = try await TestServer.make(eventDeletionSource: fake)
         let text = try await server.executeToolCall(name: "delete_event", arguments: args)
         return (try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]) ?? [:]
     }

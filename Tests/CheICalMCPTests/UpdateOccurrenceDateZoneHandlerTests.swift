@@ -12,7 +12,7 @@ final class UpdateOccurrenceDateZoneHandlerTests: XCTestCase {
     private let day = "2026-12-06"
 
     private func update(_ fake: FakeEventWriteSource, _ args: [String: Value]) async throws -> EventUpdateRequest {
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         _ = try await server.executeToolCall(name: "update_event", arguments: args)
         let updates = await fake.updates
         return try XCTUnwrap(updates.last)
@@ -93,7 +93,7 @@ final class UpdateOccurrenceDateZoneHandlerTests: XCTestCase {
     // MARK: - Verify round 1 (PR #392)
 
     private func call(_ fake: FakeEventWriteSource, _ args: [String: Value]) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         let raw = try await server.executeToolCall(name: "update_event", arguments: args)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }

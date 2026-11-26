@@ -51,7 +51,7 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
             let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0).withExceptions(exceptions)
             await history.record(.createEvent(id: "S", title: "Standup", created: series))
             await history.record(.deleteEvent(id: "S", snapshot: series))
-            let server = try await CheICalMCPServer(
+            let server = try await TestServer.make(
                 undoManager: history,
                 undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe(), seriesExceptionsStore: store, undoHistory: history))
 
@@ -80,7 +80,7 @@ final class RulesAloneRestoreFollowHandlerTests: XCTestCase {
         let series = UndoSnapshotFixtures.event(title: "Standup", weeklyOccurrences: 4, startDate: s0).withExceptions(exceptions)
         await history.record(.createEvent(id: "S", title: "Standup", created: series))
         await history.record(.deleteEvent(id: "S", snapshot: series))
-        let server = try await CheICalMCPServer(
+        let server = try await TestServer.make(
             undoManager: history,
             undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe(), seriesExceptionsStore: store, undoHistory: history))
 

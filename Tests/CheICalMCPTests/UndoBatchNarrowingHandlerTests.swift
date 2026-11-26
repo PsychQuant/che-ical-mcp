@@ -46,7 +46,7 @@ final class UndoBatchNarrowingHandlerTests: XCTestCase {
         await history.record(.batch(["A", "B"].map(deleted)))
         let executor = PartiallyFailingExecutor(firstFailure: UndoBatchPartiallyUndoneError(
             remaining: [], restoredCount: 1, memberError: "x", failing: .dropped))
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: executor)
 
         let failed = await server.handleToolCallForTesting(name: "undo", arguments: [:])
 
@@ -64,7 +64,7 @@ final class UndoBatchNarrowingHandlerTests: XCTestCase {
         let before = await history.historySnapshot()
         let executor = PartiallyFailingExecutor(firstFailure: UndoBatchPartiallyUndoneError(
             remaining: [deleted("A"), deleted("B")], restoredCount: 2, memberError: "eventkit_error_1"))
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: executor)
 
         let failed = await server.handleToolCallForTesting(name: "undo", arguments: [:])
 

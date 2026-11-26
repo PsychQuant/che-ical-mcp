@@ -19,7 +19,7 @@ final class UndoRedoTextHandlerTests: XCTestCase {
         await history.record(operation)
         let undone = try await history.beginUndo()
         await history.finishHistoryOperation(try XCTUnwrap(undone))   // as after a successful undo
-        let server = try await CheICalMCPServer(undoManager: history,
+        let server = try await TestServer.make(undoManager: history,
                                                 undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe()))
         let result = await server.handleToolCallForTesting(name: "redo", arguments: [:])
         guard case let .text(text, _, _) = try XCTUnwrap(result.content.first) else { return "" }

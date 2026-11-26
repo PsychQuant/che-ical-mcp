@@ -25,7 +25,7 @@ final class RecurringUpdateUndoHandlerTests: XCTestCase {
         let history = CalendarUndoManager()
         await history.record(.createEvent(id: "older", title: "Older", created: UndoSnapshotFixtures.event(title: "Older")))
         await history.record(.updateRecurringEvent(id: "series/RID=1", title: "Standup", kind: .occurrence))
-        let server = try await CheICalMCPServer(undoManager: history,
+        let server = try await TestServer.make(undoManager: history,
                                                 undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe()))
 
         let result = await server.handleToolCallForTesting(name: "undo", arguments: [:])

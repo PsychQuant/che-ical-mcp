@@ -35,7 +35,7 @@ final class ReminderRecurrenceHandlerTests: XCTestCase {
     }
 
     func testHandlersDispatchToPageRequirements() async throws {
-        let server = try await CheICalMCPServer(reminderReadSource: PageOnlyReminderFake())
+        let server = try await TestServer.make(reminderReadSource: PageOnlyReminderFake())
         let keyword: [String: Value] = ["keyword": .string("Page")]
         for (tool, extra) in [("list_reminders", [:]), ("search_reminders", keyword)] as [(String, [String: Value])] {
             let raw = try await server.executeToolCall(name: tool, arguments: extra.merging(["limit": .int(1)]) { $1 })
@@ -48,7 +48,7 @@ final class ReminderRecurrenceHandlerTests: XCTestCase {
         let records = [ReminderReadSnapshot(id: "a", title: "A", notes: "#work"),
                        ReminderReadSnapshot(id: "b", title: "B", notes: "#other"),
                        ReminderReadSnapshot(id: "c", title: "C", notes: "#WORK")]
-        let server = try await CheICalMCPServer(reminderReadSource: ReminderReadFake(records))
+        let server = try await TestServer.make(reminderReadSource: ReminderReadFake(records))
         let raw = try await server.executeToolCall(name: "search_reminders", arguments: ["tag": .string("work"), "limit": .int(1)])
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         XCTAssertEqual(json["reminder_count"] as? Int, 2)
@@ -58,7 +58,7 @@ final class ReminderRecurrenceHandlerTests: XCTestCase {
     }
 
     func testListPreservesPreLimitCountAndAddsMetadata() async throws {
-        let server = try await CheICalMCPServer(reminderReadSource: ReminderReadFake(records()))
+        let server = try await TestServer.make(reminderReadSource: ReminderReadFake(records()))
         let raw = try await server.executeToolCall(name: "list_reminders", arguments: ["limit": .int(1), "sort": .string("title")])
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         XCTAssertEqual(json["reminder_count"] as? Int, 2)
@@ -72,7 +72,7 @@ final class ReminderRecurrenceHandlerTests: XCTestCase {
     }
 
     func testSearchUsesSameMetadataWithoutAddingListOnlyFields() async throws {
-        let server = try await CheICalMCPServer(reminderReadSource: ReminderReadFake(records()))
+        let server = try await TestServer.make(reminderReadSource: ReminderReadFake(records()))
         let raw = try await server.executeToolCall(name: "search_reminders", arguments: ["keyword": .string("anything")])
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         let items = try XCTUnwrap(json["reminders"] as? [[String: Any]])
@@ -89,7 +89,7 @@ final class ReminderRecurrenceHandlerTests: XCTestCase {
         let weekly = ReminderRecurrenceRuleValue(from: EKRecurrenceRule(recurrenceWith: .weekly, interval: 1, end: nil))
         let monthly = ReminderRecurrenceRuleValue(from: EKRecurrenceRule(recurrenceWith: .monthly, interval: 2, end: nil))
         let twoRules = ReminderReadSnapshot(id: "two", title: "Two rules", hasRecurrence: true, rules: [weekly, monthly])
-        let server = try await CheICalMCPServer(reminderReadSource: ReminderReadFake([twoRules]))
+        let server = try await TestServer.make(reminderReadSource: ReminderReadFake([twoRules]))
         for (tool, args) in [("list_reminders", [String: Value]()), ("search_reminders", ["keyword": .string("Two")])] {
             let raw = try await server.executeToolCall(name: tool, arguments: args)
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])

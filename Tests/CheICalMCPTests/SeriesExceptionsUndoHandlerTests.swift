@@ -27,7 +27,7 @@ final class SeriesExceptionsUndoHandlerTests: XCTestCase {
     }
 
     private func undo(_ history: CalendarUndoManager, on store: FakeSeriesExceptionsStore) async throws -> CallTool.Result {
-        let server = try await CheICalMCPServer(
+        let server = try await TestServer.make(
             undoManager: history,
             undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe(), seriesExceptionsStore: store))
         return await server.handleToolCallForTesting(name: "undo", arguments: [:])

@@ -46,6 +46,7 @@ struct LiveAuthorizationStatusSource: AuthorizationStatusSource {
     private let store: EKEventStore
 
     init(store: EKEventStore = EKEventStore()) {
+        LiveStoreGuard.check("LiveAuthorizationStatusSource")   // #600: no test asks the real TCC through it
         self.store = store
     }
 

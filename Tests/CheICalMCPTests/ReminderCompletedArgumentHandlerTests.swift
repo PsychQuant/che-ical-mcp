@@ -23,7 +23,7 @@ final class ReminderCompletedArgumentHandlerTests: XCTestCase {
         for (tool, extra) in tools {
             for bad in [Value.string("true"), .string("false"), .int(1), .double(0)] {
                 let fake = RecordingReadFake()
-                let server = try await CheICalMCPServer(reminderReadSource: fake)
+                let server = try await TestServer.make(reminderReadSource: fake)
                 var args = extra; args["completed"] = bad
                 do {
                     _ = try await server.executeToolCall(name: tool, arguments: args)
@@ -40,7 +40,7 @@ final class ReminderCompletedArgumentHandlerTests: XCTestCase {
     func testNullCompletedMeansNoFilterOnReadTools() async throws {
         for (tool, extra) in tools {
             let fake = RecordingReadFake()
-            let server = try await CheICalMCPServer(reminderReadSource: fake)
+            let server = try await TestServer.make(reminderReadSource: fake)
             var args = extra; args["completed"] = .null
             _ = try await server.executeToolCall(name: tool, arguments: args)
             let received = await fake.received
@@ -52,7 +52,7 @@ final class ReminderCompletedArgumentHandlerTests: XCTestCase {
     func testListRejectsNonBooleanCompletedEvenWhenFilterIsPresent() async throws {
         // `filter` takes priority over `completed`, but the type contract is unconditional.
         let fake = RecordingReadFake()
-        let server = try await CheICalMCPServer(reminderReadSource: fake)
+        let server = try await TestServer.make(reminderReadSource: fake)
         do {
             _ = try await server.executeToolCall(name: "list_reminders", arguments: ["filter": .string("all"), "completed": .string("false")])
             XCTFail("list_reminders must reject a non-boolean completed even when filter is present")

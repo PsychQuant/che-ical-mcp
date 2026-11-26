@@ -10,7 +10,7 @@ final class EventListingParamsHandlerTests: XCTestCase {
 
     private func makeServer() async throws -> CheICalMCPServer {
         let fake = FakeEventKitManager()
-        return try await CheICalMCPServer(reminderCleanupSource: fake)
+        return try await TestServer.make(reminderCleanupSource: fake)
     }
 
     private func assertInvalidParameter(
