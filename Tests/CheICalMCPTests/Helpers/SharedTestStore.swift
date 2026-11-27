@@ -30,8 +30,10 @@ enum SharedTestStore {
 }
 
 /// #600: an `EKEventStore` that stops the test process before any member that reads, writes,
-/// commits or refreshes the store reaches EventKit (`LiveStoreGuardTests` pins the list). Items are
-/// still built against it (`EKEvent(eventStore:)`, `EKCalendar(for:eventStore:)`).
+/// commits or refreshes the store, or asks for access, reaches EventKit (`LiveStoreGuardTests` pins
+/// the list and the members deliberately left). Items are still built against it
+/// (`EKEvent(eventStore:)`, `EKCalendar(for:eventStore:)`). Item-level methods (an item's `refresh()`
+/// or `rollback()`) are not intercepted: they act on the item, not through these members.
 final class GuardedTestStore: EKEventStore, @unchecked Sendable {
     override var sources: [EKSource] { LiveStoreGuard.check("GuardedTestStore.sources"); return super.sources }
     override func source(withIdentifier identifier: String) -> EKSource? {
@@ -96,5 +98,19 @@ final class GuardedTestStore: EKEventStore, @unchecked Sendable {
     override func reset() { LiveStoreGuard.check("GuardedTestStore.reset"); super.reset() }
     override func refreshSourcesIfNecessary() {
         LiveStoreGuard.check("GuardedTestStore.refreshSourcesIfNecessary"); super.refreshSourcesIfNecessary()
+    }
+    // PR #603 verify r3: the delegate sources and the access requests too.
+    override var delegateSources: [EKSource] { LiveStoreGuard.check("GuardedTestStore.delegateSources"); return super.delegateSources }
+    override func requestFullAccessToEvents(completion: @escaping EKEventStoreRequestAccessCompletionHandler) {
+        LiveStoreGuard.check("GuardedTestStore.requestFullAccessToEvents"); super.requestFullAccessToEvents(completion: completion)
+    }
+    override func requestWriteOnlyAccessToEvents(completion: @escaping EKEventStoreRequestAccessCompletionHandler) {
+        LiveStoreGuard.check("GuardedTestStore.requestWriteOnlyAccessToEvents"); super.requestWriteOnlyAccessToEvents(completion: completion)
+    }
+    override func requestFullAccessToReminders(completion: @escaping EKEventStoreRequestAccessCompletionHandler) {
+        LiveStoreGuard.check("GuardedTestStore.requestFullAccessToReminders"); super.requestFullAccessToReminders(completion: completion)
+    }
+    override func requestAccess(to entityType: EKEntityType, completion: @escaping EKEventStoreRequestAccessCompletionHandler) {
+        LiveStoreGuard.check("GuardedTestStore.requestAccess(to:)"); super.requestAccess(to: entityType, completion: completion)
     }
 }

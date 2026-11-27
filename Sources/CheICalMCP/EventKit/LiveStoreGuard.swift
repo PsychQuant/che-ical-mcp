@@ -23,9 +23,11 @@ enum LiveStoreGuard {
 
     @TaskLocal static var liveStoreAllowed = false
 
-    /// Runs `body` with the live manager and the shared undo history allowed. A test that needs the
-    /// developer's real store must say so here; no test in the suite does.
-    static func allowingLiveStore<T>(_ body: () async throws -> T) async rethrows -> T {
+    /// Runs `body` with the live manager, the shared undo history and the stores allowed. A test that
+    /// needs the real store must say so here; one test does (the commit count of `CountingEventStore`,
+    /// pinned in `LiveStoreGuardTests`). `body` returns nothing, so no store leaves the scope through
+    /// its result (PR #603 verify r3).
+    static func allowingLiveStore(_ body: () async throws -> Void) async rethrows {
         try await $liveStoreAllowed.withValue(true) { try await body() }
     }
 

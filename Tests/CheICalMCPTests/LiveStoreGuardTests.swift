@@ -18,7 +18,8 @@ final class LiveStoreGuardTests: XCTestCase {
     }
 
     func testAllowingLiveStoreLiftsItForItsScopeOnly() async {
-        let inside = await LiveStoreGuard.allowingLiveStore { LiveStoreGuard.violation("CalendarUndoManager.shared") }
+        var inside: String? = "not run"
+        await LiveStoreGuard.allowingLiveStore { inside = LiveStoreGuard.violation("CalendarUndoManager.shared") }
         XCTAssertNil(inside)
         XCTAssertNotNil(LiveStoreGuard.violation("CalendarUndoManager.shared"))
     }
@@ -44,6 +45,8 @@ final class LiveStoreGuardTests: XCTestCase {
         XCTAssertEqual(SourcePins.ranges(of: "private let liveEventStore: CountingEventStore", in: manager).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "self.liveEventStore = store", in: manager).count, 1, "the init's own store, set once")
         XCTAssertEqual(SourcePins.ranges(of: "liveEventStore", in: manager).count, 3, "declared, set, and returned by the checked accessor only")
+        let managerFile = try SourcePins.source("EventKit/EventKitManager.swift")
+        XCTAssertEqual(SourcePins.ranges(of: "liveEventStore", in: managerFile).count, 3, "PR #603 verify r3: in the whole file, comments included")
         XCTAssertEqual(SourcePins.ranges(of: "WriteStorePool<EKEventStore>(make: { LiveStoreGuard.check(", in: manager).count, 1)
         let fresh = SourcePins.code(try SourcePins.source("EventKit/NewObjectSave.swift"))
         let finds = try XCTUnwrap(SourcePins.body(of: "static func freshStoreFinds(_ check: (EKEventStore) -> Found) -> Found? {", in: fresh))
@@ -86,22 +89,38 @@ final class LiveStoreGuardTests: XCTestCase {
         let code = SourcePins.code(try String(contentsOf: helper, encoding: .utf8))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"static\s+let\s+store\s*=\s*GuardedTestStore\(\)"#, in: code).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "static var counting: CountingEventStore {\n        LiveStoreGuard.check(", in: code).count, 1)
-        let members = ["override var sources:", "override func source(withIdentifier", "override func calendars(for",
-                       "override func calendar(withIdentifier", "override var defaultCalendarForNewEvents:",
-                       "override func defaultCalendarForNewReminders(", "override func saveCalendar(", "override func removeCalendar(",
+        // The EKEventStore members (macOS 14 SDK) treated as data or permission: each one reads,
+        // writes, commits or refreshes the store, or asks for access. Overridden, each checks first.
+        let members = ["override var sources:", "override var delegateSources:", "override func source(withIdentifier",
+                       "override func calendars(for", "override func calendar(withIdentifier",
+                       "override var defaultCalendarForNewEvents:", "override func defaultCalendarForNewReminders(",
+                       "override func saveCalendar(", "override func removeCalendar(",
                        "override func calendarItem(withIdentifier", "override func calendarItems(withExternalIdentifier",
                        "override func save(_ event: EKEvent, span: EKSpan)", "override func save(_ event: EKEvent, span: EKSpan, commit: Bool)",
                        "override func remove(_ event: EKEvent, span: EKSpan)", "override func remove(_ event: EKEvent, span: EKSpan, commit: Bool)",
                        "override func event(withIdentifier", "override func events(matching", "override func enumerateEvents(matching",
                        "override func save(_ reminder: EKReminder", "override func remove(_ reminder: EKReminder",
                        "override func fetchReminders(matching", "override func commit()", "override func reset()",
-                       "override func refreshSourcesIfNecessary()"]
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\boverride\s+(func|var)\b"#, in: code).count, members.count)
+                       "override func refreshSourcesIfNecessary()",
+                       "override func requestFullAccessToEvents(", "override func requestWriteOnlyAccessToEvents(",
+                       "override func requestFullAccessToReminders(", "override func requestAccess(to"]
+        // Left deliberately, as they touch no data and ask for nothing: the predicate builders
+        // (`predicateForEvents`, `predicateForReminders`, `predicateForIncompleteReminders`,
+        // `predicateForCompletedReminders`), `cancelFetchRequest(_:)`, `eventStoreIdentifier`, the
+        // initializers, and the class method `authorizationStatus(for:)`. Item-level methods (an
+        // item's `refresh()`, `rollback()`) are not intercepted.
+        let left = ["predicateFor", "cancelFetchRequest", "eventStoreIdentifier", "init(", "authorizationStatus"]
+        let overrides = SourcePins.ranges(ofPattern: #"\boverride\s+(?:func|var)\s+[^{]*"#, in: code).map { String(code[$0]) }
+        XCTAssertEqual(overrides.count, members.count, "\(overrides)")
         for member in members {
+            XCTAssertEqual(overrides.filter { $0.hasPrefix(member) }.count, 1, member)
             let start = try XCTUnwrap(code.range(of: member), member)
             let brace = try XCTUnwrap(code.range(of: "{", range: start.upperBound..<code.endIndex), member)
             let rest = code[brace.upperBound...].drop { $0.isWhitespace }
             XCTAssertTrue(rest.hasPrefix("LiveStoreGuard.check("), "\(member) checks first")
+        }
+        for name in left {
+            XCTAssertFalse(overrides.contains { $0.contains(name) }, "\(name) is left deliberately")
         }
     }
 
@@ -119,12 +138,28 @@ final class LiveStoreGuardTests: XCTestCase {
     /// which EventKit refuses before writing anything.
     func testOnlyTheCommitCountTestOptsIntoTheLiveStore() throws {
         let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        var users: [String] = []
-        for file in try SourceScan.swiftFiles(under: tests) where file.lastPathComponent != "LiveStoreGuardTests.swift" {
-            if SourceScan.codeOnly(try String(contentsOf: file, encoding: .utf8)).contains("allowingLiveStore") {
-                users.append(file.lastPathComponent)
+        var sites: [String] = []
+        for file in try SourceScan.swiftFiles(under: tests) {
+            // Comments blanked, strings kept (`SourcePins.code` misreads CalendarEmptinessTests' multi-line
+            // string); the pattern is a call with a trailing closure, which no string here spells.
+            let code = SourceScan.codeOnly(try String(contentsOf: file, encoding: .utf8))
+            for range in SourcePins.ranges(ofPattern: #"LiveStoreGuard\.allowingLiveStore\s*\{"#, in: code) {
+                // The test whose body holds the call: the last `func test…` before it.
+                let before = code[..<range.lowerBound]
+                let test = before.range(of: "func test", options: .backwards).map { before[$0.lowerBound...].prefix { $0 != "(" } }
+                sites.append("\(file.lastPathComponent): \(test.map(String.init) ?? "?")")
             }
         }
-        XCTAssertEqual(users, ["CalendarEmptinessTests.swift"])
+        // PR #603 verify r3: one opt-in, plus this file's own test of the scope.
+        XCTAssertEqual(sites.sorted(), ["CalendarEmptinessTests.swift: func testTheStoreCountsAWriteThatThrows",
+                                        "LiveStoreGuardTests.swift: func testAllowingLiveStoreLiftsItForItsScopeOnly"])
+        // `allowingLiveStore` returns nothing (no store leaves through its result), and the opt-in
+        // assigns nothing from inside its scope.
+        let guardCode = SourcePins.code(try SourcePins.source("EventKit/LiveStoreGuard.swift"))
+        XCTAssertEqual(SourcePins.ranges(of: "static func allowingLiveStore(_ body: () async throws -> Void) async rethrows {", in: guardCode).count, 1)
+        let emptiness = SourceScan.codeOnly(try String(contentsOf: tests.appendingPathComponent("CalendarEmptinessTests.swift"), encoding: .utf8))
+        let scope = try XCTUnwrap(SourcePins.body(of: "try await LiveStoreGuard." + "allowingLiveStore {", in: emptiness))
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"(?<![=!<>])=(?!=)"#, in: scope).count, 2, "only its two local lets: \(scope)")
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\blet\s+(store|before)\s*="#, in: scope).count, 2)
     }
 }
