@@ -49,7 +49,7 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
 
     func testARuleChangeIsPassedAndReadBack() async throws {
         let fake = RecurrenceUpdateWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "recurrence": fridays]))
         XCTAssertEqual(result["has_recurrence"] as? Bool, true)
@@ -64,7 +64,7 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
 
     func testClearRecurrenceIsPassedAndReadBack() async throws {
         let fake = RecurrenceUpdateWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "clear_recurrence": .bool(true)]))
         XCTAssertEqual(result["has_recurrence"] as? Bool, false)
@@ -74,7 +74,7 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
     }
 
     func testAnUpdateWithoutRecurrenceHasNoRecurrenceKeys() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: RecurrenceUpdateWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: RecurrenceUpdateWriteFake())
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "title": .string("t")]))
         XCTAssertNil(result["has_recurrence"])
@@ -85,7 +85,7 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
     /// non-boolean clear_recurrence, and excluded_occurrence_dates (create_event only).
     func testRefusalsBeforeTheStore() async throws {
         let fake = RecurrenceUpdateWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let bad: [[String: Value]] = [
             ["recurrence": fridays, "clear_recurrence": .bool(true)],
             ["recurrence": fridays, "clear_due_date": .bool(true)],
@@ -119,7 +119,7 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
     // MARK: - PR #420 verify round 1
 
     func testAReminderThatCannotBeReReadReportsNoRule() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: RecurrenceUpdateWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: RecurrenceUpdateWriteFake())
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("unreadable"), "recurrence": fridays]))
         XCTAssertEqual(result["recurrence_read_back"] as? Bool, false)
@@ -130,7 +130,7 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
     }
 
     func testARuleWithClearDueDateGetsItsOwnMessage() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: RecurrenceUpdateWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: RecurrenceUpdateWriteFake())
         do {
             _ = try await server.executeToolCall(name: "update_reminder", arguments: [
                 "reminder_id": .string("r"), "recurrence": fridays, "clear_due_date": .bool(true)])
@@ -146,7 +146,7 @@ final class ReminderRecurrenceUpdateHandlerTests: XCTestCase {
     /// not an array is refused instead of dropped.
     func testOutOfRangeRulesAreRefusedOnEveryTool() async throws {
         let fake = RecurrenceUpdateWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let bad: [(Value, String)] = [
             (.object(["frequency": .string("weekly"), "interval": .int(0)]), "interval"),
             (.object(["frequency": .string("weekly"), "interval": .int(-1)]), "interval"),

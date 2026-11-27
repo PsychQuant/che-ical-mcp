@@ -5,7 +5,7 @@ import XCTest
 
 final class RecurrenceReadFormatTests: XCTestCase {
     func testEventAliasAndFieldsPreserveLegacyArray() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let event = FakeFormattableEvent()
         let result = server.formatEventDict(event)
         let legacy = try XCTUnwrap(result["recurrence_rules"] as? [[String: Any]])

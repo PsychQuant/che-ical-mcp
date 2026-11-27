@@ -9,7 +9,7 @@ final class EventAlarmsReadTests: XCTestCase {
     private let absolute = Date(timeIntervalSince1970: 1_800_000_000)
 
     func testStandardOutputListsTheAlarms() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let dict = server.formatEventDict(FakeFormattableEvent(alarmsFragment: [.relative(seconds: -900), .absolute(absolute)]))
         let alarms = try XCTUnwrap(dict["alarms"] as? [[String: Any]])
         XCTAssertEqual(alarms.map { $0["kind"] as? String }, ["absolute", "relative"])
@@ -17,20 +17,20 @@ final class EventAlarmsReadTests: XCTestCase {
     }
 
     func testAnEventWithoutAlarmsListsAnEmptyArray() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let dict = server.formatEventDict(FakeFormattableEvent(alarmsFragment: []))
         XCTAssertEqual((dict["alarms"] as? [[String: Any]])?.count, 0)
     }
 
     func testSummaryLeavesAlarmsOut() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let dict = server.formatEventDict(FakeFormattableEvent(), detailLevel: "summary")
         XCTAssertNil(dict["alarms"])
     }
 
     func testFieldsCanSelectAlarms() async throws {
         let fields = try XCTUnwrap(InputValidation.parseFieldsFilter(["fields": .array([.string("alarms")])]))
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let dict = server.formatEventDict(FakeFormattableEvent(), detailLevel: "summary", fields: fields)
         XCTAssertEqual(Set(dict.keys), ["id", "alarms"])
     }
@@ -38,7 +38,7 @@ final class EventAlarmsReadTests: XCTestCase {
     /// `absolute_date_local` is in the zone of the event's other `*_local` strings:
     /// `display_timezone` when given, otherwise the event's zone.
     func testAbsoluteLocalFollowsTheEventsLocalZone() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let tokyo = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
         let newYork = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
         func local(_ dict: [String: Any]) -> String? { (dict["alarms"] as? [[String: Any]])?.first?["absolute_date_local"] as? String }

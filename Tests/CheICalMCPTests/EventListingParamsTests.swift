@@ -418,7 +418,7 @@ final class EventListingParamsTests: XCTestCase {
     /// without updating `validEventFields`, this test fails immediately — drift
     /// detection no longer relies on maintainer discipline.
     func testValidEventFieldsMatchesFormatEventDictKeys() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let fake = FakeFormattableEvent()  // kitchen-sink defaults trigger every conditional path
         let dict = server.formatEventDict(fake, detailLevel: "standard", displayTimezone: nil, fields: nil)
         let emittedKeys = Set(dict.keys)

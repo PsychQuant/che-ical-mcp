@@ -134,7 +134,7 @@ final class UndoFailureRestoreTests: XCTestCase {
     private func probeId(_ tag: String) -> String { "restore-probe-191-\(tag)-\(UUID().uuidString.prefix(8))" }
 
     func testRestoreFailedUndoPutsRecordBackExactlyOnce() async {
-        let mgr = CalendarUndoManager.shared
+        let mgr = CalendarUndoManager()   // #600: a history of its own, not the process-wide one
         let id = probeId("undo")
         await mgr.record(.createEvent(id: id, title: "t", created: UndoSnapshotFixtures.event(title: "t")))
         guard let record = await mgr.popUndo() else { return XCTFail("expected a record") }
@@ -154,7 +154,7 @@ final class UndoFailureRestoreTests: XCTestCase {
     }
 
     func testRestoreFailedRedoPutsRecordBack() async {
-        let mgr = CalendarUndoManager.shared
+        let mgr = CalendarUndoManager()   // #600: a history of its own, not the process-wide one
         let id = probeId("redo")
         await mgr.record(.createEvent(id: id, title: "t", created: UndoSnapshotFixtures.event(title: "t")))
         guard let undoRec = await mgr.popUndo() else { return XCTFail("expected a record") }

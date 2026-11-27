@@ -69,7 +69,7 @@ final class EventRangeReadHandlerTests: XCTestCase {
     }
 
     private func call(_ tool: Tool, events: [EKEvent], days: Double, extra: [String: Value] = [:], oneSided: Bool = false) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(eventRangeReadSource: EventRangeReadFake(events: events))
+        let server = try await TestServer.make(eventRangeReadSource: EventRangeReadFake(events: events))
         var arguments: [String: Value] = ["start_date": .string(iso.string(from: base))]
         if !oneSided { arguments["end_date"] = .string(iso.string(from: base.addingTimeInterval(days * day))) }
         if tool == .search { arguments["keyword"] = .string("#332") }
@@ -220,7 +220,7 @@ final class EventRangeReadHandlerTests: XCTestCase {
                                                              to: base.addingTimeInterval(36_500 * day),
                                                              readThrough: base.addingTimeInterval(1460 * day))
         for tool in Tool.allCases {
-            let server = try await CheICalMCPServer(eventRangeReadSource: EventRangeReadFake(events: [], readError: bound))
+            let server = try await TestServer.make(eventRangeReadSource: EventRangeReadFake(events: [], readError: bound))
             var arguments: [String: Value] = [
                 "start_date": .string(iso.string(from: base)),
                 "end_date": .string(iso.string(from: base.addingTimeInterval(36_500 * day)))

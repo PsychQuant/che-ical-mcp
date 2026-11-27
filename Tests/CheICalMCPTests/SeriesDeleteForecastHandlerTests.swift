@@ -76,12 +76,12 @@ final class SeriesDeleteForecastHandlerTests: XCTestCase {
     }
 
     private func deleteEvent(_ fake: ForecastDeletes, _ args: [String: Value]) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(eventDeletionSource: fake)
+        let server = try await TestServer.make(eventDeletionSource: fake)
         return try object(await server.executeToolCall(name: "delete_event", arguments: args))
     }
 
     private func batch(_ fake: ForecastBatch, _ args: [String: Value]) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(eventBatchDeletionSource: fake)
+        let server = try await TestServer.make(eventBatchDeletionSource: fake)
         return try object(await server.executeToolCall(name: "delete_events_batch", arguments: args))
     }
 

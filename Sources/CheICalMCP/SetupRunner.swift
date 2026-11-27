@@ -97,6 +97,7 @@ enum SetupRunner {
     /// ``runInteractive()``).
     @MainActor
     static func requestBoth(nonInteractive: Bool) async -> Bool {
+        LiveStoreGuard.check("SetupRunner.requestBoth")   // #600
         let store = EKEventStore()
         var anyBad = false
 

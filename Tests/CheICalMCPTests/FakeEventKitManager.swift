@@ -11,7 +11,7 @@ import Foundation
 /// ```swift
 /// let fake = FakeEventKitManager()
 /// await fake.scriptCompletedReminderIdentifiers(["r1", "r2"])
-/// let server = try await CheICalMCPServer(reminderCleanupSource: fake)
+/// let server = try await TestServer.make(reminderCleanupSource: fake)   // #600
 /// _ = try await server.executeToolCall(name: "cleanup_completed_reminders",
 ///                                      arguments: ["dry_run": .bool(true)])
 /// let calls = await fake.listCompletedReminderIdentifiersCalls

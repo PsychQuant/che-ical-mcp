@@ -55,7 +55,7 @@ final class ReminderListDeletedHandlerTests: XCTestCase {
         await history.record(.deleteReminder(id: "", snapshot: UndoSnapshotFixtures.reminder(title: "Pay rent")))
         let before = await history.historySnapshot()
         let executor = ListDeletedExecutor()
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: executor)
 
         let result = await server.handleToolCallForTesting(name: "undo", arguments: [:])
 
@@ -71,7 +71,7 @@ final class ReminderListDeletedHandlerTests: XCTestCase {
 
     /// `create_reminder` fails with the message, not an identifier.
     func testCreateReminderReportsTheListDeletedErrorVerbatim() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: ListDeletedWriter())
+        let server = try await TestServer.make(reminderWriteSource: ListDeletedWriter())
 
         let result = await server.handleToolCallForTesting(name: "create_reminder", arguments: ["title": .string("gone"), "calendar_name": .string("L")])
 
@@ -83,7 +83,7 @@ final class ReminderListDeletedHandlerTests: XCTestCase {
 
     /// `create_reminders_batch` reports the error on that item only; the others are created.
     func testCreateRemindersBatchReportsTheListDeletedErrorOnThatItem() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: ListDeletedWriter())
+        let server = try await TestServer.make(reminderWriteSource: ListDeletedWriter())
 
         let raw = try await server.executeToolCall(name: "create_reminders_batch", arguments: [
             "reminders": .array([.object(["title": .string("kept"), "calendar_name": .string("L")]),

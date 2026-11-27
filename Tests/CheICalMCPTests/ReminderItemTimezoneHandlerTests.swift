@@ -24,7 +24,7 @@ final class ReminderItemTimezoneHandlerTests: XCTestCase {
     }
 
     private func item(_ tool: String, _ args: [String: Value], _ snapshot: ReminderReadSnapshot) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(reminderReadSource: ReminderItemZoneFake([snapshot]))
+        let server = try await TestServer.make(reminderReadSource: ReminderItemZoneFake([snapshot]))
         let raw = try await server.executeToolCall(name: tool, arguments: args)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any], tool)
         return try XCTUnwrap((json["reminders"] as? [[String: Any]])?.first, tool)

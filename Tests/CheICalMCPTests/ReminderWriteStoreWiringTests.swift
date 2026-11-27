@@ -71,7 +71,7 @@ final class ReminderWriteStoreWiringTests: XCTestCase {
         }
         XCTAssertEqual(found, ["ExistingReminderSave.swift"])
         XCTAssertTrue(SourceScan.strippingComments(try SourcePins.source("EventKit/EventKitManager.swift"))
-            .contains("let writeStores = WriteStorePool<EKEventStore>(make: { EKEventStore() }, isUsable: { !$0.sources.isEmpty })"))
+            .contains("let writeStores = WriteStorePool<EKEventStore>(make: { LiveStoreGuard.check(\"EventKitManager.writeStores\"); return EKEventStore() },\n                                                   isUsable: { !$0.sources.isEmpty })"))
     }
 
     /// PR #507 round 1, LOW 7: in the batch, the write store's own errors are caught before the

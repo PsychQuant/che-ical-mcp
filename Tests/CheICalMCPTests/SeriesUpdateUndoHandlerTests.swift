@@ -34,7 +34,7 @@ final class SeriesUpdateUndoHandlerTests: XCTestCase {
     func testTheRecordIsListedAsRestorable() async throws {
         let history = CalendarUndoManager()
         await history.record(record())
-        let server = try await CheICalMCPServer(undoManager: history,
+        let server = try await TestServer.make(undoManager: history,
                                                 undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe()))
 
         let result = await server.handleToolCallForTesting(name: "undo_history", arguments: [:])
@@ -48,7 +48,7 @@ final class SeriesUpdateUndoHandlerTests: XCTestCase {
         let history = CalendarUndoManager()
         await history.record(.createEvent(id: "older", title: "Older", created: UndoSnapshotFixtures.event(title: "Older")))
         await history.record(record())
-        let server = try await CheICalMCPServer(undoManager: history,
+        let server = try await TestServer.make(undoManager: history,
                                                 undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe()))
 
         let result = await server.handleToolCallForTesting(name: "undo", arguments: [:])
@@ -67,7 +67,7 @@ final class SeriesUpdateUndoHandlerTests: XCTestCase {
     func testKeepLaterEditsUndoesAsWithoutIt() async throws {
         let history = CalendarUndoManager()
         await history.record(record())
-        let server = try await CheICalMCPServer(undoManager: history,
+        let server = try await TestServer.make(undoManager: history,
                                                 undoExecutionSource: EventKitManager.forTesting(probe: DeniedProbe()))
 
         let result = await server.handleToolCallForTesting(name: "undo", arguments: ["keep_later_edits": .bool(true)])

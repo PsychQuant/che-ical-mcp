@@ -54,7 +54,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
 
     func testCreatePassesTheOffsetsAndReportsWhatWasStored() async throws {
         let fake = AlarmWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let result = try object(await server.executeToolCall(name: "create_reminder", arguments: [
             "title": .string("new"), "due_date": .string("2026-12-10T09:00:00"),
             "alarms_minutes_offsets": .array([.int(15), .int(60)])]))
@@ -67,13 +67,13 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
     }
 
     func testACreateWithoutOffsetsHasNoAlarmKeys() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: AlarmWriteFake())
         let result = try object(await server.executeToolCall(name: "create_reminder", arguments: ["title": .string("new")]))
         XCTAssertNil(result["alarms_minutes_offsets"])
     }
 
     func testASkippedDuplicateSaysTheAlarmsWereNotApplied() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: AlarmWriteFake())
         let result = try object(await server.executeToolCall(name: "create_reminder", arguments: [
             "title": .string("duplicate"), "due_date": .string("2026-12-10T09:00:00"),
             "alarms_minutes_offsets": .array([.int(15)])]))
@@ -85,7 +85,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
     /// Refused before the store is called: no due date, or a date-only one.
     func testCreateRefusesAnAlarmThatCannotFireOrIsNotMeasured() async throws {
         let fake = AlarmWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         for (due, message) in [(nil as String?, ReminderRelativeAlarms.noDueMessage), ("2026-12-10", ReminderRelativeAlarms.dateOnlyMessage)] {
             var arguments: [String: Value] = ["title": .string("new"), "alarms_minutes_offsets": .array([.int(240)])]
             if let due { arguments["due_date"] = .string(due) }
@@ -101,7 +101,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
     }
 
     func testOffsetsMustBeAnArrayOfIntegers() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: AlarmWriteFake())
         for bad: Value in [.string("15"), .array([.string("x")]), .array([.double(1.5)])] {
             do {
                 _ = try await server.executeToolCall(name: "create_reminder", arguments: [
@@ -114,7 +114,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
     }
 
     func testAStoredSetThatDiffersIsReported() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: AlarmWriteFake())
         let result = try object(await server.executeToolCall(name: "create_reminder", arguments: [
             "title": .string("short"), "due_date": .string("2026-12-10T09:00:00"),
             "alarms_minutes_offsets": .array([.int(15), .int(60)])]))
@@ -151,7 +151,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
             XCTAssertEqual(result["alarms_read_back"] as? Bool, false, name)
             XCTAssertEqual(result["alarms_read_back_note"] as? String, CheICalMCPServer.alarmsUnreadNote, name)
         }
-        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: AlarmWriteFake())
         let row: [String: Value] = ["title": .string("unread"), "due_date": .string("2026-12-10T09:00:00"), "alarms_minutes_offsets": .array([.int(15)])]
         check(try object(await server.executeToolCall(name: "create_reminder", arguments: row)), "create_reminder")
         let batch = try object(await server.executeToolCall(name: "create_reminders_batch", arguments: ["reminders": .array([.object(row)])]))
@@ -160,7 +160,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
 
     /// PR #438 verify: an update whose reminder could not be re-read says so, and judges nothing.
     func testAnUnconfirmedUpdateOmitsTheAlarmsAndSaysSo() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: AlarmWriteFake())
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("unread"), "due_date": .string("2026-12-11T16:00:00"), "alarms_minutes_offsets": .array([.int(15)])]))
         XCTAssertNil(result["alarms_minutes_offsets"], "not read back")
@@ -192,7 +192,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
 
     func testUpdatePassesTheOffsetsAndAnEmptyListClears() async throws {
         let fake = AlarmWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "alarms_minutes_offsets": .array([.int(30)])]))
         XCTAssertEqual(result["alarms_minutes_offsets"] as? [Double], [30])
@@ -209,7 +209,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
 
     func testUpdateRefusesADateOnlyOrClearedDueWithAlarmsBeforeTheStore() async throws {
         let fake = AlarmWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         for extra: [String: Value] in [["due_date": .string("2026-12-11")], ["clear_due_date": .bool(true)]] {
             var arguments: [String: Value] = ["reminder_id": .string("r"), "alarms_minutes_offsets": .array([.int(15)])]
             arguments.merge(extra) { $1 }
@@ -223,7 +223,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
     }
 
     func testAnUpdateThatMovesTheListTimeCarriesTheNote() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: AlarmWriteFake())
         let early = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "alarms_minutes_offsets": .array([.int(15)])]))
         XCTAssertEqual(early["alarms_note"] as? String, ReminderRelativeAlarms.alarmDisplayNote)
@@ -238,7 +238,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
     /// PR #438 verify: rescheduling a reminder that keeps an early alarm is the case #433 explains.
     /// This covers the handler's merge; the gate is `ReminderUpdateWrite.alarmReadBack`.
     func testAnUpdateThatTouchesTheDueCarriesTheNote() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: AlarmWriteFake())
         for arguments: [String: Value] in [["due_date": .string("2026-12-11T15:30:00")], ["realign_to_due": .bool(true)]] {
             let raw = try await server.executeToolCall(name: "update_reminder", arguments: arguments.merging(["reminder_id": .string("early-alarms")]) { $1 })
             XCTAssertEqual(try object(raw)["alarms_note"] as? String, ReminderRelativeAlarms.alarmDisplayNote, "\(arguments)")
@@ -251,7 +251,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
     /// PR #438 verify: the due moves in the same call, and the note does not contradict it.
     func testAnUpdateMovingTheDueWithOffsetsCarriesTheNote() async throws {
         let fake = AlarmWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let result = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("r"), "due_date": .string("2026-12-11T16:00:00"), "alarms_minutes_offsets": .array([.int(15)])]))
         let note = try XCTUnwrap(result["alarms_note"] as? String)
@@ -264,7 +264,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
     /// Neither note replaces the other. The two cannot both be set by the store (the leftover note
     /// needs a due that is not timed, the display note a timed one); this pins the merge.
     func testALeftoverNoteAndTheDisplayNoteBothStay() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: AlarmWriteFake())
         var fields: [String: Any] = ["alarms_note": "first"]
         CheICalMCPServer.appendAlarmNote("second", to: &fields)
         XCTAssertEqual(fields["alarms_note"] as? String, "first second")
@@ -278,7 +278,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
 
     func testBatchRowsCarryTheirOwnOffsets() async throws {
         let fake = AlarmWriteFake()
-        let server = try await CheICalMCPServer(reminderWriteSource: fake)
+        let server = try await TestServer.make(reminderWriteSource: fake)
         let batch = try object(await server.executeToolCall(name: "create_reminders_batch", arguments: [
             "reminders": .array([
                 .object(["title": .string("a"), "due_date": .string("2026-12-10T09:00:00"), "alarms_minutes_offsets": .array([.int(10)])]),
@@ -298,7 +298,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
     }
 
     func testABatchRowThatMovesTheListTimeCarriesTheNote() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: AlarmWriteFake())
         let raw = try await server.executeToolCall(name: "create_reminders_batch", arguments: ["reminders": .array([
             .object(["title": .string("a"), "due_date": .string("2026-12-10T09:00:00"), "alarms_minutes_offsets": .array([.int(15)])]),
             .object(["title": .string("b"), "due_date": .string("2026-12-10T09:00:00"), "alarms_minutes_offsets": .array([.int(0)])]),
@@ -352,7 +352,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
     }
 
     func testAnUpdateThatLeavesRelativeAlarmsWithoutATimedDueSaysSo() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: AlarmWriteFake())
+        let server = try await TestServer.make(reminderWriteSource: AlarmWriteFake())
         let cleared = try object(await server.executeToolCall(name: "update_reminder", arguments: [
             "reminder_id": .string("keeps-alarms"), "clear_due_date": .bool(true)]))
         XCTAssertEqual(cleared["alarms_note"] as? String, ReminderRelativeAlarms.leftoverNoDueNote(2))
@@ -368,7 +368,7 @@ final class ReminderAlarmsHandlerTests: XCTestCase {
     /// outside one year (Int.max used to trap `Int * 60` on create_event / update_event) before
     /// anything is looked up or written.
     func testTheEventToolsRefuseANonArrayOrOutOfRangeOffset() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let event: [String: Value] = ["title": .string("x"), "start_time": .string("2026-12-10T09:00:00"),
                                       "end_time": .string("2026-12-10T10:00:00"), "calendar_name": .string("none")]
         for (value, expected) in [(Value.string("15"), "must be an array of integers"), (.array([.int(Int.max)]), "525600")] {

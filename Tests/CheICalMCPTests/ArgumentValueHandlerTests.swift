@@ -44,7 +44,7 @@ final class ArgumentValueHandlerTests: XCTestCase {
 
     func testALocationTriggerKeepsAWholeNumber() async throws {
         let source = RecordingReminderSource()
-        let server = try await CheICalMCPServer(reminderWriteSource: source)
+        let server = try await TestServer.make(reminderWriteSource: source)
         let trigger = #""location_trigger": {"title": "Lab", "latitude": 25, "longitude": 121.0, "radius": 500, "proximity": "enter"}"#
         _ = try await server.executeToolCall(name: "create_reminder", arguments: decoded(#"{"title": "t", \#(trigger)}"#))
         _ = try await server.executeToolCall(name: "update_reminder", arguments: decoded(#"{"reminder_id": "r", \#(trigger)}"#))
@@ -58,7 +58,7 @@ final class ArgumentValueHandlerTests: XCTestCase {
 
     func testALocationTriggerKeepsAFractionAndItsDefault() async throws {
         let source = RecordingReminderSource()
-        let server = try await CheICalMCPServer(reminderWriteSource: source)
+        let server = try await TestServer.make(reminderWriteSource: source)
         _ = try await server.executeToolCall(name: "create_reminder", arguments: decoded(
             #"{"title": "t", "location_trigger": {"title": "Lab", "latitude": 25.03, "longitude": 121.56, "proximity": "leave"}}"#))
         let location = await source.created.first?.locationTrigger
@@ -68,7 +68,7 @@ final class ArgumentValueHandlerTests: XCTestCase {
 
     func testAStructuredLocationKeepsAWholeNumber() async throws {
         let source = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: source)
+        let server = try await TestServer.make(eventWriteSource: source)
         let location = #""structured_location": {"title": "Lab", "latitude": 25, "longitude": 121, "radius": 200}"#
         _ = try await server.executeToolCall(name: "create_event", arguments: decoded(#"{"title": "t", \#(start), \#(location)}"#))
         _ = try await server.executeToolCall(name: "update_event", arguments: decoded(#"{"event_id": "e", \#(location)}"#))
@@ -86,7 +86,7 @@ final class ArgumentValueHandlerTests: XCTestCase {
     /// The schema requires `title`; without it the location was dropped with no message.
     func testAStructuredLocationWithoutATitleIsRefused() async throws {
         let source = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: source)
+        let server = try await TestServer.make(eventWriteSource: source)
         let location = #""structured_location": {"latitude": 25.03, "longitude": 121.5}"#
         for (tool, json) in [("create_event", #"{"title": "t", \#(start), \#(location)}"#), ("update_event", #"{"event_id": "e", \#(location)}"#)] {
             do {
@@ -109,7 +109,7 @@ final class ArgumentValueHandlerTests: XCTestCase {
     /// `.double(5)` cannot come from a client today; the check passes it, so the handler reads it.
     func testAWholeNumberDoublePriorityIsReadAndNullIsAbsent() async throws {
         let source = RecordingReminderSource()
-        let server = try await CheICalMCPServer(reminderWriteSource: source)
+        let server = try await TestServer.make(reminderWriteSource: source)
         _ = try await server.executeToolCall(name: "update_reminder", arguments: ["reminder_id": .string("r"), "priority": .double(5)])
         _ = try await server.executeToolCall(name: "update_reminder", arguments: ["reminder_id": .string("r"), "priority": .null])
         let priorities = await source.updated.map(\.priority)
@@ -118,7 +118,7 @@ final class ArgumentValueHandlerTests: XCTestCase {
 
     /// The elements were dropped by `compactMap`, behind a message that promises they are checked.
     func testAWrongArrayElementIsRefusedBeforeTheHandler() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource(), reminderWriteSource: RecordingReminderSource())
+        let server = try await TestServer.make(eventWriteSource: FakeEventWriteSource(), reminderWriteSource: RecordingReminderSource())
         let cases: [(String, String, String)] = [
             ("create_reminder", #"{"title": "t", "tags": [5]}"#, "tags must be an array of strings"),
             ("update_reminder", #"{"reminder_id": "r", "tags": ["a", 5]}"#, "tags must be an array of strings"),
@@ -149,7 +149,7 @@ final class ArgumentValueHandlerTests: XCTestCase {
 
     /// The caller sent a string and the SDK decoded it as data; "must be a string" gave no way out.
     func testTextShapedLikeADataURLIsNamed() async throws {
-        let server = try await CheICalMCPServer(reminderWriteSource: RecordingReminderSource())
+        let server = try await TestServer.make(reminderWriteSource: RecordingReminderSource())
         let arguments = try decoded(#"{"title": "t", "notes": "data: 12 subjects, 3 dropped"}"#)
         XCTAssertNil(arguments["notes"]?.stringValue, "the SDK's reading, which this test depends on")
         do {
@@ -164,7 +164,7 @@ final class ArgumentValueHandlerTests: XCTestCase {
 
     /// The parser's message has the example; the check must not get there first (#184, #434).
     func testANonObjectRecurrenceKeepsItsParsersMessage() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource(), reminderWriteSource: RecordingReminderSource())
+        let server = try await TestServer.make(eventWriteSource: FakeEventWriteSource(), reminderWriteSource: RecordingReminderSource())
         for (tool, arguments) in [("update_event", ["event_id": Value.string("e"), "recurrence": .string("daily")]),
                                   ("update_reminder", ["reminder_id": .string("r"), "recurrence": .string("daily")])] {
             do {
@@ -181,7 +181,7 @@ final class ArgumentValueHandlerTests: XCTestCase {
     func testWhatNullMeans() async throws {
         XCTAssertNoThrow(try ToolArgumentCheck.check(tool: "update_reminder", arguments: ["reminder_id": .string("r"), "notes": .null]))
         XCTAssertThrowsError(try ToolArgumentCheck.check(tool: "create_reminder", arguments: ["title": .string("t"), "url": .null]), "undeclared")
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         do {
             _ = try await server.executeToolCall(name: "list_reminders", arguments: ["limit": .null])
             XCTFail("the handler refuses a null limit")

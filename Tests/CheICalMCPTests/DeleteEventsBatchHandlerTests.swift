@@ -226,7 +226,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     }
 
     private func call(_ fake: any EventBatchDeletionSource, _ args: [String: Value]) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(eventBatchDeletionSource: fake)
+        let server = try await TestServer.make(eventBatchDeletionSource: fake)
         return try object(await server.executeToolCall(name: "delete_events_batch", arguments: args))
     }
 
@@ -305,7 +305,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
 
     private func assertRefused(_ fake: BatchDeletionFake, _ args: [String: Value],
                                file: StaticString = #filePath, line: UInt = #line) async throws {
-        let server = try await CheICalMCPServer(eventBatchDeletionSource: fake)
+        let server = try await TestServer.make(eventBatchDeletionSource: fake)
         do {
             _ = try await server.executeToolCall(name: "delete_events_batch", arguments: args)
             XCTFail("expected a refusal", file: file, line: line)
@@ -498,7 +498,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     func testTheReadBoundStopsTheDeleteWithNothingDeleted() async throws {
         let fake = BatchDeletionFake(listed: [], listError: EventRangeQuery.RangeError.tooManyEvents(
             limit: EventRangeQuery.maxEventsRead, from: base, to: base.addingTimeInterval(36_500 * day), readThrough: base.addingTimeInterval(1460 * day)))
-        let server = try await CheICalMCPServer(eventBatchDeletionSource: fake)
+        let server = try await TestServer.make(eventBatchDeletionSource: fake)
         do {
             _ = try await server.executeToolCall(name: "delete_events_batch", arguments: args(after: base, dryRun: false))
             XCTFail("expected the read bound")
@@ -672,13 +672,13 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
                                    cutReachesEditedOccurrences: Bool = true) async throws
         -> (dry: [[String: Any]], total: Int?, real: [String: Any], left: Int, dryResponse: [String: Any]) {
         let args: [String: Value] = ["event_ids": .array(ids.map { .string($0) }), "span": .string(span)]
-        let dryServer = try await CheICalMCPServer(eventBatchDeletionSource: SeriesModel(
+        let dryServer = try await TestServer.make(eventBatchDeletionSource: SeriesModel(
             series: series, occurrences: occurrences, cutReachesEditedOccurrences: cutReachesEditedOccurrences))
         var dryArgs = args
         dryArgs["dry_run"] = .bool(true)
         let dry = try object(await dryServer.executeToolCall(name: "delete_events_batch", arguments: dryArgs))
         let model = SeriesModel(series: series, occurrences: occurrences, cutReachesEditedOccurrences: cutReachesEditedOccurrences)
-        let realServer = try await CheICalMCPServer(eventBatchDeletionSource: model)
+        let realServer = try await TestServer.make(eventBatchDeletionSource: model)
         var realArgs = args
         realArgs["dry_run"] = .bool(false)
         let real = try object(await realServer.executeToolCall(name: "delete_events_batch", arguments: realArgs))
@@ -809,7 +809,7 @@ final class DeleteEventsBatchHandlerTests: XCTestCase {
     /// `already_removed`.
     func testTheSpanFutureDryRunCountsCoveredRows() async throws {
         let shape = [editedOccurrence(7), unedited(14), editedOccurrence(21)]
-        let server = try await CheICalMCPServer(eventBatchDeletionSource: SeriesModel(series: series, occurrences: shape))
+        let server = try await TestServer.make(eventBatchDeletionSource: SeriesModel(series: series, occurrences: shape))
         let dry = try object(await server.executeToolCall(name: "delete_events_batch", arguments: [
             "event_ids": .array([.string(ownId(7)), .string(ownId(21))]), "span": .string("future"), "dry_run": .bool(true)]))
         XCTAssertEqual(dry["covered_by_earlier_rows"] as? Int, 1, "\(dry)")

@@ -40,7 +40,7 @@ final class UndoKeepLaterEditsHandlerTests: XCTestCase {
         let history = CalendarUndoManager()
         await history.record(update())
         let executor = KeepLaterEditsExecutor()
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: executor)
         return (history, executor, server)
     }
 

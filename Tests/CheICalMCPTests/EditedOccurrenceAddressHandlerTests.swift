@@ -106,7 +106,7 @@ final class EditedOccurrenceAddressHandlerTests: XCTestCase {
             let expected = reason(call)
             XCTAssertTrue(expected.contains("Its identifier is \(occurrenceID)"), expected)
             let fake = RefusingWrites(updateError: EventKitError.occurrenceAddressRefused(reason: expected))
-            let server = try await CheICalMCPServer(eventWriteSource: fake)
+            let server = try await TestServer.make(eventWriteSource: fake)
             var arguments = dated
             arguments["span"] = .string(span)
             arguments["title"] = .string("New title")
@@ -125,7 +125,7 @@ final class EditedOccurrenceAddressHandlerTests: XCTestCase {
             let expected = reason(call)
             XCTAssertTrue(expected.hasSuffix("Nothing was deleted."), expected)
             let fake = RefusingDeletes(error: EventKitError.occurrenceAddressRefused(reason: expected))
-            let server = try await CheICalMCPServer(eventDeletionSource: fake)
+            let server = try await TestServer.make(eventDeletionSource: fake)
             var arguments = dated
             arguments["span"] = .string(span)
             let (result, stderr) = await withCapturedStderrAsync { await server.handleToolCallForTesting(name: "delete_event", arguments: arguments) }
@@ -141,7 +141,7 @@ final class EditedOccurrenceAddressHandlerTests: XCTestCase {
         let expected = reason(.moveRow)
         XCTAssertTrue(expected.contains("pass it in event_ids"), expected)
         let fake = RefusingMoves(error: EventKitError.moveRefused(reason: expected))
-        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let server = try await TestServer.make(eventCopySource: fake)
         let arguments: [String: Value] = ["target_calendar": .string("Work"), "event_ids": .array([.string("6F2A:9B1C"), .string("one-off")]),
                                           "occurrence_dates": .array([.string("2026-12-21"), .null])]
         let (result, stderr) = await withCapturedStderrAsync { await server.handleToolCallForTesting(name: "move_events_batch", arguments: arguments) }
@@ -163,7 +163,7 @@ final class EditedOccurrenceAddressHandlerTests: XCTestCase {
     /// an error that is not a trusted message writes its line. Without this, an empty capture could
     /// also mean that nothing was captured.
     func testAnUntrustedErrorWritesOneLineThroughTheSameCapture() async throws {
-        let update = try await CheICalMCPServer(eventWriteSource: RefusingWrites(updateError: untrusted))
+        let update = try await TestServer.make(eventWriteSource: RefusingWrites(updateError: untrusted))
         var arguments = dated
         arguments["title"] = .string("New title")
         let (updated, updateLog) = await withCapturedStderrAsync { await update.handleToolCallForTesting(name: "update_event", arguments: arguments) }
@@ -171,11 +171,11 @@ final class EditedOccurrenceAddressHandlerTests: XCTestCase {
         XCTAssertEqual(updateLog.split(separator: "\n").count, 1, updateLog)
         XCTAssertTrue(updateLog.contains("update_event"), updateLog)
 
-        let delete = try await CheICalMCPServer(eventDeletionSource: RefusingDeletes(error: untrusted))
+        let delete = try await TestServer.make(eventDeletionSource: RefusingDeletes(error: untrusted))
         let (_, deleteLog) = await withCapturedStderrAsync { await delete.handleToolCallForTesting(name: "delete_event", arguments: dated) }
         XCTAssertEqual(deleteLog.split(separator: "\n").count, 1, deleteLog)
 
-        let move = try await CheICalMCPServer(eventCopySource: RefusingMoves(error: untrusted))
+        let move = try await TestServer.make(eventCopySource: RefusingMoves(error: untrusted))
         let (_, moveLog) = await withCapturedStderrAsync {
             await move.handleToolCallForTesting(name: "move_events_batch", arguments: [
                 "target_calendar": .string("Work"), "event_ids": .array([.string("6F2A:9B1C")]), "occurrence_dates": .array([.string("2026-12-21")])])
@@ -196,7 +196,7 @@ final class EditedOccurrenceAddressHandlerTests: XCTestCase {
     /// The conflict the manager throws when an excluded date still holds an occurrence reaches the
     /// caller as the error, not as `skipped`.
     func testCreateEventAnswersTheConflictNotSkipped() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: RefusingWrites(updateError: untrusted))
+        let server = try await TestServer.make(eventWriteSource: RefusingWrites(updateError: untrusted))
         guard case .object(let arguments) = item("retry") else { return XCTFail("item") }
         let result = await server.handleToolCallForTesting(name: "create_event", arguments: arguments)
         XCTAssertEqual(result.isError, true)
@@ -208,7 +208,7 @@ final class EditedOccurrenceAddressHandlerTests: XCTestCase {
 
     func testACreateEventsBatchRowAnswersTheConflictAndTheOtherRowIsCreated() async throws {
         let fake = RefusingWrites(updateError: untrusted)
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         let raw = try await server.executeToolCall(name: "create_events_batch", arguments: ["events": .array([item("retry"), item("fresh")])])
         let response = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         let rows = try XCTUnwrap(response["results"] as? [[String: Any]])

@@ -659,7 +659,13 @@ struct UndoRecord {
 /// In-memory undo/redo stack for calendar and reminder operations.
 /// History is lost on server restart.
 actor CalendarUndoManager {
-    static let shared = CalendarUndoManager()
+    /// #600: checked on each use; under XCTest it stops the process unless the test opted in
+    /// (`LiveStoreGuard`).
+    static var shared: CalendarUndoManager {
+        LiveStoreGuard.check("CalendarUndoManager.shared")
+        return processWide
+    }
+    private static let processWide = CalendarUndoManager()
 
     private var undoStack: [UndoRecord] = []
     private var redoStack: [UndoRecord] = []

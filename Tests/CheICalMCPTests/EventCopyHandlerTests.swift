@@ -71,7 +71,7 @@ private actor CopyFake: EventCopySource {
 final class EventCopyHandlerTests: XCTestCase {
     func testBatchMixedFailuresCountOnlySuccessfulSourceDeletion() async throws {
         let history = CalendarUndoManager()
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: history))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: history))
         let raw = try await server.executeToolCall(name: "move_events_batch", arguments: ["target_calendar": .string("Work"), "target_calendar_source": .string("Other"), "event_ids": .array([.string("save-fail"), .string("good"), .string("delete-fail")])])
         let result = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         XCTAssertEqual(result["succeeded"] as? Int, 1)
@@ -96,7 +96,7 @@ final class EventCopyHandlerTests: XCTestCase {
         // The fake supplies the raw EventKit pair and the split refusal. The wiring test
         // pins the production copy call; this test checks selector parsing and row reporting.
         let fake = CopyFake(history: CalendarUndoManager())
-        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let server = try await TestServer.make(eventCopySource: fake)
         let ids = ["gap-series", "gap-series", "gap-series/RID=858124800"]
         let selectors = ["2028-03-12", "2028-03-12T01:00:00-04:00", "2028-03-12"]
         let rows = try await move(server, [
@@ -118,7 +118,7 @@ final class EventCopyHandlerTests: XCTestCase {
     }
 
     func testInPlaceMoveKeepsTheIdentifierAndSaysSo() async throws {
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: CalendarUndoManager()))
         let row = try await move(server, ["event_ids": .array([.string("good")])])[0]
         XCTAssertEqual(row["method"] as? String, "in_place")
         XCTAssertEqual(row["id_changed"] as? Bool, false)
@@ -127,7 +127,7 @@ final class EventCopyHandlerTests: XCTestCase {
     }
 
     func testMoveAcrossAccountsReportsTheNewIdentifier() async throws {
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: CalendarUndoManager()))
         let row = try await move(server, ["event_ids": .array([.string("cross-account")])])[0]
         XCTAssertEqual(row["method"] as? String, "in_place")
         XCTAssertEqual(row["id_changed"] as? Bool, true)
@@ -135,7 +135,7 @@ final class EventCopyHandlerTests: XCTestCase {
     }
 
     func testFallbackCopyListsTheFieldsItDidNotKeep() async throws {
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: CalendarUndoManager()))
         let row = try await move(server, ["event_ids": .array([.string("fallback")])])[0]
         XCTAssertEqual(row["method"] as? String, "copied")
         XCTAssertEqual(row["id_changed"] as? Bool, true)
@@ -143,7 +143,7 @@ final class EventCopyHandlerTests: XCTestCase {
     }
 
     func testRefusalReasonIsReportedForThatItem() async throws {
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: CalendarUndoManager()))
         let row = try await move(server, ["event_ids": .array([.string("refused")])])[0]
         XCTAssertEqual(row["success"] as? Bool, false)
         XCTAssertEqual(row["error"] as? String, "fixed refusal reason")
@@ -151,7 +151,7 @@ final class EventCopyHandlerTests: XCTestCase {
 
     /// #253 verify round 2, D1: a copy the target refused names the alarm kinds it carried.
     func testARefusedCopyNamesItsAlarmKindsInTheRow() async throws {
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: CalendarUndoManager()))
         let row = try await move(server, ["event_ids": .array([.string("refused-alarms")])])[0]
         XCTAssertEqual(row["success"] as? Bool, false)
         let error = try XCTUnwrap(row["error"] as? String)
@@ -161,7 +161,7 @@ final class EventCopyHandlerTests: XCTestCase {
 
     /// Verify round 3 #7: a plain copy_event returns the refusal message as it is.
     func testARefusedPlainCopyReturnsTheMessageVerbatim() async throws {
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: CalendarUndoManager()))
         let result = await server.handleToolCallForTesting(name: "copy_event", arguments: [
             "event_id": .string("refused-alarms"), "target_calendar": .string("Work")])
         XCTAssertEqual(result.isError, true)
@@ -174,7 +174,7 @@ final class EventCopyHandlerTests: XCTestCase {
     /// aborting. The fake answers the same way, so this pins how copy_event reports it (the
     /// envelope), not the guard itself (`EventLookupTests`).
     func testCopyEventGivenAnIdThatIsNotAnEventReportsNotFound() async throws {
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: CalendarUndoManager()))
         let result = await server.handleToolCallForTesting(name: "copy_event", arguments: [
             "event_id": .string("reminder-id"), "target_calendar": .string("Work")])
         XCTAssertEqual(result.isError, true)
@@ -186,7 +186,7 @@ final class EventCopyHandlerTests: XCTestCase {
     /// others run; it does not reach the move. An access error is about every row, and stops the call.
     func testMoveEventsBatchFailsOnlyTheRowWhoseZoneLookupFailed() async throws {
         let fake = CopyFake(history: CalendarUndoManager())
-        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let server = try await TestServer.make(eventCopySource: fake)
         let raw = try await server.executeToolCall(name: "move_events_batch", arguments: [
             "target_calendar": .string("Work"),
             "event_ids": .array([.string("first"), .string("lookup-failed"), .string("last")]),
@@ -204,7 +204,7 @@ final class EventCopyHandlerTests: XCTestCase {
 
     func testMoveEventsBatchStopsOnAnAccessErrorWhileReadingADate() async throws {
         let fake = CopyFake(history: CalendarUndoManager())
-        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let server = try await TestServer.make(eventCopySource: fake)
         do {
             _ = try await server.executeToolCall(name: "move_events_batch", arguments: [
                 "target_calendar": .string("Work"),
@@ -223,7 +223,7 @@ final class EventCopyHandlerTests: XCTestCase {
     /// already moved.
     func testMoveBatchReportsANotFoundRowAndMovesTheRest() async throws {
         let history = CalendarUndoManager()
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: history))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: history))
         let rows = try await move(server, ["event_ids": .array([.string("reminder-id"), .string("good")])])
         XCTAssertEqual(rows.map { $0["success"] as? Bool }, [false, true])
         XCTAssertEqual(rows[0]["error"] as? String, "Event not found: reminder-id")
@@ -233,7 +233,7 @@ final class EventCopyHandlerTests: XCTestCase {
 
     func testSpanAndIndexAlignedOccurrenceDatesReachTheSource() async throws {
         let fake = CopyFake(history: CalendarUndoManager())
-        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let server = try await TestServer.make(eventCopySource: fake)
         _ = try await move(server, ["event_ids": .array([.string("a"), .string("b")]),
                                     "span": .string("all"),
                                     "occurrence_dates": .array([.string("2026-10-21T10:00:00+08:00"), .null])])
@@ -246,7 +246,7 @@ final class EventCopyHandlerTests: XCTestCase {
 
     func testSpanDefaultsToThis() async throws {
         let fake = CopyFake(history: CalendarUndoManager())
-        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let server = try await TestServer.make(eventCopySource: fake)
         _ = try await move(server, ["event_ids": .array([.string("a")])])
         let calls = await fake.moveCalls
         XCTAssertEqual(calls.map(\.span), [.this])
@@ -254,7 +254,7 @@ final class EventCopyHandlerTests: XCTestCase {
 
     func testOccurrenceDatesOfTheWrongLengthAreRejectedBeforeAnyWrite() async throws {
         let fake = CopyFake(history: CalendarUndoManager())
-        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let server = try await TestServer.make(eventCopySource: fake)
         do {
             _ = try await move(server, ["event_ids": .array([.string("a"), .string("b")]),
                                         "occurrence_dates": .array([.string("2026-10-21")])])
@@ -265,12 +265,12 @@ final class EventCopyHandlerTests: XCTestCase {
     }
 
     func testUnknownSpanIsRejected() async throws {
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: CalendarUndoManager()))
         do { _ = try await move(server, ["event_ids": .array([.string("a")]), "span": .string("future")]); XCTFail("span") } catch {}
     }
 
     private func copyMove(_ id: String) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: CalendarUndoManager()))
         let raw = try await server.executeToolCall(name: "copy_event", arguments: [
             "event_id": .string(id), "target_calendar": .string("Work"), "delete_original": .bool(true)])
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
@@ -298,7 +298,7 @@ final class EventCopyHandlerTests: XCTestCase {
     }
 
     private func plainCopy(_ id: String) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: CalendarUndoManager()))
         let raw = try await server.executeToolCall(name: "copy_event", arguments: [
             "event_id": .string(id), "target_calendar": .string("Work")])
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
@@ -331,7 +331,7 @@ final class EventCopyHandlerTests: XCTestCase {
     /// Round 2 #3: non-string ids would shift occurrence_dates onto the wrong event.
     func testNonStringEventIdsAreRejected() async throws {
         let fake = CopyFake(history: CalendarUndoManager())
-        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let server = try await TestServer.make(eventCopySource: fake)
         do {
             _ = try await move(server, ["event_ids": .array([.string("a"), .int(1), .string("b")]),
                                         "occurrence_dates": .array([.string("2026-10-21"), .string("2026-10-28")])])
@@ -343,7 +343,7 @@ final class EventCopyHandlerTests: XCTestCase {
 
     /// Round 1 #1: an event already in the target calendar is reported unchanged.
     func testMoveToTheCurrentCalendarIsReportedUnchanged() async throws {
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: CalendarUndoManager()))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: CalendarUndoManager()))
         let row = try await move(server, ["event_ids": .array([.string("same-calendar")])])[0]
         XCTAssertEqual(row["method"] as? String, "unchanged")
         XCTAssertEqual(row["id_changed"] as? Bool, false)
@@ -353,7 +353,7 @@ final class EventCopyHandlerTests: XCTestCase {
     /// delete_event does.
     func testDateOnlyOccurrenceDateUsesTheEventsTimeZone() async throws {
         let fake = CopyFake(history: CalendarUndoManager())
-        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let server = try await TestServer.make(eventCopySource: fake)
         _ = try await move(server, ["event_ids": .array([.string("ny-series")]),
                                     "occurrence_dates": .array([.string("2026-10-21")])])
         // Round 4: the fake's zone differs from the host's on any host (New York, or Tokyo).
@@ -365,7 +365,7 @@ final class EventCopyHandlerTests: XCTestCase {
     /// #270 round 3: an access error from the zone lookup reaches the caller before any move.
     func testAnAccessErrorFromTheZoneLookupStopsTheBatchBeforeAnyMove() async throws {
         let fake = CopyFake(history: CalendarUndoManager())
-        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let server = try await TestServer.make(eventCopySource: fake)
         do {
             _ = try await move(server, ["event_ids": .array([.string("good"), .string("denied")]),
                                         "occurrence_dates": .array([.null, .string("2026-10-21")])])
@@ -380,7 +380,7 @@ final class EventCopyHandlerTests: XCTestCase {
     /// Round 1 #10: a present but non-array occurrence_dates is rejected, not ignored.
     func testNonArrayOccurrenceDatesIsRejected() async throws {
         let fake = CopyFake(history: CalendarUndoManager())
-        let server = try await CheICalMCPServer(eventCopySource: fake)
+        let server = try await TestServer.make(eventCopySource: fake)
         do {
             _ = try await move(server, ["event_ids": .array([.string("a")]), "occurrence_dates": .string("2026-10-21")])
             XCTFail("a string occurrence_dates must be rejected")
@@ -391,7 +391,7 @@ final class EventCopyHandlerTests: XCTestCase {
 
     func testCopyOnlyLeavesHistoryUntouched() async throws {
         let history = CalendarUndoManager()
-        let server = try await CheICalMCPServer(eventCopySource: CopyFake(history: history))
+        let server = try await TestServer.make(eventCopySource: CopyFake(history: history))
         let raw = try await server.executeToolCall(name: "copy_event", arguments: ["event_id": .string("good"), "target_calendar": .string("Work")])
         let result = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         XCTAssertEqual(result["action"] as? String, "copied")

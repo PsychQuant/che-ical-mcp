@@ -111,7 +111,7 @@ final class EventReadValueTests: XCTestCase {
     }
 
     func testAValueFormatsByteForByteAsTheEvent() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         for (label, event) in representative {
             try assertSame(event, label, server: server)
         }
@@ -120,7 +120,7 @@ final class EventReadValueTests: XCTestCase {
     /// Attendees, the organizer and every other fragment set, as an edited occurrence or an invite
     /// would have them (`FakeFormattableEvent` sets every conditional accessor).
     func testAValueCarriesEveryFragmentOfAFake() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         var fake = FakeFormattableEvent()
         fake.attendeesFragment = [["name": "A", "status": "accepted"], ["email_redacted": true]]
         fake.organizerFragment = ["name": "O", "is_current_user": false]

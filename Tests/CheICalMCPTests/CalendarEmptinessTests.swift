@@ -188,7 +188,7 @@ final class CalendarEmptinessTests: XCTestCase {
     /// the setup's, the authorization default's and `NewObjectSave`'s read-only one.
     func testEveryCommitThroughTheManagersStoreMovesTheGenerationAtOnce() throws {
         let manager = try SourcePins.source("EventKit/EventKitManager.swift")
-        XCTAssertEqual(SourcePins.ranges(of: "let eventStore: CountingEventStore", in: manager).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "private let liveEventStore: CountingEventStore", in: manager).count, 1)   // #600: behind the checked `eventStore`
         XCTAssertEqual(SourcePins.ranges(of: "let store = CountingEventStore()", in: manager).count, 1)
         let generation = try XCTUnwrap(SourcePins.body(of: "var writeGeneration: Int", in: manager))
         XCTAssertEqual(SourcePins.ranges(of: "eventStore.commitCount", in: generation).count, 1)
@@ -243,11 +243,16 @@ final class CalendarEmptinessTests: XCTestCase {
     }
 
     /// The count moves on a write that throws, too (a save may throw after the store took it).
-    func testTheStoreCountsAWriteThatThrows() {
-        let store = SharedTestStore.store
-        let before = store.commitCount
-        XCTAssertThrowsError(try store.save(EKReminder(eventStore: store), commit: true), "a reminder with no list cannot be saved")
-        XCTAssertEqual(store.commitCount, before + 1)
+    /// #600: the one test that opts in to EventKit (`LiveStoreGuard.allowingLiveStore`), on the
+    /// counting store of `SharedTestStore`: it must call the real `save` to see the count move. It is
+    /// safe because the reminder has no list, and EventKit refuses it before writing anything.
+    func testTheStoreCountsAWriteThatThrows() async throws {
+        try await LiveStoreGuard.allowingLiveStore {
+            let store = SharedTestStore.counting
+            let before = store.commitCount
+            XCTAssertThrowsError(try store.save(EKReminder(eventStore: store), commit: true), "a reminder with no list cannot be saved")
+            XCTAssertEqual(store.commitCount, before + 1)
+        }
     }
 
 

@@ -24,7 +24,7 @@ final class CleanupHandlerTests: XCTestCase {
         fake: FakeEventKitManager,
         arguments: [String: Value]
     ) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(reminderCleanupSource: fake)
+        let server = try await TestServer.make(reminderCleanupSource: fake)
         let json = try await server.executeToolCall(
             name: "cleanup_completed_reminders",
             arguments: arguments
@@ -36,7 +36,7 @@ final class CleanupHandlerTests: XCTestCase {
 
     func testF1GuardFiresBeforeListReminders() async throws {
         let fake = FakeEventKitManager()
-        let server = try await CheICalMCPServer(reminderCleanupSource: fake)
+        let server = try await TestServer.make(reminderCleanupSource: fake)
 
         do {
             _ = try await server.executeToolCall(
@@ -140,7 +140,7 @@ final class CleanupHandlerTests: XCTestCase {
     // call to `requireStringIfPresent` would fail loudly.
     func testFilterModeRejectsNonStringCalendarSource() async throws {
         let fake = FakeEventKitManager()
-        let server = try await CheICalMCPServer(reminderCleanupSource: fake)
+        let server = try await TestServer.make(reminderCleanupSource: fake)
 
         do {
             _ = try await server.executeToolCall(
@@ -425,7 +425,7 @@ final class CleanupHandlerTests: XCTestCase {
     }
 
     private func deleteBatch(_ fake: FakeEventKitManager) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(reminderCleanupSource: fake)
+        let server = try await TestServer.make(reminderCleanupSource: fake)
         let raw = try await server.executeToolCall(name: "delete_reminders_batch", arguments: ["reminder_ids": .array([.string("a"), .string("b")])])
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }

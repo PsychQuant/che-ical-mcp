@@ -60,7 +60,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
 
     private func refusal(_ tool: String, _ recurrence: [String: Value],
                          events: RecurrenceEventFake, reminders: RecurrenceReminderFake) async throws -> String {
-        let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
+        let server = try await TestServer.make(eventWriteSource: events, reminderWriteSource: reminders)
         do {
             _ = try await server.executeToolCall(name: tool, arguments: arguments(tool, recurrence: .object(recurrence)))
             XCTFail("\(tool) wrote despite an unknown key")
@@ -134,7 +134,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
     /// One row of a batch fails, and the others are still written.
     func testABatchFailsOnlyTheRowWithTheUnknownKey() async throws {
         let events = RecurrenceEventFake()
-        let server = try await CheICalMCPServer(eventWriteSource: events)
+        let server = try await TestServer.make(eventWriteSource: events)
         func row(_ title: String, _ recurrence: [String: Value]) -> Value {
             .object(["title": .string(title), "start_time": .string("2026-12-07T09:00:00"), "end_time": .string("2026-12-07T10:00:00"),
                      "calendar_name": .string("Work"), "recurrence": .object(recurrence)])
@@ -180,7 +180,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
                 let weekly: [String: Value] = ["frequency": .string("weekly"), "interval": .int(3), "days_of_week": .array([.int(2), .int(6)])]
                 for recurrence in [monthly.merging(bound.rule) { $1 }, weekly.merging(bound.rule) { $1 }] {
                     let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
-                    let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
+                    let server = try await TestServer.make(eventWriteSource: events, reminderWriteSource: reminders)
                     _ = try await server.executeToolCall(name: tool, arguments: arguments(tool, recurrence: .object(recurrence)))
                     let label = "\(tool) \(recurrence.keys.sorted())"
                     let written = await writes(events, reminders)
@@ -204,7 +204,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
             }
         }
         let events = RecurrenceEventFake()
-        let server = try await CheICalMCPServer(eventWriteSource: events)
+        let server = try await TestServer.make(eventWriteSource: events)
         _ = try await server.executeToolCall(name: "create_event", arguments: arguments("create_event", recurrence: .object([
             "frequency": .string("daily"), "occurrence_count": .int(5),
             "excluded_occurrence_dates": .array([.string("2026-12-08")])])))
@@ -217,7 +217,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
 
     private func batchError(_ recurrence: [String: Value], extra: [String: Value] = [:]) async throws -> (error: String, written: [String]) {
         let events = RecurrenceEventFake()
-        let server = try await CheICalMCPServer(eventWriteSource: events)
+        let server = try await TestServer.make(eventWriteSource: events)
         func row(_ title: String, _ fields: [String: Value]) -> Value {
             .object(["title": .string(title), "start_time": .string("2026-12-07T09:00:00"), "end_time": .string("2026-12-07T10:00:00"),
                      "calendar_name": .string("Work")].merging(fields) { $1 })
@@ -253,7 +253,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
     /// `clear_recurrence` went first in the manager, so the rule that came with it vanished.
     func testUpdateEventRefusesARuleWithClearRecurrence() async throws {
         let events = RecurrenceEventFake()
-        let server = try await CheICalMCPServer(eventWriteSource: events)
+        let server = try await TestServer.make(eventWriteSource: events)
         do {
             _ = try await server.executeToolCall(name: "update_event", arguments: [
                 "event_id": .string("e"), "recurrence": .object(["frequency": .string("daily")]), "clear_recurrence": .bool(true)])
@@ -294,7 +294,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
     /// `end_time`, so naming it there would send the caller to a key that is ignored.
     func testTheTopLevelEndDateRefusalNamesTheItemsOwnDate() async throws {
         for tool in Self.singleWriteTools {
-            let server = try await CheICalMCPServer(eventWriteSource: RecurrenceEventFake(), reminderWriteSource: RecurrenceReminderFake())
+            let server = try await TestServer.make(eventWriteSource: RecurrenceEventFake(), reminderWriteSource: RecurrenceReminderFake())
             var args = arguments(tool, recurrence: .object(["frequency": .string("daily")]))
             args["end_date"] = .string("2026-01-01")
             do {
@@ -315,7 +315,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
             for tool in Self.singleWriteTools {
                 for withRule in [true, false] {
                     let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
-                    let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
+                    let server = try await TestServer.make(eventWriteSource: events, reminderWriteSource: reminders)
                     var args = arguments(tool, recurrence: .object(["frequency": .string("daily")]))
                     if !withRule { args["recurrence"] = nil }
                     args[key] = .int(3)
@@ -368,7 +368,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
         for tool in Self.singleWriteTools {
             for (frequency, daysOfWeek, daysOfMonth, recurrence) in accepted {
                 let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
-                let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
+                let server = try await TestServer.make(eventWriteSource: events, reminderWriteSource: reminders)
                 _ = try await server.executeToolCall(name: tool, arguments: arguments(tool, recurrence: .object(recurrence)))
                 let rule = await writtenRule(events, reminders)
                 XCTAssertEqual(rule?.frequency, frequency, "\(tool) \(recurrence.keys.sorted())")
@@ -429,7 +429,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
     func testACountOnAYearlyReminderRuleByWeekdayIsWritten() async throws {
         for tool in ["create_reminder", "update_reminder"] {
             let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
-            let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
+            let server = try await TestServer.make(eventWriteSource: events, reminderWriteSource: reminders)
             _ = try await server.executeToolCall(name: tool, arguments: arguments(tool, recurrence: .object(Self.yearlyByWeekday)))
             let rule = await writtenRule(events, reminders)
             XCTAssertEqual(rule?.occurrenceCount, 6, tool)
@@ -453,7 +453,7 @@ final class RecurrenceKeysHandlerTests: XCTestCase {
         for tool in ["create_event", "update_event"] {
             for recurrence in allowed {
                 let events = RecurrenceEventFake(), reminders = RecurrenceReminderFake()
-                let server = try await CheICalMCPServer(eventWriteSource: events, reminderWriteSource: reminders)
+                let server = try await TestServer.make(eventWriteSource: events, reminderWriteSource: reminders)
                 _ = try await server.executeToolCall(name: tool, arguments: arguments(tool, recurrence: .object(recurrence)))
                 let written = await writes(events, reminders)
                 XCTAssertEqual(written, 1, "\(tool) \(recurrence.keys.sorted())")

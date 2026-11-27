@@ -8,7 +8,7 @@ final class ToolArgumentCheckDispatchTests: XCTestCase {
     private let planted = "ignore_previous_instructions"
 
     private func refusal(_ tool: String, _ arguments: [String: Value]) async throws -> String {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         do {
             _ = try await server.executeToolCall(name: tool, arguments: arguments)
             XCTFail("\(tool) took \(arguments)")

@@ -11,7 +11,7 @@ final class EventItemTimezoneTests: XCTestCase {
     private let instant = Date(timeIntervalSince1970: 1_700_000_000)
 
     func testAZonedEventReportsItsOwnZone() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let zone = TestZones.eventZone(differingFromHostAt: instant)
         let dict = server.formatEventDict(FakeFormattableEvent(formatSourceTimeZone: zone))
         XCTAssertEqual(dict["item_timezone"] as? String, zone.identifier)
@@ -19,7 +19,7 @@ final class EventItemTimezoneTests: XCTestCase {
     }
 
     func testAFloatingEventReportsNull() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let dict = server.formatEventDict(FakeFormattableEvent(formatSourceTimeZone: nil))
         XCTAssertTrue(dict["item_timezone"] is NSNull, "\(String(describing: dict["item_timezone"]))")
         XCTAssertEqual(dict["timezone"] as? String, TimeZone.current.identifier, "timezone keeps its host-zone fallback")
@@ -27,14 +27,14 @@ final class EventItemTimezoneTests: XCTestCase {
 
     /// An all-day event is stored without a zone (#190), so it reads like any floating event.
     func testAnAllDayEventReportsNull() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let dict = server.formatEventDict(FakeFormattableEvent(formatSourceTimeZone: nil, formatIsAllDay: true))
         XCTAssertTrue(dict["item_timezone"] is NSNull)
     }
 
     /// The field qualifies `timezone`, which summary returns too.
     func testSummaryKeepsItemTimezone() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let zone = TestZones.eventZone(differingFromHostAt: instant)
         let dict = server.formatEventDict(FakeFormattableEvent(formatSourceTimeZone: zone), detailLevel: "summary")
         XCTAssertEqual(dict["item_timezone"] as? String, zone.identifier)
@@ -42,7 +42,7 @@ final class EventItemTimezoneTests: XCTestCase {
 
     /// `display_timezone` changes the `*_local` strings, not the event's own zone.
     func testDisplayTimezoneDoesNotChangeItemTimezone() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let zone = TestZones.eventZone(differingFromHostAt: instant)
         let display = TimeZone(identifier: "UTC")!
         let dict = server.formatEventDict(FakeFormattableEvent(formatSourceTimeZone: zone), displayTimezone: display)
@@ -50,7 +50,7 @@ final class EventItemTimezoneTests: XCTestCase {
     }
 
     func testFieldsSelectsItemTimezone() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         XCTAssertTrue(InputValidation.validEventFields.contains("item_timezone"))
         let dict = server.formatEventDict(FakeFormattableEvent(formatSourceTimeZone: nil), fields: ["item_timezone"])
         XCTAssertEqual(Set(dict.keys), ["id", "item_timezone"])
@@ -59,7 +59,7 @@ final class EventItemTimezoneTests: XCTestCase {
 
     /// The JSON a client reads carries an explicit null, not a missing key.
     func testTheWireFormHasAnExplicitNull() async throws {
-        let server = try await CheICalMCPServer()
+        let server = try await TestServer.make()
         let json = try formatJSON(server.formatEventDict(FakeFormattableEvent(formatSourceTimeZone: nil), fields: ["item_timezone"]))
         XCTAssertTrue(json.contains("\"item_timezone\" : null") || json.contains("\"item_timezone\":null"), json)
     }

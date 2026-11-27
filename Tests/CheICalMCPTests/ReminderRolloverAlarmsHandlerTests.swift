@@ -23,7 +23,7 @@ private actor RolloverFake: ReminderCompletionSource {
 
 final class ReminderRolloverAlarmsHandlerTests: XCTestCase {
     private func call(_ alarms: ReminderRolloverAlarms?) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(reminderCompletionSource: RolloverFake(alarms))
+        let server = try await TestServer.make(reminderCompletionSource: RolloverFake(alarms))
         let raw = try await server.executeToolCall(name: "complete_reminder", arguments: ["reminder_id": .string("r")])
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }

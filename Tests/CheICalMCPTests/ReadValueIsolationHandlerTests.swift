@@ -11,7 +11,7 @@ import XCTest
 /// manager itself reads an `EKEvent`; the wiring pins in `ReadHandlerWiringTests` cover that.
 final class ReadValueIsolationHandlerTests: XCTestCase {
     private func call(_ tool: String, _ arguments: [String: Value], probe: ReadIsolationProbe) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(eventRangeReadSource: probe, calendarListSource: probe)
+        let server = try await TestServer.make(eventRangeReadSource: probe, calendarListSource: probe)
         let text = try await server.executeToolCall(name: tool, arguments: arguments)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any], text)
     }
@@ -52,7 +52,7 @@ final class ReadValueIsolationHandlerTests: XCTestCase {
 
     func testListCalendarsListsTheValues() async throws {
         let probe = ReadIsolationProbe()
-        let server = try await CheICalMCPServer(eventRangeReadSource: probe, calendarListSource: probe)
+        let server = try await TestServer.make(eventRangeReadSource: probe, calendarListSource: probe)
         let text = try await server.executeToolCall(name: "list_calendars", arguments: ["type": .string("event")])
         let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [[String: Any]], text)
         XCTAssertEqual(rows.count, 1)

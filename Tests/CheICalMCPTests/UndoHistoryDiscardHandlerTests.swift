@@ -11,7 +11,7 @@ final class UndoHistoryDiscardHandlerTests: XCTestCase {
             let reminder = UndoOperation.createReminder(id: "reminder", title: "Reminder", created: UndoSnapshotFixtures.reminder(title: "Reminder"))
             await manager.record(reversed ? event : reminder)
             await manager.record(reversed ? reminder : event)
-            let server = try await CheICalMCPServer(undoManager: manager)
+            let server = try await TestServer.make(undoManager: manager)
             let raw = try await server.executeToolCall(name: "undo_history", arguments: [:])
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
             let entries = try XCTUnwrap(json["history"] as? [[String: Any]])
@@ -56,7 +56,7 @@ final class UndoHistoryDiscardHandlerTests: XCTestCase {
     func testMalformedIdsNeverMutateHistory() async throws {
         let manager = CalendarUndoManager()
         await manager.record(.createEvent(id: "e", title: "E", created: UndoSnapshotFixtures.event(title: "E")))
-        let server = try await CheICalMCPServer(undoManager: manager)
+        let server = try await TestServer.make(undoManager: manager)
         for value: Value in [.null, .int(1), .bool(true), .object([:]), .string(""), .string("not-id")] {
             do { _ = try await server.executeToolCall(name: "undo", arguments: ["discard_id": value]); XCTFail("invalid id") } catch {}
         }

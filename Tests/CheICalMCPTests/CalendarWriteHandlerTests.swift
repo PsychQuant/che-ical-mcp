@@ -34,7 +34,7 @@ final class CalendarWriteHandlerTests: XCTestCase {
     ]
 
     private func refused(_ tool: String, _ args: [String: Value], _ phrase: String, _ fake: CalendarWriteFake) async throws {
-        let server = try await CheICalMCPServer(calendarWriteSource: fake)
+        let server = try await TestServer.make(calendarWriteSource: fake)
         do {
             _ = try await server.executeToolCall(name: tool, arguments: args)
             XCTFail("\(tool) took \(args)")
@@ -76,7 +76,7 @@ final class CalendarWriteHandlerTests: XCTestCase {
         for (type, entity) in [("event", EKEntityType.event), ("reminder", .reminder)] {
             for title in ["Work", " padded ", "日本語のカレンダー", longest] {
                 let fake = CalendarWriteFake()
-                let server = try await CheICalMCPServer(calendarWriteSource: fake)
+                let server = try await TestServer.make(calendarWriteSource: fake)
                 let text = try await server.executeToolCall(name: "create_calendar", arguments: ["title": .string(title), "type": .string(type)])
                 let created = await fake.created
                 XCTAssertEqual(created.map(\.title), [title])
@@ -88,7 +88,7 @@ final class CalendarWriteHandlerTests: XCTestCase {
 
     func testAnUpdateWithoutATitleIsNotChecked() async throws {
         let fake = CalendarWriteFake()
-        let server = try await CheICalMCPServer(calendarWriteSource: fake)
+        let server = try await TestServer.make(calendarWriteSource: fake)
         _ = try await server.executeToolCall(name: "update_calendar", arguments: ["id": .string("c"), "color": .string("#FF5733")])
         let updated = await fake.updated
         XCTAssertEqual(updated.count, 1)
@@ -102,7 +102,7 @@ final class CalendarWriteHandlerTests: XCTestCase {
 
     func testARenameAndAColorReachTheWrite() async throws {
         let fake = CalendarWriteFake()
-        let server = try await CheICalMCPServer(calendarWriteSource: fake)
+        let server = try await TestServer.make(calendarWriteSource: fake)
         let text = try await server.executeToolCall(name: "update_calendar", arguments: [
             "id": .string("c"), "title": .string("New name"), "color": .string("#112233")])
         let updated = await fake.updated
@@ -117,7 +117,7 @@ final class CalendarWriteHandlerTests: XCTestCase {
 
     func testAColorReachesTheCreate() async throws {
         let fake = CalendarWriteFake()
-        let server = try await CheICalMCPServer(calendarWriteSource: fake)
+        let server = try await TestServer.make(calendarWriteSource: fake)
         _ = try await server.executeToolCall(name: "create_calendar", arguments: [
             "title": .string("t"), "type": .string("event"), "color": .string("#112233")])
         let created = await fake.created
@@ -125,7 +125,7 @@ final class CalendarWriteHandlerTests: XCTestCase {
     }
 
     func testADuplicateAnswersSkipped() async throws {
-        let server = try await CheICalMCPServer(calendarWriteSource: CalendarWriteFake(isDuplicate: true))
+        let server = try await TestServer.make(calendarWriteSource: CalendarWriteFake(isDuplicate: true))
         let body = try json(try await server.executeToolCall(name: "create_calendar", arguments: ["title": .string("t"), "type": .string("event")]))
         XCTAssertEqual(body["action"] as? String, "skipped")
         XCTAssertEqual(body["reason"] as? String, "duplicate")
@@ -133,7 +133,7 @@ final class CalendarWriteHandlerTests: XCTestCase {
     }
 
     func testStoreDiffersReachesTheResponse() async throws {
-        let server = try await CheICalMCPServer(calendarWriteSource: CalendarWriteFake(storeDiffers: ["title"]))
+        let server = try await TestServer.make(calendarWriteSource: CalendarWriteFake(storeDiffers: ["title"]))
         let body = try json(try await server.executeToolCall(name: "create_calendar", arguments: ["title": .string("t"), "type": .string("reminder")]))
         XCTAssertEqual(body["action"] as? String, "created")
         XCTAssertEqual(body["store_differs"] as? [String], ["title"])
@@ -143,7 +143,7 @@ final class CalendarWriteHandlerTests: XCTestCase {
     func testTheLimitCountsCharacters() async throws {
         let title = String(repeating: "👨‍👩‍👧‍👦", count: InputValidation.maxTitleLength)
         let fake = CalendarWriteFake()
-        let server = try await CheICalMCPServer(calendarWriteSource: fake)
+        let server = try await TestServer.make(calendarWriteSource: fake)
         _ = try await server.executeToolCall(name: "create_calendar", arguments: ["title": .string(title), "type": .string("event")])
         let created = await fake.created
         XCTAssertEqual(created.map(\.title), [title])

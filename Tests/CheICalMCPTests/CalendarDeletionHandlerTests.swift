@@ -19,7 +19,7 @@ private actor CalendarDeletionFake: CalendarDeletionSource {
 
 final class CalendarDeletionHandlerTests: XCTestCase {
     private func call(_ fake: CalendarDeletionFake, _ args: [String: Value]) async throws -> String {
-        let server = try await CheICalMCPServer(calendarDeletionSource: fake)
+        let server = try await TestServer.make(calendarDeletionSource: fake)
         return try await server.executeToolCall(name: "delete_calendar", arguments: args)
     }
 

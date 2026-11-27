@@ -41,7 +41,7 @@ final class UndoGuardHandlerTests: XCTestCase {
         await history.record(update("Standup"))
         let before = await history.historySnapshot()
         let executor = RefusingExecutor()
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: executor)
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: executor)
 
         let result = await server.handleToolCallForTesting(name: "undo", arguments: [:])
 
@@ -68,7 +68,7 @@ final class UndoGuardHandlerTests: XCTestCase {
                                                completionDate: nil, title: "Pay rent", redoCompletionDate: nil, wasRecurring: false))
         let undone = try await history.beginUndo()
         await history.finishHistoryOperation(try XCTUnwrap(undone))   // as after a successful undo
-        let server = try await CheICalMCPServer(undoManager: history, undoExecutionSource: RefusingExecutor())
+        let server = try await TestServer.make(undoManager: history, undoExecutionSource: RefusingExecutor())
 
         let result = await server.handleToolCallForTesting(name: "redo", arguments: [:])
 

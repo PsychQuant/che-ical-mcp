@@ -29,7 +29,7 @@ final class ListReminderTagsHandlerTests: XCTestCase {
 
     func testTagsAreCountedFromSnapshotNotesAndSortedByCountThenName() async throws {
         let fake = RecordingReminderReadFake(records())
-        let server = try await CheICalMCPServer(reminderReadSource: fake)
+        let server = try await TestServer.make(reminderReadSource: fake)
         let raw = try await server.executeToolCall(name: "list_reminder_tags", arguments: [:])
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         XCTAssertEqual(json["total_reminders_scanned"] as? Int, 4)
@@ -41,7 +41,7 @@ final class ListReminderTagsHandlerTests: XCTestCase {
 
     func testIncludeCompletedMapsToTheSeamFilterAndIsEchoed() async throws {
         let fake = RecordingReminderReadFake(records())
-        let server = try await CheICalMCPServer(reminderReadSource: fake)
+        let server = try await TestServer.make(reminderReadSource: fake)
         let raw1 = try await server.executeToolCall(name: "list_reminder_tags", arguments: [:])
         let raw2 = try await server.executeToolCall(name: "list_reminder_tags", arguments: ["include_completed": .bool(true)])
         let raw3 = try await server.executeToolCall(name: "list_reminder_tags", arguments: ["include_completed": .bool(false)])
@@ -56,7 +56,7 @@ final class ListReminderTagsHandlerTests: XCTestCase {
 
     func testCalendarScopeIsForwardedToTheSeamVerbatim() async throws {
         let fake = RecordingReminderReadFake(records())
-        let server = try await CheICalMCPServer(reminderReadSource: fake)
+        let server = try await TestServer.make(reminderReadSource: fake)
         _ = try await server.executeToolCall(name: "list_reminder_tags",
                                              arguments: ["calendar_name": .string("Work"), "calendar_source": .string("iCloud")])
         let calls = await fake.calls
@@ -68,7 +68,7 @@ final class ListReminderTagsHandlerTests: XCTestCase {
         // rejected, and a non-string name is rejected — both before the seam is asked.
         for args in [["calendar_source": Value.string("iCloud")], ["calendar_name": .int(1)]] {
             let fake = RecordingReminderReadFake(records())
-            let server = try await CheICalMCPServer(reminderReadSource: fake)
+            let server = try await TestServer.make(reminderReadSource: fake)
             do {
                 _ = try await server.executeToolCall(name: "list_reminder_tags", arguments: args)
                 XCTFail("expected rejection for \(args)")

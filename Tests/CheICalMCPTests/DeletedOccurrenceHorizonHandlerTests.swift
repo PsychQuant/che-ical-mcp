@@ -7,7 +7,7 @@ import XCTest
 /// through `FakeEventWriteSource` (an id starting with `horizon-`).
 final class DeletedOccurrenceHorizonHandlerTests: XCTestCase {
     private func call(_ args: [String: Value]) async throws -> [String: Any] {
-        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let server = try await TestServer.make(eventWriteSource: FakeEventWriteSource())
         let raw = try await server.executeToolCall(name: "update_event", arguments: args)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
     }

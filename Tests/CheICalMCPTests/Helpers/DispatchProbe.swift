@@ -7,7 +7,8 @@ import Foundation
 /// given a `reminder_id`, which calls the live manager directly (`eventKitManager.deleteReminder`),
 /// so a server built with this double must not be sent that (no test line has the literal dispatch:
 /// `DispatchRoundTripTests.testTheOnlyLiteralDeleteReminderDispatchLineInTheTestsIsTheEmptyOne`, a text
-/// check that misses other spellings, #600). Every method records
+/// check that misses other spellings, #600; since #600 that call reaches `EventKitManager.shared`, which
+/// stops the test process under XCTest, `LiveStoreGuard`). Every method records
 /// its name and throws `Reached`: a handler that gets this far proves the dispatch reached it, and
 /// nothing is read or written.
 ///
@@ -15,7 +16,8 @@ import Foundation
 /// source left at its default reaches `EventKitManager.shared` again. A default written
 /// `label: any Protocol = EventKitManager.shared` and not passed here fails
 /// `DispatchRoundTripTests.testTheProbeServerReplacesEveryInitParameterDefaultedToEventKitManagerShared`;
-/// a default spelled another way does not (#600).
+/// a default spelled another way does not. Since #600 a source left at `EventKitManager.shared`
+/// stops the test process when the server is built (`LiveStoreGuard`), whatever its spelling.
 actor DispatchProbe: EventKitManaging, ReminderReadSource, EventCopySource, EventWriteSource, EventDeletionSource,
     CalendarDeletionSource, CalendarWriteSource, EventBatchDeletionSource, DuplicateSearchSource,
     EventRangeReadSource, CalendarListSource, ReminderWriteSource, ReminderCompletionSource, UndoExecutionSource {

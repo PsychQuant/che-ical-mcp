@@ -20,6 +20,11 @@
 // would: it calls the live manager directly, and no test dispatches it so), and a handler that is
 // reached shows up in the probe's calls. The source pins below count listed text forms only (see
 // each test); other spellings they do not see are listed on #600.
+//
+// #600: the property is now enforced at run time. Under XCTest, `LiveStoreGuard` stops the test
+// process at each use of `EventKitManager.shared` and `CalendarUndoManager.shared` (and
+// `delete_reminder` with a `reminder_id` reaches `EventKitManager.shared` there), and every test
+// builds its server with `TestServer.make`. The pins below are kept as a second, textual check.
 
 import XCTest
 import MCP
@@ -103,7 +108,7 @@ final class DispatchRoundTripTests: XCTestCase {
         let serverCode = SourceScan.codeOnly(try SourcePins.source("Server.swift"))
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"\beventKitManager\b"#, in: serverCode).count, 2,
                        "the identifier eventKitManager: its declaration and the delete_reminder call only")
-        XCTAssertEqual(SourcePins.ranges(of: "private let eventKitManager = EventKitManager.shared", in: serverCode).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "private var eventKitManager: EventKitManager { EventKitManager.shared }", in: serverCode).count, 1)
         XCTAssertEqual(SourcePins.ranges(ofPattern: #"EKEventStore\(|CountingEventStore\("#, in: serverCode).count, 0, "no EKEventStore( or CountingEventStore( text")
         let handler = try XCTUnwrap(SourcePins.body(of: "private func handleDeleteReminder(arguments: [String: Value]) async throws -> String {", in: server))
         let guardRange = try XCTUnwrap(handler.range(of: "guard let reminderId = arguments["), "string literals are blanked by SourcePins.code")

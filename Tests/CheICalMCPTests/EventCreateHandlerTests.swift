@@ -20,7 +20,7 @@ final class EventCreateHandlerTests: XCTestCase {
     // Fixed to the 2028 Havana transition used by the #546 report and device cells.
     func testAllDayCreateUsesTheGapsFirstInstantInTheProcessZone() async throws {
         let fake = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         let result = try await create(server, allDay: true, start: "2028-03-12", end: "2028-03-12")
         XCTAssertEqual(result["action"] as? String, "created")
         let requests = await fake.creates
@@ -33,7 +33,7 @@ final class EventCreateHandlerTests: XCTestCase {
 
     func testTimedCreateStillRefusesTheGapAsADateOnlyEndpoint() async throws {
         let fake = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         do {
             _ = try await server.executeToolCall(name: "create_event", arguments: [
                 "title": .string("Timed gap"), "timezone": .string("America/Havana"),
@@ -49,7 +49,7 @@ final class EventCreateHandlerTests: XCTestCase {
     func testImplicitlyTimedEndpointsStillRefuseTheGapWithoutATimeZone() async throws {
         try TestZones.requireHavanaProcess()
         let fake = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         // Match the reported 2028 Havana transition used by the device cells.
         let timed: [String: Value] = [
             "title": .string("Timed gap"), "start_time": .string("2028-03-12"),
@@ -72,7 +72,7 @@ final class EventCreateHandlerTests: XCTestCase {
 
     func testBatchCreateAcceptsTheGapInAllDayRowsAndRefusesTimedRows() async throws {
         let fake = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         let result = try object(await server.executeToolCall(name: "create_events_batch", arguments: [
             "events": .array([
                 .object(["title": .string("All-day"), "all_day": .bool(true),
@@ -93,7 +93,7 @@ final class EventCreateHandlerTests: XCTestCase {
 
     func testARecurrenceEndKeepsStrictParsingWhileAnExclusionCanNameTheGap() async throws {
         let fake = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         let args: [String: Value] = [
             "title": .string("Recurrence"), "timezone": .string("America/Havana"),
             "start_time": .string("2028-03-11T10:00:00"), "end_time": .string("2028-03-11T11:00:00")
@@ -120,7 +120,7 @@ final class EventCreateHandlerTests: XCTestCase {
     // MARK: - #372 create_event
 
     func testAnAllDayCreateWithAnEndWhoseOffsetMovesTheDayWarns() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let server = try await TestServer.make(eventWriteSource: FakeEventWriteSource())
         let result = try await create(server, allDay: true, start: "2027-04-10", end: shiftedEnd)
         XCTAssertEqual(result["action"] as? String, "created")
         XCTAssertEqual(result["id"] as? String, "created-1")
@@ -133,7 +133,7 @@ final class EventCreateHandlerTests: XCTestCase {
 
     /// A duplicate `skipped` answer carries the warning too, so created and skipped stay congruent.
     func testASkippedDuplicateCarriesTheWarning() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let server = try await TestServer.make(eventWriteSource: FakeEventWriteSource())
         let result = try await create(server, title: "duplicate", allDay: true, start: "2027-04-10", end: shiftedEnd)
         XCTAssertEqual(result["action"] as? String, "skipped")
         let warnings = try XCTUnwrap(result["warnings"] as? [[String: Any]])
@@ -154,7 +154,7 @@ final class EventCreateHandlerTests: XCTestCase {
     }
 
     func testACreatedEventsWarningSaysTheEventEndsOnTheHostDay() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let server = try await TestServer.make(eventWriteSource: FakeEventWriteSource())
         let result = try await create(server, allDay: true, start: "2027-04-10", end: shiftedEnd)
         let message = try XCTUnwrap((result["warnings"] as? [[String: Any]])?.first?["message"] as? String)
         XCTAssertTrue(message.contains("the event ends on 2027-04-12"), message)
@@ -162,7 +162,7 @@ final class EventCreateHandlerTests: XCTestCase {
     }
 
     func testATimedCreateDoesNotWarn() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let server = try await TestServer.make(eventWriteSource: FakeEventWriteSource())
         let result = try await create(server, allDay: false,
                                       start: FakeEventWriteSource.behindHost("2027-04-11", "22:30:00"), end: shiftedEnd)
         XCTAssertEqual(result["action"] as? String, "created")
@@ -170,14 +170,14 @@ final class EventCreateHandlerTests: XCTestCase {
     }
 
     func testAnAllDayCreateWithoutOffsetsDoesNotWarn() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let server = try await TestServer.make(eventWriteSource: FakeEventWriteSource())
         let result = try await create(server, allDay: true, start: "2027-04-10", end: "2027-04-12")
         XCTAssertNil(result["warnings"])
     }
 
     func testTheCreateRequestCarriesTheCallsFields() async throws {
         let fake = FakeEventWriteSource()
-        let server = try await CheICalMCPServer(eventWriteSource: fake)
+        let server = try await TestServer.make(eventWriteSource: fake)
         _ = try await create(server, allDay: true, start: "2027-04-10", end: "2027-04-12")
         let creates = await fake.creates
         let request = try XCTUnwrap(creates.first)
@@ -189,7 +189,7 @@ final class EventCreateHandlerTests: XCTestCase {
     // MARK: - #372 create_events_batch
 
     func testBatchItemsCarryTheirOwnWarnings() async throws {
-        let server = try await CheICalMCPServer(eventWriteSource: FakeEventWriteSource())
+        let server = try await TestServer.make(eventWriteSource: FakeEventWriteSource())
         func item(_ title: String, allDay: Bool, end: String) -> Value {
             .object(["title": .string(title), "calendar_name": .string("Work"), "all_day": .bool(allDay),
                      "start_time": .string("2027-04-10"), "end_time": .string(end)])

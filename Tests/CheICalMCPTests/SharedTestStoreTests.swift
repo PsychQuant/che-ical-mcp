@@ -41,10 +41,53 @@ final class SharedTestStoreTests: XCTestCase {
                        "#283: build in-memory EventKit items on SharedTestStore.store; every other EKEventStore() adds to EventKit's per-process store limit (error_ekcaderrordomain_1021), and an instance property adds one per test case")
     }
 
+    /// PR #603 verify r3: every `EKEventStore` subclass the test target defines (Swift `class X:
+    /// EKEventStore`, Objective-C `@interface X : EKEventStore`) is known, and so is every place a test
+    /// builds one: `SharedTestStore`'s `GuardedTestStore` (every store member checked) and its
+    /// commit-count `CountingEventStore` (checked on use), and `CheICalRaisingEventStore` (#288),
+    /// built (six times) only as the store of an event lookup, whose two lookups it overrides itself.
+    func testEveryStoreSubclassTheTestsDefineAndBuildIsKnown() throws {
+        let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        var subclasses: [String] = []
+        for file in FileManager.default.enumerator(at: tests, includingPropertiesForKeys: nil)?.compactMap({ $0 as? URL }) ?? [] {
+            guard ["swift", "h"].contains(file.pathExtension) else { continue }
+            let code = SourceScan.codeOnly(try String(contentsOf: file, encoding: .utf8))
+            for range in SourcePins.ranges(ofPattern: #"(?:\bclass\s+|@interface\s+)\w+\s*:\s*EKEventStore\b"#, in: code) {
+                let words = code[range].split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "_" && $0 != "@" })
+                subclasses.append(String(words[1]))
+            }
+        }
+        XCTAssertEqual(subclasses.sorted(), ["CheICalRaisingEventStore", "GuardedTestStore"])
+
+        var built: [String: Int] = [:]
+        let pattern = #"\b(?:EKEventStore|CountingEventStore|GuardedTestStore|CheICalRaisingEventStore)\s*(\.\s*init\s*)?\("#
+        for (name, code) in try testFiles() {
+            let count = SourcePins.ranges(ofPattern: pattern, in: code).count
+            if count > 0 { built[name] = count }
+        }
+        XCTAssertEqual(built, [Self.helper: 2, "ExceptionCatchTests.swift": 3, "EventLookupTests.swift": 3])
+
+        // Each raising store is handed straight to the lookup, and nothing else is called on it.
+        for (name, code) in try testFiles() where code.contains("CheICalRaisingEventStore(") {
+            for line in code.split(separator: "\n") where line.contains("CheICalRaisingEventStore(") {
+                XCTAssertTrue(line.contains("CheICalEventWithIdentifier(CheICalRaisingEventStore(") || line.contains("in: CheICalRaisingEventStore(")
+                              || line.contains("assertLookupFails(CheICalRaisingEventStore("), "\(name): \(line)")
+            }
+        }
+        let lookup = try XCTUnwrap(try testFiles().first { $0.name == "EventLookupTests.swift" }?.code)
+        let assertion = try XCTUnwrap(SourcePins.body(of: "private func assertLookupFails(_ store: CheICalRaisingEventStore, _ label: String,", in: lookup))
+        // The body as `SourcePins.body` gives it: the declaration included, string literals blanked.
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"\bstore\b"#, in: assertion).count, 2, "declared, then used once, as the lookup's store")
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"EventLookup\.event\(identifier:\s*,\s*in: store\)"#, in: assertion).count, 1, assertion)
+        let objc = try String(contentsOf: tests.appendingPathComponent("CheICalMCPObjCTestSupport/CheICalMCPObjCTestSupport.m"), encoding: .utf8)
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"(?m)^- \(\w+[^)]*\)\w+"#, in: objc).map { String(objc[$0]).split(separator: ")").last.map(String.init) ?? "" }.sorted(),
+                       ["calendarItemWithIdentifier", "eventWithIdentifier", "initRaising", "initRaisingWithoutAName"])
+    }
+
     /// The helper's store is a `static let`: built once, on first use, not per test case.
     func testTheSharedStoreIsAStaticLet() throws {
         let code = try XCTUnwrap(try testFiles().first { $0.name == Self.helper }?.code, Self.helper)
-        XCTAssertEqual(SourcePins.ranges(ofPattern: #"static\s+let\s+store\s*=\s*CountingEventStore\(\)"#, in: code).count, 1, code)
+        XCTAssertEqual(SourcePins.ranges(ofPattern: #"static\s+let\s+store\s*=\s*GuardedTestStore\(\)"#, in: code).count, 1, code)
     }
 
     /// The pattern catches the spellings a new fixture may use and nothing in a comment or string.
