@@ -160,7 +160,7 @@ class CheICalMCPServer {
             // Calendar Tools
             Tool(
                 name: "list_calendars",
-                description: "List all available calendars. Returns both event calendars and reminder lists.",
+                description: "List all available calendars. Returns both event calendars and reminder lists. Each row carries entity_types: [\"event\"] or [\"reminder\"], the list the row was read from.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -261,7 +261,7 @@ class CheICalMCPServer {
                         ]),
                         "calendar_source": .object([
                             "type": .string("string"),
-                            "description": .string("Calendar source name (e.g., 'iCloud', 'Google', 'Exchange'). Required when multiple calendars share the same name.")
+                            "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Narrows a name that calendars of different accounts share. Calendars of one account that share a name can only be told apart by calendar_id.")
                         ]),
                         "calendar_id": .object([
                             "type": .string("string"),
@@ -312,8 +312,8 @@ class CheICalMCPServer {
                         "notes": .object(["type": .string("string"), "description": .string("Optional event notes")]),
                         "location": .object(["type": .string("string"), "description": .string("Optional event location")]),
                         "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
-                        "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (use list_calendars to see available options)")]),
-                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (required unless calendar_id is given; use list_calendars to see available options)")]),
+                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Narrows a name that calendars of different accounts share. Calendars of one account that share a name can only be told apart by calendar_id.")]),
                         "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
                         "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Mutually exclusive with timezone — all-day events are floating calendar days (#190). Its dates are whole days, read in this Mac's time zone: see start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                         "alarms_minutes_offsets": .object([
@@ -391,8 +391,8 @@ class CheICalMCPServer {
                         "location": .object(["type": .string("string"), "description": .string("New location")]),
                         "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. false on an all-day event with new times needs both start_time and end_time. Changing it over a whole series through the series' identifier (span all, or span future from the first occurrence) is refused while the series has an occurrence edited on its own, and when the scan cannot show where the series ends (no end, an end past about five years from its start, or a count whose last occurrence cannot be worked out) or cannot list it, as one cannot be ruled out; clearing the rule in the same call is not refused (#442). Changing it over more than one occurrence is also refused while an occurrence deleted on its own is found among them or cannot be ruled out (#503); the two-year check of #506 does not apply to all_day, so a series the check cannot list whole is refused through any identifier, the first occurrence's own id (#428) included. Changing it over the rest of a series whose rule has an end (span all, or span future) is refused too, since how an all-day rule's end compares with its days was not measured (#509), and on a plain monthly or yearly series whose start is or would be on the 29th to 31st it is refused whether or not the series has an end (#513). Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar. Another calendar can give the event a new identifier (measured: a calendar in another account, and another calendar within a Google account; within an iCloud account it stayed the same; Exchange was not measured): use the response's id (see id_changed). A whole series moved to a calendar of another account is refused, with nothing written, while one of its occurrences was deleted on its own or that cannot be ruled out, which includes every open-ended series (#503: the move is a create plus a delete, not measured).")]),
-                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
-                        "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
+                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Narrows a name that calendars of different accounts share. Calendars of one account that share a name can only be told apart by calendar_id.")]),
+                        "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given. Here it names the calendar to move the event to, with the same effects as a new calendar_name.")]),
                         "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
                         "recurrence": .object([
                             "type": .string("object"),
@@ -808,7 +808,7 @@ class CheICalMCPServer {
                         "start_date": .object(["type": .string("string"), "description": .string("Optional start date in ISO8601 format with timezone (e.g., 2026-01-01T00:00:00+08:00)")]),
                         "end_date": .object(["type": .string("string"), "description": .string("Optional end date in ISO8601 format with timezone (e.g., 2026-12-31T23:59:59+08:00)")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional calendar name to filter by")]),
-                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Narrows a name that calendars of different accounts share. Calendars of one account that share a name can only be told apart by calendar_id.")]),
                         "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
                         "limit": .object([
                             "type": .string("integer"),
@@ -857,7 +857,7 @@ class CheICalMCPServer {
                             "description": .string("First day of week for this_week/next_week calculations. 'system' uses locale settings (default), 'monday' for ISO 8601/Europe/Asia, 'sunday' for US/Japan, 'saturday' for Middle East.")
                         ]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional calendar name to filter by")]),
-                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Narrows a name that calendars of different accounts share. Calendars of one account that share a name can only be told apart by calendar_id.")]),
                         "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
                         "limit": .object([
                             "type": .string("integer"),
@@ -902,7 +902,7 @@ class CheICalMCPServer {
                                     "notes": .object(["type": .string("string")]),
                                     "location": .object(["type": .string("string")]),
                                     "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (required unless calendar_id is given)")]),
-                                    "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google')")]),
+                                    "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Narrows a name that calendars of different accounts share. Calendars of one account that share a name can only be told apart by calendar_id.")]),
                                     "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
                                     "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                                     "recurrence": .object([
@@ -951,7 +951,7 @@ class CheICalMCPServer {
                         "start_time": .object(["type": .string("string"), "description": .string("Start time to check in ISO8601 format with timezone (e.g., 2026-01-30T14:00:00+08:00)")]),
                         "end_time": .object(["type": .string("string"), "description": .string("End time to check in ISO8601 format with timezone (e.g., 2026-01-30T15:00:00+08:00)")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional calendar name to filter by")]),
-                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Narrows a name that calendars of different accounts share. Calendars of one account that share a name can only be told apart by calendar_id.")]),
                         "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
                         "exclude_event_id": .object(["type": .string("string"), "description": .string("Optional event ID to exclude from check (useful for updates)")])
                     ]),

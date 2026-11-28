@@ -514,31 +514,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         offersID: Bool,
         entityType: EKEntityType
     ) throws -> EKCalendar {
-        let allCalendars = eventStore.calendars(for: entityType)
-        let outcome = CalendarLookup.resolve(allCalendars, name: name, source: source, id: id,
-                                             identifier: { $0.calendarIdentifier }, title: { $0.title },
-                                             sourceTitle: { $0.source.title })
-        switch outcome {
-        case .found(let calendar):
-            return calendar
-        case .notFound:
-            if let id { throw EventKitError.calendarNotFound(identifier: id) }
-            let available = allCalendars.map { "\($0.title) (\($0.source.title))" }
-            if let source = source {
-                throw EventKitError.calendarNotFoundWithSource(name: name ?? "", source: source, available: available)
-            } else {
-                throw EventKitError.calendarNotFound(identifier: name ?? "", available: available)
-            }
-        case .idMismatch:
-            throw EventKitError.calendarIDMismatch
-        case .ambiguousAccounts(let calendars):
-            let sources = calendars.map { $0.source.title }.joined(separator: ", ")
-            throw EventKitError.multipleCalendarsFound(name: name ?? "", sources: sources)
-        case .ambiguousInAccount(let calendars):
-            throw EventKitError.sameNameCalendars(count: calendars.count,
-                                                  ids: CalendarCandidateIDs.listable(calendars.map(\.calendarIdentifier)),
-                                                  offersID: offersID)
-        }
+        try CalendarLookup.one(kind: entityType, candidates: { eventStore.calendars(for: $0) }, name: name, source: source,
+                               id: id, offersID: offersID, identifier: { $0.calendarIdentifier }, title: { $0.title },
+                               sourceTitle: { $0.source.title })
     }
 
     func listCalendars(for entityType: EKEntityType? = nil) async throws -> [EKCalendar] {
@@ -793,14 +771,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         endDate: Date,
         calendarName: String? = nil,
         calendarSource: String? = nil,
-        calendarID: String? = nil
+        calendarID: String? = nil,
+        offersID: Bool = false
     ) async throws -> [EKEvent] {
         try await ensureCalendarAccess()
         refreshIfNeeded()
 
         var calendars: [EKCalendar]?
         if calendarName != nil || calendarID != nil {
-            calendars = try findCalendars(name: calendarName, source: calendarSource, id: calendarID, offersID: true, entityType: .event)
+            calendars = try findCalendars(name: calendarName, source: calendarSource, id: calendarID, offersID: offersID, entityType: .event)
         }
 
         return try events(from: startDate, to: endDate, calendars: calendars)
@@ -2273,7 +2252,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         endDate: Date? = nil,
         calendarName: String? = nil,
         calendarSource: String? = nil,
-        calendarID: String? = nil
+        calendarID: String? = nil,
+        offersID: Bool = false
     ) async throws -> [EKEvent] {
         try await ensureCalendarAccess()
         refreshIfNeeded()
@@ -2286,7 +2266,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var calendars: [EKCalendar]?
         if calendarName != nil || calendarID != nil {
-            calendars = try findCalendars(name: calendarName, source: calendarSource, id: calendarID, offersID: true, entityType: .event)
+            calendars = try findCalendars(name: calendarName, source: calendarSource, id: calendarID, offersID: offersID, entityType: .event)
         }
 
         let allEvents = try events(from: searchStart, to: searchEnd, calendars: calendars)
@@ -2547,6 +2527,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         calendarName: String? = nil,
         calendarSource: String? = nil,
         calendarID: String? = nil,
+        offersID: Bool = false,
         excludeEventId: String? = nil
     ) async throws -> [EKEvent] {
         try await ensureCalendarAccess()
@@ -2554,7 +2535,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
         var calendars: [EKCalendar]?
         if calendarName != nil || calendarID != nil {
-            calendars = try findCalendars(name: calendarName, source: calendarSource, id: calendarID, offersID: true, entityType: .event)
+            calendars = try findCalendars(name: calendarName, source: calendarSource, id: calendarID, offersID: offersID, entityType: .event)
         }
 
         let events = try self.events(from: startDate, to: endDate, calendars: calendars)
@@ -4208,7 +4189,7 @@ enum EventKitError: LocalizedError {
             return "Multiple calendars found with name '\(name)'. Please specify calendar_source to disambiguate (use list_calendars to enumerate)."
         case .sameNameCalendars(let count, let ids, let offersID):
             // #604: counts and ids only. Titles and source titles stay out, as for the cases above.
-            var text = "\(count) calendars match that name and source, so no calendar was chosen and nothing was done."
+            var text = "\(count) calendars match and calendar_name and calendar_source cannot tell them apart, so no calendar was chosen and nothing was done."
             if !ids.isEmpty { text += " Their ids: \(ids.joined(separator: ", "))." }
             text += offersID
                 ? " Pass calendar_id to choose one (list_calendars shows each id)."

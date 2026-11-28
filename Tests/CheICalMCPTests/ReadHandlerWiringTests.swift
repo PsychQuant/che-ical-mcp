@@ -51,7 +51,7 @@ final class ReadHandlerWiringTests: XCTestCase {
         let file = try SourcePins.source("EventRangeReadSource.swift")
         let manager = String(file[try XCTUnwrap(file.range(of: "extension EventKitManager:")).lowerBound...])
         for (method, pattern) in [("func checkConflictValues(", ".map(EventReadValue.init)"),
-                                  ("func listCalendarValues(", "CalendarReadValue($0, entityTypes:")] {
+                                  ("func listCalendarValues(", "CalendarReadValue($0, entityTypes: [read.name])")] {
             let body = try XCTUnwrap(SourcePins.body(of: method, in: manager), method)
             XCTAssertTrue(body.contains(pattern), "\(method) builds values inside the actor with \(pattern)")
         }

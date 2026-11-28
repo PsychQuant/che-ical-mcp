@@ -93,8 +93,8 @@ struct CalendarReadValue: Sendable, Equatable {
     let sourceTitle: String
     /// nil for a calendar with no source (an unsaved one).
     let sourceType: EKSourceType?
-    /// #604: `event` when the calendar holds events, `reminder` when it holds reminders. `list_calendars`
-    /// answers event calendars and reminder lists in one list, and a title can be shared by one of each.
+    /// #604: the list the row was read from, `event` or `reminder`. `list_calendars` answers event
+    /// calendars and reminder lists in one list, and a title can be shared by one of each.
     let entityTypes: [String]
 
     init(identifier: String, title: String, typeRawValue: Int, allowsContentModifications: Bool,

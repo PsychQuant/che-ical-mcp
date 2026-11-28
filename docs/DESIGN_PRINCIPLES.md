@@ -79,6 +79,8 @@ Available sources: iCloud, Google
 Please specify calendar_source to disambiguate.
 ```
 
+Calendars of one account that share a name cannot be told apart by `calendar_source`. That refusal gives their count and ids and asks for `calendar_id`, or for a rename where the tool takes no `calendar_id` (#604).
+
 This error message:
 - States the problem clearly
 - Lists all available options

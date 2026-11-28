@@ -170,7 +170,7 @@ final class CalendarIDHandlerTests: XCTestCase {
         XCTAssertTrue(seen.isEmpty)
     }
 
-    // MARK: spec-example: calendar-resolution / the remedy follows the tool
+    // MARK: the refusal texts
 
     func testTheRefusalTellsACallerWhoHasCalendarIDToPassIt() {
         let text = EventKitErrorSanitizer.sanitizeForResponse(
@@ -188,9 +188,7 @@ final class CalendarIDHandlerTests: XCTestCase {
         XCTAssertFalse(text.contains("Pass calendar_id"), text)
     }
 
-    // MARK: spec-example: calendar-resolution / a refusal names ids and no titles
-
-    func testTheRefusalListsNoIDsWhenTheCallerGavePlainOnesOnlyAndNoTitleEver() {
+    func testTheRefusalListsNoIDsWhenOneIsNotPlain() {
         let ids = CalendarCandidateIDs.listable(["A1B2-C3", "evil\nid"])
         XCTAssertEqual(ids, [])
         let text = EventKitErrorSanitizer.sanitizeForResponse(EventKitError.sameNameCalendars(count: 2, ids: ids, offersID: true)).code
@@ -204,9 +202,24 @@ final class CalendarIDHandlerTests: XCTestCase {
         XCTAssertTrue(text.contains("Nothing was done"), text)
     }
 
-    // MARK: spec-example: calendar-resolution / entity types of a row
+    // MARK: entity types
 
-    func testListCalendarsTellsAnEventCalendarFromAReminderListOfTheSameTitle() async throws {
+    /// spec-example: calendar-resolution / entity types of a row
+    func testTheExampleOfEntityTypes() async throws {
+        let cases: [(EKEntityType?, [String])] = [(.event, ["event"]), (.reminder, ["reminder"]), (nil, ["event", "reminder"])]
+        for (requested, kinds) in cases {
+            XCTAssertEqual(CalendarKindLists.reads(for: requested).map(\.name), kinds)
+            XCTAssertEqual(CalendarKindLists.reads(for: requested).map(\.type), kinds.map { $0 == "event" ? .event : .reminder })
+        }
+        // The manager reads those lists in that order and tags each row with the list it came from.
+        let file = try SourcePins.source("EventRangeReadSource.swift")
+        let manager = String(file[try XCTUnwrap(file.range(of: "extension EventKitManager:")).lowerBound...])
+        let body = SourceScan.collapsingWhitespace(try XCTUnwrap(SourcePins.body(of: "func listCalendarValues(", in: manager)))
+        XCTAssertTrue(body.contains("for read in CalendarKindLists.reads(for: entityType) {"), body)
+        XCTAssertTrue(body.contains("try await listCalendars(for: read.type).map { CalendarReadValue($0, entityTypes: [read.name]) }"), body)
+    }
+
+    func testListCalendarsPrintsEachRowsEntityTypes() async throws {
         let eventRow = CalendarReadValue(identifier: "E1", title: "Calendar A", typeRawValue: EKCalendarType.calDAV.rawValue,
                                          allowsContentModifications: true, isSubscribed: false, sourceTitle: "iCloud",
                                          sourceType: .mobileMe, entityTypes: ["event"])
@@ -218,7 +231,6 @@ final class CalendarIDHandlerTests: XCTestCase {
         let rows = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: Any]])
         XCTAssertEqual(rows.map { $0["id"] as? String }, ["E1", "R1"])
         XCTAssertEqual(rows.map { $0["entity_types"] as? [String] }, [["event"], ["reminder"]])
-        XCTAssertEqual(rows.map { $0["title"] as? String }, ["Calendar A", "Calendar A"])
     }
 
     func testTheOtherFieldsOfARowAreUnchanged() {

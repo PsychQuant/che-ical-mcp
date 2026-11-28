@@ -87,7 +87,7 @@ extension EventKitManager: EventRangeReadSource, CalendarListSource {
     func listEventValues<Info: Sendable>(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?,
                                          calendarID: String?, pick: EventRowPick<Info>) async throws -> EventRowsPicked<Info> {
         let events = try await listEvents(startDate: startDate, endDate: endDate, calendarName: calendarName,
-                                          calendarSource: calendarSource, calendarID: calendarID)
+                                          calendarSource: calendarSource, calendarID: calendarID, offersID: true)
         return EventRowsPicked.picking(events, pick)
     }
 
@@ -95,27 +95,26 @@ extension EventKitManager: EventRangeReadSource, CalendarListSource {
                                            calendarName: String?, calendarSource: String?, calendarID: String?,
                                            pick: EventRowPick<Info>) async throws -> EventRowsPicked<Info> {
         let events = try await searchEvents(keywords: keywords, matchMode: matchMode, startDate: startDate, endDate: endDate,
-                                            calendarName: calendarName, calendarSource: calendarSource, calendarID: calendarID)
+                                            calendarName: calendarName, calendarSource: calendarSource, calendarID: calendarID,
+                                            offersID: true)
         return EventRowsPicked.picking(events, pick)
     }
 
     func checkConflictValues(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?,
                              calendarID: String?, excludeEventId: String?) async throws -> [EventReadValue] {
         try await checkConflicts(startDate: startDate, endDate: endDate, calendarName: calendarName,
-                                 calendarSource: calendarSource, calendarID: calendarID, excludeEventId: excludeEventId)
+                                 calendarSource: calendarSource, calendarID: calendarID, offersID: true,
+                                 excludeEventId: excludeEventId)
             .map(EventReadValue.init)
     }
 
     /// #604: each row says which list it came from, so event calendars and reminder lists in one
     /// answer are told apart.
     func listCalendarValues(for entityType: EKEntityType?) async throws -> [CalendarReadValue] {
-        func values(_ type: EKEntityType, _ name: String) async throws -> [CalendarReadValue] {
-            try await listCalendars(for: type).map { CalendarReadValue($0, entityTypes: [name]) }
+        var values: [CalendarReadValue] = []
+        for read in CalendarKindLists.reads(for: entityType) {
+            values += try await listCalendars(for: read.type).map { CalendarReadValue($0, entityTypes: [read.name]) }
         }
-        switch entityType {
-        case .event?: return try await values(.event, "event")
-        case .reminder?: return try await values(.reminder, "reminder")
-        default: return try await values(.event, "event") + values(.reminder, "reminder")
-        }
+        return values
     }
 }

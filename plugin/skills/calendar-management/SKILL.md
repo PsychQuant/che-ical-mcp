@@ -54,7 +54,7 @@ list_reminders          → See tasks by list or completion status
 |------|------|----------------|
 | View schedule | `list_events` | start_date, end_date, calendar_name |
 | Quick view | `list_events_quick` | range: "today", "tomorrow", "this_week", week_starts_on |
-| Create event | `create_event` | title, start_time, end_time, calendar_name (required) |
+| Create event | `create_event` | title, start_time, end_time, calendar_name or calendar_id (one is required) |
 | Search | `search_events` | keyword/keywords, match_mode ("any"/"all") |
 | Check availability | `check_conflicts` | start_time, end_time |
 
@@ -151,6 +151,8 @@ create_event(
 Available sources: "iCloud", "Google", "Exchange", "CalDAV", "Local"
 
 `find_duplicate_events` is the exception: it takes no `calendar_source`, and refuses one. A name two accounts share reads both calendars, and they count as the two compared. Each side of a pair gives `calendar` and `calendar_source`.
+
+When two calendars of **one account** share a name, `calendar_source` cannot tell them apart and the call is refused with their ids. Pass `calendar_id` (the `id` from `list_calendars`) to `list_events`, `list_events_quick`, `search_events`, `check_conflicts`, `create_event`, `create_events_batch` (per row) or `update_event`; other tools need one of the two calendars renamed.
 
 ## Best Practices
 

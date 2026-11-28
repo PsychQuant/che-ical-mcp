@@ -52,13 +52,14 @@ final class CalendarNameMatchTests: XCTestCase {
             XCTAssertEqual(SourcePins.ranges(of: "try resolveCalendar(name: name, source: source, id: id,", in: body).count, 1, declaration)
         }
         let body = try XCTUnwrap(SourcePins.body(of: "private func resolveCalendar(", in: manager))
-        XCTAssertEqual(SourcePins.ranges(of: "CalendarLookup.resolve(allCalendars, name: name, source: source, id: id,", in: body).count, 1)
+        XCTAssertEqual(SourcePins.ranges(of: "CalendarLookup.one(", in: body).count, 1)
         XCTAssertEqual(SourcePins.ranges(of: "sourceTitle: { $0.source.title }", in: body).count, 1)
-        for refusal in ["calendarNotFoundWithSource(", "calendarNotFound(", "multipleCalendarsFound(", "sameNameCalendars(", "calendarIDMismatch"] {
-            XCTAssertGreaterThanOrEqual(SourcePins.ranges(of: "EventKitError.\(refusal)", in: body).count, 1, refusal)
-        }
         let lookup = try SourcePins.source("EventKit/CalendarResolution.swift")
         XCTAssertEqual(SourcePins.ranges(of: "CalendarNameMatch.matching(", in: lookup).count, 2)
+        let one = try XCTUnwrap(SourcePins.body(of: "static func one<Item>(", in: lookup))
+        for refusal in ["calendarNotFoundWithSource(", "calendarNotFound(", "multipleCalendarsFound(", "sameNameCalendars(", "calendarIDMismatch"] {
+            XCTAssertGreaterThanOrEqual(SourcePins.ranges(of: "EventKitError.\(refusal)", in: one).count, 1, refusal)
+        }
     }
 
     /// PR #440 verify round 1: an in-memory store cannot run `findDuplicateEvents`, and restoring
