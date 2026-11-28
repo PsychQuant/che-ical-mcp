@@ -43,13 +43,15 @@ final class ReadHandlerWiringTests: XCTestCase {
     func testTheSeamsReturnValuesBuiltOnTheActor() throws {
         let range = try Self.code("EventRangeReadSource.swift")
         XCTAssertFalse(range.contains("[EKEvent]"), "EventRangeReadSource returns no EventKit objects")
-        XCTAssertEqual(SourcePins.ranges(of: "-> EventRowsPicked<Info>", in: range).count, 4, "list and search: protocol and the manager")
-        XCTAssertEqual(SourcePins.ranges(of: "-> [EventReadValue]", in: range).count, 2, "conflicts: protocol and the manager")
+        // #604: list and search are declared in the protocol twice each (without and with a `calendar_id`),
+        // in the protocol extension once each (the default of the new one), and in the manager twice each.
+        XCTAssertEqual(SourcePins.ranges(of: "-> EventRowsPicked<Info>", in: range).count, 10, "list and search: protocol, its defaults and the manager")
+        XCTAssertEqual(SourcePins.ranges(of: "-> [EventReadValue]", in: range).count, 5, "conflicts: protocol, its default and the manager")
         XCTAssertTrue(range.contains("-> [CalendarReadValue]"))
         let file = try SourcePins.source("EventRangeReadSource.swift")
         let manager = String(file[try XCTUnwrap(file.range(of: "extension EventKitManager:")).lowerBound...])
         for (method, pattern) in [("func checkConflictValues(", ".map(EventReadValue.init)"),
-                                  ("func listCalendarValues(", ".map(CalendarReadValue.init)")] {
+                                  ("func listCalendarValues(", "CalendarReadValue($0, entityTypes: [read.name])")] {
             let body = try XCTUnwrap(SourcePins.body(of: method, in: manager), method)
             XCTAssertTrue(body.contains(pattern), "\(method) builds values inside the actor with \(pattern)")
         }

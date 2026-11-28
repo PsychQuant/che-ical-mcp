@@ -16,6 +16,8 @@ struct EventUpdateRequest: Sendable {
     var url: String? = nil
     var calendarName: String? = nil
     var calendarSource: String? = nil
+    /// #604: `calendar_id`, which wins over the name and source and must agree with them.
+    var calendarID: String? = nil
     var isAllDay: Bool? = nil
     var alarmOffsets: [Int]? = nil
     var recurrenceRule: RecurrenceRuleInput? = nil
@@ -41,6 +43,8 @@ struct EventCreateRequest: Sendable {
     var url: String? = nil
     var calendarName: String? = nil
     var calendarSource: String? = nil
+    /// #604: `calendar_id`, which wins over the name and source and must agree with them.
+    var calendarID: String? = nil
     var isAllDay = false
     var alarmOffsets: [Int]? = nil
     var recurrenceRule: RecurrenceRuleInput? = nil
@@ -145,7 +149,7 @@ extension EventKitManager: EventWriteSource {
             identifier: request.identifier, fields: request.fields, title: request.title,
             startDate: request.startDate, endDate: request.endDate,
             notes: request.notes, location: request.location, url: request.url,
-            calendarName: request.calendarName, calendarSource: request.calendarSource,
+            calendarName: request.calendarName, calendarSource: request.calendarSource, calendarID: request.calendarID,
             isAllDay: request.isAllDay, alarmOffsets: request.alarmOffsets,
             recurrenceRule: request.recurrenceRule, clearRecurrence: request.clearRecurrence,
             structuredLocation: request.structuredLocation, span: request.span,
@@ -162,7 +166,7 @@ extension EventKitManager: EventWriteSource {
         let result = try await createEvent(
             title: request.title, startDate: request.startDate, endDate: request.endDate,
             notes: request.notes, location: request.location, url: request.url,
-            calendarName: request.calendarName, calendarSource: request.calendarSource,
+            calendarName: request.calendarName, calendarSource: request.calendarSource, calendarID: request.calendarID,
             isAllDay: request.isAllDay, alarmOffsets: request.alarmOffsets,
             recurrenceRule: request.recurrenceRule, structuredLocation: request.structuredLocation,
             timezone: request.timezone)

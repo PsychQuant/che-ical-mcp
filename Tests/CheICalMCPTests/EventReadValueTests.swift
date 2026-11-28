@@ -150,7 +150,8 @@ final class EventReadValueTests: XCTestCase {
         XCTAssertEqual(row["isSubscribed"] as? Bool, false)
         XCTAssertEqual(row["source"] as? String, "iCloud")
         XCTAssertEqual(row["source_type"] as? String, "CalDAV")
-        XCTAssertEqual(Set(row.keys), ["id", "title", "type", "allowsContentModifications", "isSubscribed", "source", "source_type"])
+        // #604 added `entity_types`; every other key is the row it has always been.
+        XCTAssertEqual(Set(row.keys), ["id", "title", "type", "allowsContentModifications", "isSubscribed", "source", "source_type", "entity_types"])
         let names: [(EKSourceType, String)] = [(.local, "Local"), (.exchange, "Exchange"), (.calDAV, "CalDAV"), (.mobileMe, "iCloud"),
                                                (.subscribed, "Subscribed"), (.birthdays, "Birthdays")]
         for (type, name) in names {

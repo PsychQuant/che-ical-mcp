@@ -17,6 +17,43 @@ protocol EventRangeReadSource: Sendable {
                                            pick: EventRowPick<Info>) async throws -> EventRowsPicked<Info>
     func checkConflictValues(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?,
                              excludeEventId: String?) async throws -> [EventReadValue]
+
+    /// #604: the same three reads with a `calendar_id`. The manager answers them; a source that does
+    /// not (a test double) gets the default below, which forwards a call without an id to the read
+    /// above and refuses one with an id.
+    func listEventValues<Info: Sendable>(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?,
+                                         calendarID: String?, pick: EventRowPick<Info>) async throws -> EventRowsPicked<Info>
+    func searchEventValues<Info: Sendable>(keywords: [String], matchMode: String, startDate: Date?, endDate: Date?,
+                                           calendarName: String?, calendarSource: String?, calendarID: String?,
+                                           pick: EventRowPick<Info>) async throws -> EventRowsPicked<Info>
+    func checkConflictValues(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?,
+                             calendarID: String?, excludeEventId: String?) async throws -> [EventReadValue]
+}
+
+extension EventRangeReadSource {
+    func listEventValues<Info: Sendable>(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?,
+                                         calendarID: String?, pick: EventRowPick<Info>) async throws -> EventRowsPicked<Info> {
+        guard calendarID == nil else { throw ToolError.invalidParameter(Self.calendarIDUnsupported) }
+        return try await listEventValues(startDate: startDate, endDate: endDate, calendarName: calendarName,
+                                         calendarSource: calendarSource, pick: pick)
+    }
+
+    func searchEventValues<Info: Sendable>(keywords: [String], matchMode: String, startDate: Date?, endDate: Date?,
+                                           calendarName: String?, calendarSource: String?, calendarID: String?,
+                                           pick: EventRowPick<Info>) async throws -> EventRowsPicked<Info> {
+        guard calendarID == nil else { throw ToolError.invalidParameter(Self.calendarIDUnsupported) }
+        return try await searchEventValues(keywords: keywords, matchMode: matchMode, startDate: startDate, endDate: endDate,
+                                           calendarName: calendarName, calendarSource: calendarSource, pick: pick)
+    }
+
+    func checkConflictValues(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?,
+                             calendarID: String?, excludeEventId: String?) async throws -> [EventReadValue] {
+        guard calendarID == nil else { throw ToolError.invalidParameter(Self.calendarIDUnsupported) }
+        return try await checkConflictValues(startDate: startDate, endDate: endDate, calendarName: calendarName,
+                                             calendarSource: calendarSource, excludeEventId: excludeEventId)
+    }
+
+    static var calendarIDUnsupported: String { "calendar_id is not supported by this source." }
 }
 
 /// #490: the read `list_calendars` shapes, as values copied on the manager's actor.
@@ -47,7 +84,37 @@ extension EventKitManager: EventRangeReadSource, CalendarListSource {
             .map(EventReadValue.init)
     }
 
+    func listEventValues<Info: Sendable>(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?,
+                                         calendarID: String?, pick: EventRowPick<Info>) async throws -> EventRowsPicked<Info> {
+        let events = try await listEvents(startDate: startDate, endDate: endDate, calendarName: calendarName,
+                                          calendarSource: calendarSource, calendarID: calendarID, offersID: true)
+        return EventRowsPicked.picking(events, pick)
+    }
+
+    func searchEventValues<Info: Sendable>(keywords: [String], matchMode: String, startDate: Date?, endDate: Date?,
+                                           calendarName: String?, calendarSource: String?, calendarID: String?,
+                                           pick: EventRowPick<Info>) async throws -> EventRowsPicked<Info> {
+        let events = try await searchEvents(keywords: keywords, matchMode: matchMode, startDate: startDate, endDate: endDate,
+                                            calendarName: calendarName, calendarSource: calendarSource, calendarID: calendarID,
+                                            offersID: true)
+        return EventRowsPicked.picking(events, pick)
+    }
+
+    func checkConflictValues(startDate: Date, endDate: Date, calendarName: String?, calendarSource: String?,
+                             calendarID: String?, excludeEventId: String?) async throws -> [EventReadValue] {
+        try await checkConflicts(startDate: startDate, endDate: endDate, calendarName: calendarName,
+                                 calendarSource: calendarSource, calendarID: calendarID, offersID: true,
+                                 excludeEventId: excludeEventId)
+            .map(EventReadValue.init)
+    }
+
+    /// #604: each row says which list it came from, so event calendars and reminder lists in one
+    /// answer are told apart.
     func listCalendarValues(for entityType: EKEntityType?) async throws -> [CalendarReadValue] {
-        try await listCalendars(for: entityType).map(CalendarReadValue.init)
+        var values: [CalendarReadValue] = []
+        for read in CalendarKindLists.reads(for: entityType) {
+            values += try await listCalendars(for: read.type).map { CalendarReadValue($0, entityTypes: [read.name]) }
+        }
+        return values
     }
 }
