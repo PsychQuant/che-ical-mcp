@@ -263,6 +263,10 @@ class CheICalMCPServer {
                             "type": .string("string"),
                             "description": .string("Calendar source name (e.g., 'iCloud', 'Google', 'Exchange'). Required when multiple calendars share the same name.")
                         ]),
+                        "calendar_id": .object([
+                            "type": .string("string"),
+                            "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")
+                        ]),
                         "filter": .object([
                             "type": .string("string"),
                             "enum": .array([.string("all"), .string("past"), .string("future"), .string("all_day")]),
@@ -310,6 +314,7 @@ class CheICalMCPServer {
                         "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (use list_calendars to see available options)")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
                         "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Mutually exclusive with timezone — all-day events are floating calendar days (#190). Its dates are whole days, read in this Mac's time zone: see start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                         "alarms_minutes_offsets": .object([
                             "type": .string("array"),
@@ -368,7 +373,7 @@ class CheICalMCPServer {
                             "required": .array([.string("title")])
                         ])
                     ]),
-                    "required": .array([.string("title"), .string("start_time"), .string("end_time"), .string("calendar_name")])
+                    "required": .array([.string("title"), .string("start_time"), .string("end_time")])
                 ]),
                 annotations: .init(readOnlyHint: false, destructiveHint: false, openWorldHint: false)
             ),
@@ -387,6 +392,7 @@ class CheICalMCPServer {
                         "all_day": .object(["type": .string("boolean"), "description": .string("Set to true for all-day events, false for timed events. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. false on an all-day event with new times needs both start_time and end_time. Changing it over a whole series through the series' identifier (span all, or span future from the first occurrence) is refused while the series has an occurrence edited on its own, and when the scan cannot show where the series ends (no end, an end past about five years from its start, or a count whose last occurrence cannot be worked out) or cannot list it, as one cannot be ruled out; clearing the rule in the same call is not refused (#442). Changing it over more than one occurrence is also refused while an occurrence deleted on its own is found among them or cannot be ruled out (#503); the two-year check of #506 does not apply to all_day, so a series the check cannot list whole is refused through any identifier, the first occurrence's own id (#428) included. Changing it over the rest of a series whose rule has an end (span all, or span future) is refused too, since how an all-day rule's end compares with its days was not measured (#509), and on a plain monthly or yearly series whose start is or would be on the 29th to 31st it is refused whether or not the series has an end (#513). Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = unchanged.")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Move event to a different calendar. Another calendar can give the event a new identifier (measured: a calendar in another account, and another calendar within a Google account; within an iCloud account it stayed the same; Exchange was not measured): use the response's id (see id_changed). A whole series moved to a calendar of another account is refused, with nothing written, while one of its occurrences was deleted on its own or that cannot be ruled out, which includes every open-ended series (#503: the move is a create plus a delete, not measured).")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
                         "url": .object(["type": .string("string"), "description": .string("Optional event URL")]),
                         "recurrence": .object([
                             "type": .string("object"),
@@ -803,6 +809,7 @@ class CheICalMCPServer {
                         "end_date": .object(["type": .string("string"), "description": .string("Optional end date in ISO8601 format with timezone (e.g., 2026-12-31T23:59:59+08:00)")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional calendar name to filter by")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
                         "limit": .object([
                             "type": .string("integer"),
                             "description": .string("Maximum number of events to return, at most 10000: those closest to today, sorted by start. When omitted, all of them, except over a range longer than 1462 days: at most 500. A limit does not lift the read bound.")
@@ -851,6 +858,7 @@ class CheICalMCPServer {
                         ]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional calendar name to filter by")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
                         "limit": .object([
                             "type": .string("integer"),
                             "description": .string("Maximum number of events to return")
@@ -893,8 +901,9 @@ class CheICalMCPServer {
                                     "end_time": .object(["type": .string("string"), "description": .string("For an all-day event (all_day true) only the days count, read in this Mac's time zone: start_time names the first day; end_time is the day after the last day (exclusive, e.g. a one-night stay on 11-10 ends 11-11), the first day itself for a one-day event, or the last day at 23:59:59 as list_events returns it. Send all-day dates without an offset: a value with another offset is converted to this Mac's zone first, which can move it to another day. When it does, the event still uses this Mac's day and the result carries a warnings entry naming the field, its day in the written offset (written_day) and the day in this Mac's zone the request's dates are written with (host_day; a skipped duplicate writes nothing).")]),
                                     "notes": .object(["type": .string("string")]),
                                     "location": .object(["type": .string("string")]),
-                                    "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (required)")]),
+                                    "calendar_name": .object(["type": .string("string"), "description": .string("Target calendar name (required unless calendar_id is given)")]),
                                     "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google')")]),
+                                    "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
                                     "all_day": .object(["type": .string("boolean"), "description": .string("Whether this is an all-day event. Its dates are whole days, read in this Mac's time zone: see start_time and end_time. Must be a JSON boolean; strings and numbers are rejected. Omit or JSON null = default.")]),
                                     "recurrence": .object([
                                         "type": .string("object"),
@@ -923,7 +932,7 @@ class CheICalMCPServer {
                                         "required": .array([.string("title")])
                                     ])
                                 ]),
-                                "required": .array([.string("title"), .string("start_time"), .string("end_time"), .string("calendar_name")])
+                                "required": .array([.string("title"), .string("start_time"), .string("end_time")])
                             ])
                         ])
                     ]),
@@ -943,6 +952,7 @@ class CheICalMCPServer {
                         "end_time": .object(["type": .string("string"), "description": .string("End time to check in ISO8601 format with timezone (e.g., 2026-01-30T15:00:00+08:00)")]),
                         "calendar_name": .object(["type": .string("string"), "description": .string("Optional calendar name to filter by")]),
                         "calendar_source": .object(["type": .string("string"), "description": .string("Calendar source (e.g., 'iCloud', 'Google'). Required when multiple calendars share the same name.")]),
+                        "calendar_id": .object(["type": .string("string"), "description": .string("Calendar id from list_calendars. Chooses one calendar even when several share a name and source; it must agree with calendar_name and calendar_source when those are given.")]),
                         "exclude_event_id": .object(["type": .string("string"), "description": .string("Optional event ID to exclude from check (useful for updates)")])
                     ]),
                     "required": .array([.string("start_time"), .string("end_time")])
@@ -1372,6 +1382,7 @@ class CheICalMCPServer {
 
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
+        let calendarID = arguments["calendar_id"]?.stringValue   // #604
         let filterMode = arguments["filter"]?.stringValue ?? "all"
         let sortMode = arguments["sort"]?.stringValue ?? "asc"
         let limit = try InputValidation.requireOptionalLimit(arguments)
@@ -1387,7 +1398,8 @@ class CheICalMCPServer {
             startDate: startDate,
             endDate: endDate,
             calendarName: calendarName,
-            calendarSource: calendarSource
+            calendarSource: calendarSource,
+            calendarID: calendarID
         ) { keys -> (keep: [Int], info: (totalInRange: Int, totalAfterFilter: Int, defaultLimit: Int?)) in
             var events = keys
             let now = Date()
@@ -1474,6 +1486,7 @@ class CheICalMCPServer {
 
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
+        let calendarID = arguments["calendar_id"]?.stringValue   // #604
         let isAllDay = try InputValidation.requireOptionalBool(arguments, key: "all_day") ?? false
         try rejectAllDayTimezoneConflict(allDay: isAllDay, timezone: timezone)   // #190
 
@@ -1491,6 +1504,7 @@ class CheICalMCPServer {
             url: url,
             calendarName: calendarName,
             calendarSource: calendarSource,
+            calendarID: calendarID,
             isAllDay: isAllDay,
             alarmOffsets: alarmOffsets,
             recurrenceRule: recurrenceRule,
@@ -1553,6 +1567,7 @@ class CheICalMCPServer {
 
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
+        let calendarID = arguments["calendar_id"]?.stringValue   // #604
         let isAllDay = try InputValidation.requireOptionalBool(arguments, key: "all_day")
         try rejectAllDayTimezoneConflict(allDay: isAllDay ?? false, timezone: timezone)   // #190 — same-request pairing
         let spanStr = arguments["span"]?.stringValue ?? "this"
@@ -1606,6 +1621,7 @@ class CheICalMCPServer {
             url: url,
             calendarName: calendarName,
             calendarSource: calendarSource,
+            calendarID: calendarID,
             isAllDay: isAllDay,
             alarmOffsets: alarmOffsets,
             recurrenceRule: recurrenceRule,
@@ -2650,6 +2666,7 @@ class CheICalMCPServer {
         let userEndDate: Date? = try arguments["end_date"]?.stringValue.map { try parseFlexibleDate($0) }
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
+        let calendarID = arguments["calendar_id"]?.stringValue   // #604
         let limit = try InputValidation.requireOptionalLimit(arguments)
         let detailLevel = try InputValidation.validateDetailLevel(arguments)
         let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
@@ -2671,7 +2688,8 @@ class CheICalMCPServer {
             startDate: effectiveStart,
             endDate: effectiveEnd,
             calendarName: calendarName,
-            calendarSource: calendarSource
+            calendarSource: calendarSource,
+            calendarID: calendarID
         ) { keys -> (keep: [Int], info: (totalCount: Int, defaultLimit: Int?)) in
             let (rows, defaultLimit) = EventRangeQuery.boundedNearNow(keys, requested: limit, searched: searched,
                                                                       now: now, start: { $0.start })
@@ -2720,6 +2738,7 @@ class CheICalMCPServer {
         let (startDate, endDate, effectiveWeekStart) = getDateRange(for: range, weekStartsOn: weekStartsOn)
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
+        let calendarID = arguments["calendar_id"]?.stringValue   // #604
         let limit = try InputValidation.requireOptionalLimit(arguments)
         let detailLevel = try InputValidation.validateDetailLevel(arguments)
         let displayTimezone = try InputValidation.parseDisplayTimezone(arguments)
@@ -2731,7 +2750,8 @@ class CheICalMCPServer {
             startDate: startDate,
             endDate: endDate,
             calendarName: calendarName,
-            calendarSource: calendarSource
+            calendarSource: calendarSource,
+            calendarID: calendarID
         ) { keys -> (keep: [Int], info: Int) in
             let kept = limit.map { Array(keys.prefix($0)) } ?? keys
             return (kept.map(\.index), keys.count)
@@ -2898,6 +2918,7 @@ class CheICalMCPServer {
                     url: nil,
                     calendarName: eventDict["calendar_name"]?.stringValue,
                     calendarSource: eventDict["calendar_source"]?.stringValue,
+                    calendarID: eventDict["calendar_id"]?.stringValue,
                     isAllDay: itemAllDay,
                     alarmOffsets: nil,
                     recurrenceRule: batchRecurrence,
@@ -3011,6 +3032,7 @@ class CheICalMCPServer {
 
         let calendarName = arguments["calendar_name"]?.stringValue
         let calendarSource = arguments["calendar_source"]?.stringValue
+        let calendarID = arguments["calendar_id"]?.stringValue   // #604
         let excludeEventId = arguments["exclude_event_id"]?.stringValue
 
         // #490: values copied on the manager's actor.
@@ -3021,6 +3043,7 @@ class CheICalMCPServer {
                 endDate: endDate,
                 calendarName: calendarName,
                 calendarSource: calendarSource,
+                calendarID: calendarID,
                 excludeEventId: excludeEventId
             )
         } catch {

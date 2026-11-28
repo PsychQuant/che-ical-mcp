@@ -276,7 +276,7 @@ final class DetachedOccurrenceSpanTests: XCTestCase {
     /// Every key `update_event` has: the schema's, and those the handler reads that the schema does
     /// not list (`url`). A key added to either fails here until it is put in one of the lists, and
     /// until then the code refuses it, so a new field is never let through unmeasured.
-    private let refusedKeys: Set<String> = ["clear_timezone", "calendar_name", "calendar_source", "clear_recurrence"]
+    private let refusedKeys: Set<String> = ["clear_timezone", "calendar_name", "calendar_source", "calendar_id", "clear_recurrence"]
     private let ownTimeKeys = DetachedOccurrenceSpan.seriesTimeUpdateFields
 
     func testEveryKeyOfUpdateEventIsClassified() throws {

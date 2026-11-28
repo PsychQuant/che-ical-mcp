@@ -466,73 +466,79 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
 
     // MARK: - Calendars
 
-    /// Find a calendar by name and optional source
+    /// Find a calendar by name and optional source, or by its `id`
     /// - Parameters:
-    ///   - name: Calendar name
+    ///   - name: Calendar name; nil only when `id` is given
     ///   - source: Optional source name (e.g., "iCloud", "Google", "Exchange")
+    ///   - id: Optional `calendar_id` (#604); it wins over the name and source, which must agree with it
+    ///   - offersID: whether the tool taking this lookup has a `calendar_id` argument, which decides the
+    ///     remedy a same-name refusal gives
     ///   - entityType: Calendar type (.event or .reminder)
     /// - Returns: The matching calendar
-    /// - Throws: calendarNotFound if not found, multipleCalendarsFound if ambiguous
+    /// - Throws: calendarNotFound if not found, multipleCalendarsFound or sameNameCalendars if ambiguous
     func findCalendar(
-        name: String,
+        name: String?,
         source: String?,
+        id: String? = nil,
+        offersID: Bool = false,
+        entityType: EKEntityType
+    ) throws -> EKCalendar {
+        try resolveCalendar(name: name, source: source, id: id, offersID: offersID, entityType: entityType)
+    }
+
+    /// Find calendars by name and optional source (returns array for filtering). #604: it returns the
+    /// one calendar the lookup resolves to, so the read side refuses where it used to read every
+    /// calendar a name and source matched.
+    /// - Parameters:
+    ///   - name: Calendar name; nil only when `id` is given
+    ///   - source: Optional source name
+    ///   - id: Optional `calendar_id`
+    ///   - entityType: Calendar type
+    /// - Returns: The one calendar, in an array
+    func findCalendars(
+        name: String?,
+        source: String?,
+        id: String? = nil,
+        offersID: Bool = false,
+        entityType: EKEntityType
+    ) throws -> [EKCalendar] {
+        [try resolveCalendar(name: name, source: source, id: id, offersID: offersID, entityType: entityType)]
+    }
+
+    /// #604: the one lookup behind `findCalendar` and `findCalendars`, through `CalendarLookup`, so the
+    /// read and write sides refuse the same calendars the same way.
+    private func resolveCalendar(
+        name: String?,
+        source: String?,
+        id: String?,
+        offersID: Bool,
         entityType: EKEntityType
     ) throws -> EKCalendar {
         let allCalendars = eventStore.calendars(for: entityType)
-
-        // Exact, then ignoring case (#437: one rule, shared with find_duplicate_events).
-        let calendars = CalendarNameMatch.matching(allCalendars, name: name, source: source,
-                                                   title: { $0.title }, sourceTitle: { $0.source.title })
-
-        if calendars.isEmpty {
+        let outcome = CalendarLookup.resolve(allCalendars, name: name, source: source, id: id,
+                                             identifier: { $0.calendarIdentifier }, title: { $0.title },
+                                             sourceTitle: { $0.source.title })
+        switch outcome {
+        case .found(let calendar):
+            return calendar
+        case .notFound:
+            if let id { throw EventKitError.calendarNotFound(identifier: id) }
             let available = allCalendars.map { "\($0.title) (\($0.source.title))" }
             if let source = source {
-                throw EventKitError.calendarNotFoundWithSource(name: name, source: source, available: available)
+                throw EventKitError.calendarNotFoundWithSource(name: name ?? "", source: source, available: available)
             } else {
-                throw EventKitError.calendarNotFound(identifier: name, available: available)
+                throw EventKitError.calendarNotFound(identifier: name ?? "", available: available)
             }
-        }
-
-        if calendars.count > 1 {
+        case .idMismatch:
+            throw EventKitError.calendarIDMismatch
+        case .ambiguousAccounts(let calendars):
             let sources = calendars.map { $0.source.title }.joined(separator: ", ")
-            throw EventKitError.multipleCalendarsFound(name: name, sources: sources)
+            throw EventKitError.multipleCalendarsFound(name: name ?? "", sources: sources)
+        case .ambiguousInAccount(let calendars):
+            throw EventKitError.sameNameCalendars(count: calendars.count,
+                                                  ids: CalendarCandidateIDs.listable(calendars.map(\.calendarIdentifier)),
+                                                  offersID: offersID)
         }
-
-        return calendars[0]
-    }
-
-    /// Find calendars by name and optional source (returns array for filtering)
-    /// - Parameters:
-    ///   - name: Calendar name
-    ///   - source: Optional source name
-    ///   - entityType: Calendar type
-    /// - Returns: Array of matching calendars (may be empty)
-    func findCalendars(
-        name: String,
-        source: String?,
-        entityType: EKEntityType
-    ) throws -> [EKCalendar] {
-        let allCalendars = eventStore.calendars(for: entityType)
-
-        // Exact, then ignoring case (#437: one rule, shared with find_duplicate_events).
-        let calendars = CalendarNameMatch.matching(allCalendars, name: name, source: source,
-                                                   title: { $0.title }, sourceTitle: { $0.source.title })
-
-        if calendars.isEmpty {
-            let available = allCalendars.map { "\($0.title) (\($0.source.title))" }
-            if let source = source {
-                throw EventKitError.calendarNotFoundWithSource(name: name, source: source, available: available)
-            } else {
-                throw EventKitError.calendarNotFound(identifier: name, available: available)
-            }
-        }
-
-        if calendars.count > 1 && source == nil {
-            let sources = calendars.map { $0.source.title }.joined(separator: ", ")
-            throw EventKitError.multipleCalendarsFound(name: name, sources: sources)
-        }
-
-        return calendars
     }
 
     func listCalendars(for entityType: EKEntityType? = nil) async throws -> [EKCalendar] {
@@ -786,14 +792,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         startDate: Date,
         endDate: Date,
         calendarName: String? = nil,
-        calendarSource: String? = nil
+        calendarSource: String? = nil,
+        calendarID: String? = nil
     ) async throws -> [EKEvent] {
         try await ensureCalendarAccess()
         refreshIfNeeded()
 
         var calendars: [EKCalendar]?
-        if let name = calendarName {
-            calendars = try findCalendars(name: name, source: calendarSource, entityType: .event)
+        if calendarName != nil || calendarID != nil {
+            calendars = try findCalendars(name: calendarName, source: calendarSource, id: calendarID, offersID: true, entityType: .event)
         }
 
         return try events(from: startDate, to: endDate, calendars: calendars)
@@ -834,6 +841,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         url: String? = nil,
         calendarName: String? = nil,
         calendarSource: String? = nil,
+        calendarID: String? = nil,
         isAllDay: Bool = false,
         alarmOffsets: [Int]? = nil,
         recurrenceRule: RecurrenceRuleInput? = nil,
@@ -865,10 +873,10 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         }
 
         // Resolve calendar first (required for both duplicate check and creation)
-        guard let name = calendarName else {
+        guard calendarName != nil || calendarID != nil else {
             throw EventKitError.calendarNameRequired(forType: "events")
         }
-        let calendar = try findCalendar(name: name, source: calendarSource, entityType: .event)
+        let calendar = try findCalendar(name: calendarName, source: calendarSource, id: calendarID, offersID: true, entityType: .event)
 
         // Idempotency: check for existing event with same title + start time on same calendar
         let retryRequest = ExclusionRetryTarget.Request(title: title, start: startDate, host: .current)
@@ -1240,6 +1248,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         url: String? = nil,
         calendarName: String? = nil,
         calendarSource: String? = nil,
+        calendarID: String? = nil,
         isAllDay: Bool? = nil,
         alarmOffsets: [Int]? = nil,
         recurrenceRule: RecurrenceRuleInput? = nil,
@@ -1266,7 +1275,7 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
                 do {
                     saved = try await updateEvent(
                         identifier: first.id, fields: fields, title: title, startDate: startDate, endDate: endDate, notes: notes,
-                        location: location, url: url, calendarName: calendarName, calendarSource: calendarSource, isAllDay: isAllDay,
+                        location: location, url: url, calendarName: calendarName, calendarSource: calendarSource, calendarID: calendarID, isAllDay: isAllDay,
                         alarmOffsets: alarmOffsets, recurrenceRule: recurrenceRule, clearRecurrence: clearRecurrence,
                         structuredLocation: structuredLocation, span: span, occurrenceDate: occurrenceDate, applyToAll: applyToAll,
                         timezone: timezone, clearTimezone: clearTimezone,
@@ -1390,7 +1399,9 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         // first field of the event is assigned, so nothing is half-written when it throws. A new
         // calendar moves the whole series even with span this (device), so one of another account
         // is the cross-account move again; a change of the recurrence rules is series-level too.
-        let newCalendar = try calendarName.map { try findCalendar(name: $0, source: calendarSource, entityType: .event) }
+        let newCalendar: EKCalendar? = (calendarName != nil || calendarID != nil)
+            ? try findCalendar(name: calendarName, source: calendarSource, id: calendarID, offersID: true, entityType: .event)
+            : nil
         // #484: read once, here, before any field is assigned (afterwards it is false for every call).
         // The two refusals below and the rewrite of older undo records after the save read this value.
         let changesCalendar = newCalendar.map { $0.calendarIdentifier != event.calendar?.calendarIdentifier } ?? false
@@ -2261,7 +2272,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         startDate: Date? = nil,
         endDate: Date? = nil,
         calendarName: String? = nil,
-        calendarSource: String? = nil
+        calendarSource: String? = nil,
+        calendarID: String? = nil
     ) async throws -> [EKEvent] {
         try await ensureCalendarAccess()
         refreshIfNeeded()
@@ -2273,8 +2285,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         let searchEnd = endDate ?? defaults.end
 
         var calendars: [EKCalendar]?
-        if let name = calendarName {
-            calendars = try findCalendars(name: name, source: calendarSource, entityType: .event)
+        if calendarName != nil || calendarID != nil {
+            calendars = try findCalendars(name: calendarName, source: calendarSource, id: calendarID, offersID: true, entityType: .event)
         }
 
         let allEvents = try events(from: searchStart, to: searchEnd, calendars: calendars)
@@ -2306,7 +2318,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         startDate: Date? = nil,
         endDate: Date? = nil,
         calendarName: String? = nil,
-        calendarSource: String? = nil
+        calendarSource: String? = nil,
+        calendarID: String? = nil
     ) async throws -> [EKEvent] {
         return try await searchEvents(
             keywords: [keyword],
@@ -2314,7 +2327,8 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
             startDate: startDate,
             endDate: endDate,
             calendarName: calendarName,
-            calendarSource: calendarSource
+            calendarSource: calendarSource,
+            calendarID: calendarID
         )
     }
 
@@ -2532,14 +2546,15 @@ actor EventKitManager: EventKitManaging, ReminderReadSource, ReminderCompletionS
         endDate: Date,
         calendarName: String? = nil,
         calendarSource: String? = nil,
+        calendarID: String? = nil,
         excludeEventId: String? = nil
     ) async throws -> [EKEvent] {
         try await ensureCalendarAccess()
         refreshIfNeeded()
 
         var calendars: [EKCalendar]?
-        if let name = calendarName {
-            calendars = try findCalendars(name: name, source: calendarSource, entityType: .event)
+        if calendarName != nil || calendarID != nil {
+            calendars = try findCalendars(name: calendarName, source: calendarSource, id: calendarID, offersID: true, entityType: .event)
         }
 
         let events = try self.events(from: startDate, to: endDate, calendars: calendars)
@@ -3996,6 +4011,13 @@ enum EventKitError: LocalizedError {
     case calendarNotFound(identifier: String, available: [String] = [])
     case calendarNotFoundWithSource(name: String, source: String, available: [String] = [])
     case multipleCalendarsFound(name: String, sources: String)
+    /// #604: a name and source that more than one calendar of one account matches; only an `id` tells
+    /// them apart. `ids` is empty unless every candidate's `id` is a plain token
+    /// (`CalendarCandidateIDs`). `offersID`: the tool has a `calendar_id` argument.
+    case sameNameCalendars(count: Int, ids: [String], offersID: Bool)
+    /// #604: a `calendar_id` selected a calendar that the `calendar_name` or `calendar_source` beside it
+    /// does not match. Neither argument is ignored.
+    case calendarIDMismatch
     /// #437: `find_duplicate_events` only compares different calendars. A count only.
     /// `canNameMore` is false on a host with fewer than two calendars, where naming more cannot help.
     case tooFewCalendarsToCompare(found: Int, canNameMore: Bool)
@@ -4184,12 +4206,22 @@ enum EventKitError: LocalizedError {
             // hint via `list_calendars` tool, which goes through the proper
             // UntrustedContentWrapper path.
             return "Multiple calendars found with name '\(name)'. Please specify calendar_source to disambiguate (use list_calendars to enumerate)."
+        case .sameNameCalendars(let count, let ids, let offersID):
+            // #604: counts and ids only. Titles and source titles stay out, as for the cases above.
+            var text = "\(count) calendars match that name and source, so no calendar was chosen and nothing was done."
+            if !ids.isEmpty { text += " Their ids: \(ids.joined(separator: ", "))." }
+            text += offersID
+                ? " Pass calendar_id to choose one (list_calendars shows each id)."
+                : " This tool takes no calendar_id; rename one of the calendars in the Calendar or Reminders app."
+            return text
+        case .calendarIDMismatch:
+            return "calendar_id selects a calendar that calendar_name or calendar_source does not match. Pass the id alone, or arguments that agree with it. Nothing was done."
         case .eventNotFound(let id):
             return "Event not found: \(id)"
         case .reminderNotFound(let id):
             return "Reminder not found: \(id)"
         case .calendarNameRequired(let type):
-            return "calendar_name is required for creating \(type). Use list_calendars to see available options."
+            return "calendar_name is required for creating \(type)\(type == "events" ? " (or calendar_id)" : ""). Use list_calendars to see available options."
         case .invalidTimeRange(let message):
             return "Invalid time range: \(message)"
         case .weekdayMismatch(let startDay, let expectedDays):

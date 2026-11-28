@@ -552,6 +552,14 @@ claude -p "Run: ~/bin/CheICalMCP --cli list_events_quick --range today"
 
 如果偵測到歧義，錯誤訊息會說有多個行事曆同名，並要求帶 `calendar_source`；可用 `list_calendars` 查看來源。
 
+**同一個帳號底下有兩個同名日曆（#604）：** `calendar_source` 分不出它們，所以指到這樣一對的呼叫，讀取與寫入一律被拒絕，不再選一個或兩個一起讀。拒絕訊息給出數量與每個日曆的 `id`。對 `list_events`、`list_events_quick`、`search_events`、`check_conflicts`、`create_event`、`create_events_batch`（每一列）、`update_event` 帶 `calendar_id`（`list_calendars` 回傳的 `id`）就能選定其中一個；同時給了 `calendar_name` 或 `calendar_source` 時，兩者必須與它一致。其他工具還沒有 `calendar_id`，要先把其中一個日曆改名。`list_calendars` 的每一列帶 `entity_types`（事件日曆是 `["event"]`、提醒事項清單是 `["reminder"]`），因為事件日曆與提醒事項清單可以同名，而且會出現在同一個清單裡。
+
+```
+「在第二個 Calendar A 建事件」
+→ list_calendars(type: "event")  → 記下 id
+→ create_event(calendar_id: "<id>", ...)
+```
+
 ---
 
 ## 疑難排解

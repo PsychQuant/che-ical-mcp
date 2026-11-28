@@ -93,9 +93,12 @@ struct CalendarReadValue: Sendable, Equatable {
     let sourceTitle: String
     /// nil for a calendar with no source (an unsaved one).
     let sourceType: EKSourceType?
+    /// #604: `event` when the calendar holds events, `reminder` when it holds reminders. `list_calendars`
+    /// answers event calendars and reminder lists in one list, and a title can be shared by one of each.
+    let entityTypes: [String]
 
     init(identifier: String, title: String, typeRawValue: Int, allowsContentModifications: Bool,
-         isSubscribed: Bool, sourceTitle: String, sourceType: EKSourceType?) {
+         isSubscribed: Bool, sourceTitle: String, sourceType: EKSourceType?, entityTypes: [String] = []) {
         self.identifier = identifier
         self.title = title
         self.typeRawValue = typeRawValue
@@ -103,16 +106,20 @@ struct CalendarReadValue: Sendable, Equatable {
         self.isSubscribed = isSubscribed
         self.sourceTitle = sourceTitle
         self.sourceType = sourceType
+        self.entityTypes = entityTypes
     }
 
     /// Reads the calendar where it is called: on the manager's actor. `source` is implicitly
     /// unwrapped (`null_unspecified`); a calendar without one lists `""` and `Unknown` instead of
     /// trapping, which the handler did before (PR #495 round 1).
-    init(_ calendar: EKCalendar) {
+    /// `entityTypes` is the list the calendar was read from (`event` for an event calendar, `reminder`
+    /// for a reminder list), not a property the calendar reports about itself.
+    init(_ calendar: EKCalendar, entityTypes: [String] = []) {
         let source: EKSource? = calendar.source
         self.init(identifier: calendar.calendarIdentifier, title: calendar.title, typeRawValue: calendar.type.rawValue,
                   allowsContentModifications: calendar.allowsContentModifications, isSubscribed: calendar.isSubscribed,
-                  sourceTitle: source?.title ?? "", sourceType: source?.sourceType)
+                  sourceTitle: source?.title ?? "", sourceType: source?.sourceType,
+                  entityTypes: entityTypes)
     }
 
     /// The row `list_calendars` has always written.
@@ -124,7 +131,8 @@ struct CalendarReadValue: Sendable, Equatable {
             "allowsContentModifications": allowsContentModifications,
             "isSubscribed": isSubscribed,
             "source": sourceTitle,
-            "source_type": Self.sourceTypeName(sourceType)
+            "source_type": Self.sourceTypeName(sourceType),
+            "entity_types": entityTypes
         ]
     }
 

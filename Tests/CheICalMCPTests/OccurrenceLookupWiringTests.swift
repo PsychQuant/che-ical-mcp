@@ -51,7 +51,7 @@ final class OccurrenceLookupWiringTests: XCTestCase {
         let code = try manager()
         // PR #589 round 1: anchored on the two statements, not on how the duplicate's result is bound
         // (#578 binds it to a constant before the `if let`), so the pin holds in both shapes.
-        let bound = "let calendar = try findCalendar(name: name, source: calendarSource, entityType: .event)"
+        let bound = "let calendar = try findCalendar(name: calendarName, source: calendarSource, id: calendarID, offersID: true, entityType: .event)"
         let searched = "findDuplicateEvent(title: title, startDate: startDate, isAllDay: isAllDay, calendar: calendar)"
         assertOnce(bound, in: code)
         assertOnce(searched, in: code)
