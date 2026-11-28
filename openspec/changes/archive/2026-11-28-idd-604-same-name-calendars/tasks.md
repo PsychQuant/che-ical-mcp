@@ -14,7 +14,7 @@
 
 - [x] 3.1 依 不改現有協定的簽名：`EventRangeReadSource` 新增帶 `calendarID` 的要求並在協定擴充裡給預設實作（`calendarID` 為 `nil` 時轉給原方法，否則拒絕）；`EventWriteSource` 的建立與更新請求新增 `calendarID` 欄位；驗證：既有的十二個測試檔不改就能編譯，並有一個測試確認預設實作在 `calendarID` 有值時拒絕。
 - [x] 3.2 `list_events`、`list_events_quick`、`search_events`、`check_conflicts`、`create_event`、`update_event`、`create_events_batch`（每一列）宣告並解析 `calendar_id`（字串；型別不對時被引數檢查拒絕），符合 calendar_id selects one calendar；驗證：schema 測試確認每個工具與批次列都宣告 `calendar_id`。
-- [x] 3.3 處理器測試（探測用的伺服器與替身，不碰真實 store）：同名拒絕、`calendar_id` 選擇、`calendar_id` 與標題或來源不一致、另一種類型的 `id`。測試檔帶標記 `spec-example: calendar-resolution / calendar_id against name and source` 與 `spec-example: calendar-resolution / the remedy follows the tool`；驗證：這些測試通過。
+- [x] 3.3 處理器測試（替身，不碰真實 store）：`calendar_id` 傳到讀取與寫入來源、型別不對時被拒絕、拒絕訊息的兩種文字。（更正，verify 第 1 輪：這個 change 沒有寫「同名拒絕、不一致、另一種類型的 `id`」的處理器測試；這三種情形在 `idd-604-fix1` 以 `CalendarLookup.one` 的測試覆蓋。）
 
 ## 4. list_calendars
 
@@ -22,5 +22,5 @@
 
 ## 5. 文件
 
-- [x] 5.1 README 與 README_zh-TW 的工具說明、`CHANGELOG.md` 與 `changelog/` 的紀錄寫明新的拒絕與 `calendar_id`；驗證：文件測試（若該 repo 有）通過，否則目視確認。
+- [x] 5.1 README 與 README_zh-TW 的工具說明、`CHANGELOG.md` 與 `changelog/` 的紀錄寫明新的拒絕與 `calendar_id`；驗證：文件測試（若該 repo 有）通過，否則目視確認。（更正：只更新了根目錄的 `CHANGELOG.md`；`changelog/` 是停在舊版本的檔案，沒有動。）
 - [x] 5.2 跑 `swift test` 全部通過，且沒有新增測試讀寫真實的 EventKit store（用 `TestStoreIsolation` 相關測試確認）。
